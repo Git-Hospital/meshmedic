@@ -4,10 +4,13 @@ The pilot [ADR 0001](decisions/0001-compat-engine.md) asks for before any
 engine code is written: install ten widely used charts, unchanged, in four
 throwaway worlds, and record every observation that differs from the world
 without a mesh. The ADR is accepted, narrowed, or dropped on what this table
-says, by the rule in [Deciding the ADR](#deciding-the-adr), which is written
-down before the first run so the result cannot move it.
+says, by the rule in [Deciding the ADR](#deciding-the-adr), which was written
+down before the first run so the result could not move it.
 
-Status: tooling written, not yet run. Nothing below is a finding.
+Status: run three times (2026-10-24). Two charts have a finding, both in
+ambient, both from one cause, and both are cleared by a certified one-line fix.
+By the rule below, the ADR is narrowed to the atlas: see
+[Decision](#decision).
 
 ## What runs
 
@@ -16,8 +19,8 @@ Status: tooling written, not yet run. Nothing below is a finding.
 | [`hack/compat-pilot/world.sh`](../hack/compat-pilot/world.sh) | creates one kind cluster in one Istio configuration, with its own kubeconfig |
 | [`hack/compat-pilot/observe.sh`](../hack/compat-pilot/observe.sh) | installs one chart, records what it does, removes it; one call is one run |
 | [`hack/compat-pilot/difftable`](../hack/compat-pilot/difftable) | compares every mesh world with W0 and writes the table |
-| [`hack/compat-pilot/charts.json`](../hack/compat-pilot/charts.json) | the ten charts, pinned, with the reason each is in |
-| [`.github/workflows/compat-pilot.yml`](../.github/workflows/compat-pilot.yml) | 10 charts x 4 worlds, one job each, three runs per job, then the table |
+| [`hack/compat-pilot/charts.json`](../hack/compat-pilot/charts.json) | the ten charts and two candidate fixes, pinned, with the reason each is in |
+| [`.github/workflows/compat-pilot.yml`](../.github/workflows/compat-pilot.yml) | every entry x 4 worlds, one job each, three runs per job, then the table; `workflow_dispatch` takes a list of entry ids to rerun some alone |
 
 The matrix runs on GitHub-hosted runners, which this public repository gets at
 no cost (4 vCPU, 16 GB, 14 GB of disk; disk is the tight one, so the job frees
@@ -70,7 +73,7 @@ thing under test.
 | chart | version | override | why it is in |
 |---|---|---|---|
 | podinfo | 6.15.0 | | control: a small HTTP app that should behave the same everywhere |
-| argo-cd | 10.11.1 | | `redis-secret-init` hook Job reported hanging under a sidecar, [argo-helm#2887](https://github.com/argoproj/argo-helm/issues/2887), open, labelled `keep` |
+| argo-cd | 10.11.1 | `redis.image.repository=mirror.gcr.io/library/redis` (from the third run on; same image, see [Results](#results)) | `redis-secret-init` hook Job reported hanging under a sidecar, [argo-helm#2887](https://github.com/argoproj/argo-helm/issues/2887), open, labelled `keep` |
 | prometheus-pushgateway | 3.9.1 | | Service port named `metrics` with no protocol prefix, [prometheus-community/helm-charts#7404](https://github.com/prometheus-community/helm-charts/issues/7404), opened 2026-10-22, no replies |
 | kube-prometheus-stack | 92.12.0 | | admission webhook patch Jobs ([#1183](https://github.com/prometheus-community/helm-charts/issues/1183), closed stale with a workaround), API server to webhook traffic, many scrape ports |
 | redis (Bitnami) | 28.3.9 | | ships a NetworkPolicy by default and replicates between pods; an ambient report says 15008 is blocked, [bitnami/charts#31394](https://github.com/bitnami/charts/issues/31394), closed without a chart change |
@@ -130,6 +133,14 @@ Two rules keep the probes from inventing findings, and both have tests in
 - The HTTP probe is ignored where W0 did not speak HTTP. A sniffing sidecar
   turns a GET on a MySQL port into a 502, and that says something about the
   probe, not the chart.
+- The passive probe is ignored on ports the mesh treats as HTTP (a name prefix
+  or `appProtocol` of http, http2, grpc, grpc-web or h2c). Added after the
+  first run, where podinfo's gRPC port "greeted" in W0 and went silent behind
+  a sidecar: an HTTP/2 server sends its SETTINGS frame as soon as a connection
+  opens, and a sidecar opens nothing upstream until the client sends a
+  request. Every real HTTP/2 client speaks first, so the silence breaks
+  nothing.
+- A run that could not pull an image is left out (see below).
 
 ### What the probes cannot see
 
@@ -145,9 +156,137 @@ Two rules keep the probes from inventing findings, and both have tests in
   Cilium. Whether it treats the ambient probe source (169.254.7.127) the way
   they do is unknown. A NetworkPolicy finding in W3 is checked by reading the
   policy, not just trusted.
-- Docker Hub's anonymous pull limit applies to the runners. A world that fails
-  on ImagePullBackOff in one run and not the others shows up as flaky, which
-  is why flaky is never acted on.
+- Registries refuse pulls from shared runner addresses now and then. The
+  first draft of this page expected that to show up as flaky. It does not: a
+  world's three runs share one cluster on one runner, so a refused pull
+  repeats 3 of 3 and looks like a finding. Runs that end with a container in
+  ErrImagePull or ImagePullBackOff are therefore left out of the comparison,
+  with the image named, and a world left with fewer than three runs is
+  undecided. A pull failure in a Job pod is not caught this way, because Job
+  pods are not recorded as workloads.
+- The three runs of a world are not independent for the same reason: anything
+  wrong with one runner or one cluster repeats in all of them. A finding
+  counts here only when it held in two separate workflow runs.
+
+## Results
+
+### Runs
+
+| run | commit | entries | jobs | what changed before it |
+|---|---|---|---|---|
+| [40094496780](https://github.com/Git-Hospital/meshmedic/actions/runs/40094496780) | 00f5a0a | 10 charts | 42, all passed | |
+| [40098941189](https://github.com/Git-Hospital/meshmedic/actions/runs/40098941189) | f253ca7 | 10 charts, 2 fixes | 50, all passed | passive probe ignored on HTTP-family ports; containers recorded |
+| [40103861930](https://github.com/Git-Hospital/meshmedic/actions/runs/40103861930) | 259fe76 | 10 charts, 2 fixes | 50, all passed | runs that could not pull an image left out; argo-cd's redis from a mirror |
+
+Each run is three runs per world, so every verdict below rests on nine
+installs per world for the charts and six for the fixes. Istio 1.31.3,
+Kubernetes 1.36.4, native sidecars at their default (on) in every mesh world,
+read back from istiod in every record. Runs 1 and 2 were re-tabled with the
+tooling of run 3; the verdicts below are the same in all three unless a row
+says otherwise.
+
+| chart | W1 sidecar+init | W2 sidecar+cni | W3 ambient |
+|---|---|---|---|
+| podinfo | same | same | same |
+| argo-cd | same (run 3; undecided in runs 1 and 2) | same (run 3) | same (run 3) |
+| prometheus-pushgateway | same | same | same |
+| kube-prometheus-stack | same | same | same |
+| redis | same | same | **differs** |
+| rabbitmq | same | same | **differs** |
+| cloudnative-pg | same | same | same |
+| nats | same | same | same |
+| grafana | same | same | same |
+| valkey | same | same | same |
+
+argo-cd's W1 in run 3 has one flaky key (dex-server restarted once in one of
+three runs, exit code 20) and is otherwise the same; flaky is reported and not
+acted on.
+
+### Findings
+
+**bitnami/redis 28.3.9, W3.** `redis-replicas` never becomes Ready and
+restarts (CrashLoopBackOff, the container exiting 0), so `helm install --wait`
+times out. W0, W1 and W2 install in 75 to 97 seconds.
+
+**bitnami/rabbitmq 16.0.14, three replicas, W3.** The StatefulSet never
+becomes Ready, containers are killed by their probes (exit 137), and the
+management port 15672 does not answer HTTP.
+
+Both charts ship a NetworkPolicy by default that admits their own ports from
+any source and nothing else. In ambient, ztunnel carries pod-to-pod traffic to
+port 15008 (HBONE) and the policy is enforced on the node, outside the pod, so
+replication and clustering traffic is dropped. Istio documents this
+requirement in [ambient and NetworkPolicy](https://istio.io/latest/docs/ambient/usage/networkpolicy/).
+Sidecar worlds are unaffected because there the traffic still arrives on the
+application's own port.
+
+The cause above is an explanation, and the certificate is what tests it. The
+two fix entries, `redis-np-15008` and `rabbitmq-np-15008`, add one ingress rule
+and nothing else:
+
+```console
+--set-json 'networkPolicy.extraIngress=[{"ports":[{"port":15008,"protocol":"TCP"}]}]'
+```
+
+Both are **certified** in runs 2 and 3: W3 behaves like W0 in every run, W1
+and W2 stay the same, nothing is flaky, and the fix's W0 behaves like the
+unchanged chart's W0. Kubelet probes, which ambient sends from 169.254.7.127,
+were not a factor: the charts' policies already admit any source on the probed
+ports.
+
+`istioctl analyze` ran on every install and said nothing about either: IST0118
+(port naming) on rabbitmq, nothing on redis. On master (2026-10-24) Istio has
+no analyzer or message about NetworkPolicy, HBONE or 15008.
+
+Upstream state: [bitnami/charts#31394](https://github.com/bitnami/charts/issues/31394)
+reports the redis case and was closed the day it was opened, with the user's
+own `extraIngress` workaround and no chart change; a later comment says the
+workaround did not help that commenter. No issue or PR in bitnami/charts
+mentions 15008 otherwise.
+
+### Not reproduced
+
+- **argo-cd, [argo-helm#2887](https://github.com/argoproj/argo-helm/issues/2887)**
+  (open, 27 comments, last 2026-09-01). The `redis-secret-init` hook Job
+  completed in every run where the redis image could be pulled: nine of nine
+  in W1, six of six in W2, three of three in W3 (run 3 only). With native
+  sidecars the proxy ends with the Job. W3 rests on one workflow run, so it
+  is the weakest cell in the table.
+- **kube-prometheus-stack**, the admission webhook patch Jobs of
+  [#1183](https://github.com/prometheus-community/helm-charts/issues/1183):
+  installs in W1 and W2 like in W0. The same native-sidecar effect.
+- **cloudnative-pg, [cloudnative-pg/charts#327](https://github.com/cloudnative-pg/charts/issues/327)**:
+  the operator starts in every world without `holdApplicationUntilProxyStarts`.
+- **prometheus-pushgateway, [helm-charts#7404](https://github.com/prometheus-community/helm-charts/issues/7404)**:
+  the port named `metrics` behaves the same in every world. Protocol sniffing
+  recognises HTTP. An explicit `appProtocol` would still be correct, but the
+  pilot measured no breakage it would fix, so it has nothing to certify.
+- **nats** with clustering: the server-first INFO greeting arrives in every
+  world. The merged appProtocol fix holds.
+
+The ADR expected the two oldest classes in the trackers, Jobs that never end
+and init containers without network, to be the bulk of the findings. With
+native sidecars on by default since Istio 1.28 they did not appear at all in
+this sample. Clusters that run with native sidecars off still have them; the
+pilot did not test that (a W1L world).
+
+### Mistakes the pilot made, and the rules they left
+
+1. **podinfo's gRPC port (run 1)** differed on the passive probe in W1 and W2.
+   It was the probe: an HTTP/2 server greets with a SETTINGS frame, a sidecar
+   does not. The passive probe is now ignored on HTTP-family ports, with a
+   test.
+2. **argo-cd (runs 1 and 2)** "differed" in W2 and W3 the first time, and in
+   W1 and W2 the other way round the second time (W0 itself failed). Its redis
+   image failed to pull from `ecr-public.aws.com` in whichever worlds the
+   registry refused, three of three, because a world's runs share one runner.
+   Runs ending in ErrImagePull or ImagePullBackOff are now left out, with a
+   test, and argo-cd pulls the same image (`library/redis:8.6.4-alpine`) from
+   `mirror.gcr.io`.
+
+Both would have been counted wrongly by a single run read without care, and
+both were caught because one run was repeated. That is the reason for the
+two-workflow-run rule in [What the probes cannot see](#what-the-probes-cannot-see).
 
 ## Deciding the ADR
 
@@ -165,6 +304,38 @@ Counted over the ten charts, after the run:
 Findings that no documented requirement explains are counted apart. They are
 the most interesting rows, and the ones most likely to be a mistake in the
 pilot, so each is read by hand before it counts for anything.
+
+### Decision
+
+Two charts, redis and rabbitmq, have a finding that a documented Istio
+requirement explains and that has no merged upstream fix. No chart has an
+unexplained finding. By the rule above, written before the first run, **ADR
+0001 is narrowed to the atlas.**
+
+The two rules added after run 2 (leave out runs that could not pull, count a
+finding only when two workflow runs agree) do not change the count. Under the
+original rule, argo-cd's differences in run 1 were unexplained and would have
+been read by hand before counting, and reading them by hand finds the
+registry.
+
+The count is also weaker than two suggests: both findings have one cause and
+one publisher. What the pilot does suggest, as a guess to test rather than a
+result: the class that is left after native sidecars is ambient against a
+default NetworkPolicy. Bitnami ships a NetworkPolicy enabled by default in
+both charts tested here, and as far as we know in many others, so a targeted
+atlas run over Bitnami charts whose pods talk to each other is the obvious
+next measurement, and the one most likely to move this decision.
+
+What narrowing means for the ADR's sections:
+
+- **Kept:** the atlas (section 6), with the pilot's tooling as its first
+  version, and the queue's rules (section 7) for the few packets there are.
+- **Not built now:** the engine as a product mode (`meshmedic compat` and its
+  certification flow in the main binary), and the daily contribution cadence.
+  A cadence needs a supply of findings, and ten popular charts gave one cause.
+- **Highest-leverage contribution:** a proposal to Istio for an `istioctl
+  analyze` check, because the class is invisible to analyze and hits every
+  chart that ships a default NetworkPolicy, not one chart at a time.
 
 ## From a difference to an upstream contribution
 

@@ -1,7 +1,11 @@
 # 0001: A differential compatibility engine, and fixes that carry a proof
 
-Status: proposed (2026-10-23). Not implemented. Nothing below has been measured
-yet except where a link says so.
+Status: narrowed to the atlas (2026-10-24), by the pilot's rule. Proposed
+2026-10-23. The pilot found two charts that break under Istio, both in
+ambient, both from one cause, both cleared by a certified fix: see
+[the pilot's decision](../compat-pilot.md#decision). Sections 6 and 7 stand;
+the engine as a product mode and the daily cadence are not built now. The
+rest of this record is the proposal as written.
 
 ## Context
 
