@@ -7,10 +7,11 @@ without a mesh. The ADR is accepted, narrowed, or dropped on what this table
 says, by the rule in [Deciding the ADR](#deciding-the-adr), which was written
 down before the first run so the result could not move it.
 
-Status: run three times (2026-10-24). Two charts have a finding, both in
+Status: run six times (2026-10-24). Two charts have a finding, both in
 ambient, both from one cause, and both are cleared by a certified one-line fix.
-By the rule below, the ADR is narrowed to the atlas: see
-[Decision](#decision).
+A third, podinfo, fails its own `helm test` in the sidecar worlds and is
+counted apart, for reasons given with the alternative reading. By the rule
+below, the ADR is narrowed to the atlas: see [Decision](#decision).
 
 ## What runs
 
@@ -103,8 +104,8 @@ For each run, derived from what the chart rendered, never written per chart:
 - **helm** — whether `helm install --wait --wait-for-jobs` succeeded within the
   chart's deadline, and `helm test` when the chart ships tests. In runs 1 to 3
   the check for test hooks missed the quoted form (`"helm.sh/hook": test`), so
-  only nats was tested and grafana's tests never ran; it is fixed from run 4
-  on.
+  only nats was tested, and the tests of grafana, kube-prometheus-stack and
+  podinfo never ran; it is fixed from run 4 on. When a test fails, the logs of its failed test pods are recorded.
 - **workloads** — per Deployment, StatefulSet or DaemonSet: every pod Ready,
   and whether any container restarted
 - **jobs** — every Job, hooks included, complete or not
@@ -128,7 +129,7 @@ being flaky with one. A mesh world's observation is then:
 - **flaky** when it differs in 1 or 2 runs: reported, never acted on
 - **undecided** when either side has fewer than three runs, never "same"
 
-Two rules keep the probes from inventing findings, and both have tests in
+These rules keep the probes from inventing findings, and each has a test in
 [`difftable`](../hack/compat-pilot/difftable/diff_test.go):
 
 - A key that exists in one world and not the other compares as `absent`. A
@@ -155,7 +156,8 @@ Two rules keep the probes from inventing findings, and both have tests in
   protocol-aware probes; the pilot measures whether the cheap ones are enough.
 - Traffic from outside the mesh. The client is always in the mesh, so
   "STRICT rejects a plaintext caller" is not tested here. That is a property
-  of STRICT, not of the chart.
+  of STRICT, not of the chart. (A chart's own test pods can still be outside
+  the mesh; see [podinfo](#counted-apart-podinfos-tests-under-strict).)
 - kind's NetworkPolicy implementation is kube-network-policies, not Calico or
   Cilium. Whether it treats the ambient probe source (169.254.7.127) the way
   they do is unknown. A NetworkPolicy finding in W3 is checked by reading the
@@ -180,18 +182,21 @@ Two rules keep the probes from inventing findings, and both have tests in
 | [40094496780](https://github.com/Git-Hospital/meshmedic/actions/runs/40094496780) | 00f5a0a | 10 charts | 42, all passed | |
 | [40098941189](https://github.com/Git-Hospital/meshmedic/actions/runs/40098941189) | f253ca7 | 10 charts, 2 fixes | 50, all passed | passive probe ignored on HTTP-family ports; containers recorded |
 | [40103861930](https://github.com/Git-Hospital/meshmedic/actions/runs/40103861930) | 259fe76 | 10 charts, 2 fixes | 50, all passed | runs that could not pull an image left out; argo-cd's redis from a mirror |
+| [40109270484](https://github.com/Git-Hospital/meshmedic/actions/runs/40109270484) | 7335fd1 | 10 charts, 2 fixes | 50, all passed | quoted test hooks found, so `helm test` runs for every chart that ships tests |
+| [40115141791](https://github.com/Git-Hospital/meshmedic/actions/runs/40115141791) | c74bad4 | 10 charts, 2 fixes | 49 passed, 1 failed | `helm test --logs`; valkey's W2 job died downloading its tools (`curl: (35) Connection reset by peer`), so valkey W2 is undecided; podinfo is not counted (see [mistake 3](#mistakes-the-pilot-made-and-the-rules-they-left)) |
+| [40119399052](https://github.com/Git-Hospital/meshmedic/actions/runs/40119399052) | 1624010 | 10 charts, 2 fixes | 50, all passed | failed test pods' logs read directly; every download retried |
 
-Each run is three runs per world, so every verdict below rests on nine
-installs per world for the charts and six for the fixes. Istio 1.31.3,
+Each workflow run is three runs per world, so the redis and rabbitmq verdicts
+rest on eighteen installs per world and the fixes' on fifteen. Istio 1.31.3,
 Kubernetes 1.36.4, native sidecars at their default (on) in every mesh world,
 read back from istiod in every record. Runs 1 and 2 were re-tabled with the
-tooling of run 3; the verdicts below are the same in all three unless a row
+tooling of run 3; the verdicts below are the same in every run unless a row
 says otherwise.
 
 | chart | W1 sidecar+init | W2 sidecar+cni | W3 ambient |
 |---|---|---|---|
-| podinfo | same | same | same |
-| argo-cd | same (run 3; undecided in runs 1 and 2) | same (run 3) | same (run 3) |
+| podinfo | `helm test` fails (runs 4 and 6; tests not run before) | `helm test` fails (runs 4 and 6) | same |
+| argo-cd | same (runs 3 to 6; undecided in runs 1 and 2) | same (runs 3 to 6) | same (runs 3 to 6) |
 | prometheus-pushgateway | same | same | same |
 | kube-prometheus-stack | same | same | same |
 | redis | same | same | **differs** |
@@ -199,11 +204,12 @@ says otherwise.
 | cloudnative-pg | same | same | same |
 | nats | same | same | same |
 | grafana | same | same | same |
-| valkey | same | same | same |
+| valkey | same | same (undecided in run 5: tool download failed) | same |
 
-argo-cd's W1 in run 3 has one flaky key (dex-server restarted once in one of
-three runs, exit code 20) and is otherwise the same; flaky is reported and not
-acted on.
+argo-cd has one flaky key, in W1 in run 3 and in W3 in run 4: dex-server
+restarted once in one of three runs (exit code 20 in run 3). Otherwise it is
+the same; flaky is reported and not acted on. grafana's, kube-prometheus-stack's
+and nats's tests pass in every world from run 4 on.
 
 ### Findings
 
@@ -231,7 +237,7 @@ and nothing else:
 --set-json 'networkPolicy.extraIngress=[{"ports":[{"port":15008,"protocol":"TCP"}]}]'
 ```
 
-Both are **certified** in runs 2 and 3: W3 behaves like W0 in every run, W1
+Both are **certified** in runs 2 to 6: W3 behaves like W0 in every run, W1
 and W2 stay the same, nothing is flaky, and the fix's W0 behaves like the
 unchanged chart's W0. Kubelet probes, which ambient sends from 169.254.7.127,
 were not a factor: the charts' policies already admit any source on the probed
@@ -247,14 +253,58 @@ own `extraIngress` workaround and no chart change; a later comment says the
 workaround did not help that commenter. No issue or PR in bitnami/charts
 mentions 15008 otherwise.
 
+Neither side is wrong here, which is why the pilot sends no chart fix. Bitnami
+ships a deny-by-default policy on purpose and gives `networkPolicy.extraIngress`
+as the extension point, which is exactly where the certified fix goes. Istio
+documents that ambient needs 15008. The two behave as designed, and the user
+who combines them finds out from a CrashLoopBackOff, because nothing warns:
+not the chart, not `istioctl analyze`. The contribution that fits is the
+warning.
+
+### Counted apart: podinfo's tests under STRICT
+
+**podinfo 6.15.0, W1 and W2.** `helm test` fails in every run of runs 4 and
+6 and passes in W0 and W3. The app itself behaves the same in every world. The
+failing test pod logs:
+
+```text
+timeout: failed to connect service "podinfo.pilot:9999" within 1s
+```
+
+The chart's test pods carry `sidecar.istio.io/inject: "false"`. The likely
+cause: in the sidecar worlds they call podinfo in plaintext from outside the
+mesh, and STRICT mTLS refuses them. In W3 the same annotation does nothing
+(ambient's opt-out is `istio.io/dataplane-mode: none`), the test pods are
+enrolled with the namespace, and the tests pass. This explanation fits the log
+and the annotation but was not tested: no fix was applied and re-run, so unlike
+redis and rabbitmq it is uncertified. `istioctl analyze` reports IST0135: the
+annotation is deprecated in favour of the label of the same name.
+
+The first commit of this page already said, under what the probes cannot see,
+that "STRICT rejects a plaintext caller" is a property of STRICT and is not
+tested here. It did not say such a finding would be left out of the count, and
+the rule as written does not leave it out. It is counted apart anyway, and
+that is a judgement made after seeing it, so here is the other reading: taken as written, the rule ("a documented Istio
+requirement explains it, no merged upstream fix") is met by podinfo too, three
+charts would have a finding, and the ADR would be accepted. The reasons for
+not counting it:
+
+- the caller is the chart's test pod, which leaves the mesh on purpose; every
+  meshed client reaches podinfo in every world
+- it needs STRICT, which these worlds chose; Istio's default is PERMISSIVE,
+  where a plaintext caller is accepted (not measured here)
+- there is no change for podinfo to make that is right everywhere. Guess: the
+  opt-out dates from before native sidecars, when an injected test pod never
+  completed, and removing it would bring that back on clusters without them.
+
 ### Not reproduced
 
 - **argo-cd, [argo-helm#2887](https://github.com/argoproj/argo-helm/issues/2887)**
   (open, 27 comments, last 2026-09-01). The `redis-secret-init` hook Job
-  completed in every run where the redis image could be pulled: nine of nine
-  in W1, six of six in W2, three of three in W3 (run 3 only). With native
-  sidecars the proxy ends with the Job. W3 rests on one workflow run, so it
-  is the weakest cell in the table. The issue's recent comments report the
+  completed in every run where the redis image could be pulled: 18 of 18 in
+  W1, 15 of 15 in W2, 12 of 12 in W3 (runs 1 to 6; in runs 3 to 6, with the
+  mirror, every world pulled it). With native sidecars the
+  proxy ends with the Job. The issue's recent comments report the
   hang without Istio, from Argo CD syncing itself and a TTL race, which a
   `helm install` does not exercise, so the pilot has nothing new to add there
   and sends nothing.
@@ -290,8 +340,19 @@ pilot did not test that (a W1L world).
    test, and argo-cd pulls the same image (`library/redis:8.6.4-alpine`) from
    `mirror.gcr.io`.
 
-Both would have been counted wrongly by a single run read without care, and
-both were caught because one run was repeated. That is the reason for the
+3. **podinfo (run 5)** "failed" `helm test` in every world, W0 included.
+   `helm test --logs` reads the logs of every test pod after the suite, and
+   podinfo deletes its passing test pods (`hook-succeeded`), so Helm failed on
+   "unable to get pod logs ... not found". The verdict was "same", for the
+   wrong reason. The tool now runs `helm test` without `--logs` and reads the
+   failed test pods' logs itself; run 6 is the second run of the finding.
+4. **The test hook check (runs 1 to 3)** missed the quoted form of the
+   annotation, so the tests of grafana, kube-prometheus-stack and podinfo
+   never ran. Nothing was counted
+   wrongly, but three runs said "same" about tests that had not run.
+
+The first three would have been counted wrongly by a single run read without
+care, and each was caught because a later run repeated the measurement. That is the reason for the
 two-workflow-run rule in [What the probes cannot see](#what-the-probes-cannot-see).
 
 ## Deciding the ADR
@@ -315,7 +376,10 @@ pilot, so each is read by hand before it counts for anything.
 
 Two charts, redis and rabbitmq, have a finding that a documented Istio
 requirement explains and that has no merged upstream fix. No chart has an
-unexplained finding. By the rule above, written before the first run, **ADR
+unexplained finding. podinfo's test failure is counted apart, as explained in
+[its section](#counted-apart-podinfos-tests-under-strict); counted as written
+it would make three and the ADR accepted, and that is said here so the
+reader can weigh it. By the rule above, written before the first run, **ADR
 0001 is narrowed to the atlas.**
 
 The two rules added after run 2 (leave out runs that could not pull, count a
