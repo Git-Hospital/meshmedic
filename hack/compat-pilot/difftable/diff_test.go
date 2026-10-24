@@ -254,3 +254,52 @@ func TestImagePullFailureLeavesTheRunOut(t *testing.T) {
 		t.Fatalf("want same with one run left out, got %+v", c)
 	}
 }
+
+// A hook Job's pod is not a workload, so its pull failure arrives only in
+// pullFailures; it must leave the run out all the same.
+func TestJobPodPullFailureLeavesTheRunOut(t *testing.T) {
+	w1 := same("W1", 3, map[string]string{"job:secret-init:complete": "false"})
+	for i := range w1 {
+		w1[i].PullFailures = append(w1[i].PullFailures, struct {
+			Owner string `json:"owner"`
+			Image string `json:"image"`
+		}{Owner: "Job/secret-init", Image: "redis:8"})
+	}
+	c, _ := Compare("c", "W1", same("W0", 3, map[string]string{"job:secret-init:complete": "true"}), w1, 3)
+	if c.Verdict() != "undecided" || len(c.Dropped) != 3 {
+		t.Fatalf("want undecided with three runs left out, got %+v", c)
+	}
+}
+
+// ztunnel does not parse HTTP, so in W3 a gRPC port that stops greeting is a
+// difference like any other.
+func TestPassiveProbeComparedOnHTTPPortsInAmbient(t *testing.T) {
+	obs := func(v string) map[string]string { return map[string]string{"port:podinfo:9999:passive": v} }
+	w0 := withPort(same("W0", 3, obs("bytes")), "podinfo", 9999, "grpc")
+	w3 := withPort(same("W3", 3, obs("silent")), "podinfo", 9999, "grpc")
+	c, _ := Compare("c", "W3", w0, w3, 3)
+	if len(c.Findings) != 1 {
+		t.Fatalf("want the W3 difference kept, got %+v", c)
+	}
+}
+
+func TestCertifyRefusesFixFlakyWithoutMesh(t *testing.T) {
+	ok := map[string]string{"workload:StatefulSet/redis-replicas:ready": "true"}
+	bad := map[string]string{"workload:StatefulSet/redis-replicas:ready": "false"}
+	base := comparisons("redis", same("W0", 3, ok), map[string][]Record{
+		"W1": same("W1", 3, ok), "W2": same("W2", 3, ok), "W3": same("W3", 3, bad)})
+	fixW0 := runs("W0", ok, ok, bad)
+	fix := comparisons("redis-fix", fixW0, map[string][]Record{
+		"W1": same("W1", 3, ok), "W2": same("W2", 3, ok), "W3": same("W3", 3, ok)})
+	if c := Certify("redis-fix", "redis", fix, base, fixW0, same("W0", 3, ok), 3); c.Certified() {
+		t.Fatalf("a fix flaky without a mesh was certified: %+v", c)
+	}
+}
+
+func TestRenderRefusesMixedVersions(t *testing.T) {
+	records := append(same("W0", 3, nil), same("W1", 3, nil)...)
+	records[4].ChartVersion = "2.0.0"
+	if err := render(&bytes.Buffer{}, records, 3); err == nil {
+		t.Fatal("mixed versions were tabled")
+	}
+}

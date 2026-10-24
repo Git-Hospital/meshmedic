@@ -24,6 +24,12 @@ on:
 permissions:
   contents: read
 
+# A newer push replaces a pass still running: two at once double the runner
+# time and the registry pulls that made the second run's argo-cd unreadable.
+concurrency:
+  group: compat-pilot-${{ github.ref }}
+  cancel-in-progress: true
+
 # Pinned, and recorded in every result. Kubernetes 1.36 sits inside the
 # support window of both Istio 1.31 and 1.30, so a later comparison with the
 # previous release can run on the same node image.

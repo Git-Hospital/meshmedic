@@ -27,7 +27,7 @@ var meshWorlds = []string{"W1", "W2", "W3"}
 func main() {
 	minRuns := flag.Int("runs", 3, "runs per world needed for a verdict")
 	flag.Parse()
-	if flag.NArg() != 1 {
+	if flag.NArg() != 1 || *minRuns < 1 {
 		fmt.Fprintln(os.Stderr, "usage: difftable [-runs 3] RESULTS_DIR")
 		os.Exit(2)
 	}
@@ -78,8 +78,21 @@ func render(w io.Writer, records []Record, minRuns int) error {
 		byChart[r.Chart][r.World] = append(byChart[r.Chart][r.World], r)
 	}
 	charts := make([]string, 0, len(byChart))
-	for c := range byChart {
+	for c, worlds := range byChart {
 		charts = append(charts, c)
+		// One chart, one version, one base: records merged from runs of
+		// different pins would be compared as if they were the same chart.
+		var first *Record
+		for _, rs := range worlds {
+			for i := range rs {
+				if first == nil {
+					first = &rs[i]
+				} else if rs[i].ChartVersion != first.ChartVersion || rs[i].FixOf != first.FixOf {
+					return fmt.Errorf("%s: records disagree on version or fixOf (%s %q, %s %q)",
+						c, first.ChartVersion, first.FixOf, rs[i].ChartVersion, rs[i].FixOf)
+				}
+			}
+		}
 	}
 	sort.Strings(charts)
 

@@ -34,6 +34,10 @@ type Record struct {
 			Reason string `json:"reason"`
 		} `json:"containers"`
 	} `json:"workloads"`
+	PullFailures []struct {
+		Owner string `json:"owner"`
+		Image string `json:"image"`
+	} `json:"pullFailures"`
 }
 
 // pullFailure names the image a run could not pull, if any. Such a run
@@ -43,9 +47,12 @@ type Record struct {
 // share one cluster and one runner, the failure repeated 3 of 3 and passed for
 // a finding.
 //
-// Records from before containers were recorded carry only the pod's reasons,
-// so those count too, naming the workload instead of the image.
+// pullFailures covers every pod, Job pods included. Records from before it
+// existed carry containers or only the pod's reasons, so those count too.
 func pullFailure(r Record) string {
+	if len(r.PullFailures) > 0 {
+		return r.PullFailures[0].Image
+	}
 	pull := func(reason string) bool { return reason == "ErrImagePull" || reason == "ImagePullBackOff" }
 	for _, w := range r.Workloads {
 		for _, c := range w.Containers {
@@ -136,21 +143,24 @@ type Oracle struct {
 // a sniffing sidecar turns the request into a 502 on a MySQL port, and that
 // says nothing about MySQL.
 //
-// The passive probe on a port the mesh treats as HTTP measures the probe too.
+// The passive probe on a port a sidecar treats as HTTP measures the probe too.
 // The first pilot run found it on podinfo's gRPC port: an HTTP/2 server sends
 // its SETTINGS frame as soon as a connection opens, so W0 "greets", while a
 // sidecar proxying HTTP/2 opens nothing upstream until the client sends a
 // request. Every real HTTP/2 client speaks first, so the silence breaks
-// nothing.
-func ignored(key, oracle string, httpPorts map[string]bool) bool {
+// nothing. Only sidecars do this: ztunnel in W3 carries bytes and does not
+// parse HTTP, so there a greeting that stops arriving is still a difference.
+func ignored(key, oracle, world string, httpPorts map[string]bool) bool {
 	if strings.HasSuffix(key, ":http") && oracle == "none" {
 		return true
 	}
-	if strings.HasSuffix(key, ":passive") && httpPorts[strings.TrimSuffix(key, ":passive")] {
+	if sidecarWorlds[world] && strings.HasSuffix(key, ":passive") && httpPorts[strings.TrimSuffix(key, ":passive")] {
 		return true
 	}
 	return false
 }
+
+var sidecarWorlds = map[string]bool{"W1": true, "W2": true}
 
 // httpFamily is the set of port protocols Istio proxies as HTTP, selected by
 // the port name's prefix or by appProtocol.
@@ -228,6 +238,9 @@ func BuildOracle(w0 []Record, universe []string) Oracle {
 // fewer runs than that on either side means the comparison is undecided, not
 // that the chart is compatible.
 func Compare(chart, world string, w0, wn []Record, minRuns int) (Comparison, Oracle) {
+	if minRuns < 1 {
+		minRuns = 1
+	}
 	c := Comparison{Chart: chart, World: world}
 	w0, d0 := usable("W0", w0)
 	wn, dn := usable(world, wn)
@@ -248,7 +261,7 @@ func Compare(chart, world string, w0, wn []Record, minRuns int) (Comparison, Ora
 	skip := httpPorts(w0, wn)
 	for _, k := range universe {
 		want, ok := oracle.Values[k]
-		if !ok || ignored(k, want, skip) {
+		if !ok || ignored(k, want, world, skip) {
 			continue
 		}
 		d := Difference{Key: k, Oracle: want}
@@ -319,6 +332,8 @@ func Certify(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0, bas
 		c.Problems = append(c.Problems, "W0 comparison with the base undecided: "+w0.Undecided)
 	case len(w0.Findings) > 0:
 		c.Problems = append(c.Problems, "changes the chart without a mesh: "+keyList(w0.Findings))
+	case len(w0.Flaky) > 0:
+		c.Problems = append(c.Problems, "flaky against the chart without a mesh: "+keyList(w0.Flaky))
 	}
 	if len(c.Cleared) == 0 && len(c.Problems) == 0 {
 		c.Problems = append(c.Problems, base+" has no finding for this fix to clear")

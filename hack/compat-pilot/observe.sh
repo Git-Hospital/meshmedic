@@ -37,8 +37,16 @@ export HELM_CONFIG_HOME="$state/helm/config" HELM_CACHE_HOME="$state/helm/cache"
 export HELM_REPOSITORY_CONFIG="$HELM_CONFIG_HOME/repositories.yaml"
 export HELM_REPOSITORY_CACHE="$HELM_CACHE_HOME/repository"
 
+# Once this run has created the namespace, giving up must not leave it
+# behind: every later run on the world would fail on "namespace exists".
+created=
 undecided() {
   echo "could not decide: $*" >&2
+  if [[ -n "$created" ]]; then
+    helm uninstall "$release" -n "$ns" --wait --timeout 3m >/dev/null 2>&1
+    kubectl delete namespace "$ns" --wait --timeout=5m >/dev/null 2>&1 ||
+      echo "namespace $ns did not delete; remove it before the next run" >&2
+  fi
   exit 3
 }
 
@@ -60,7 +68,9 @@ fixof="$(jq -r '.fixOf // empty' <<<"$spec")"
 # every resource, and so every observation key, is named the same and the two
 # can be compared key by key.
 release="${fixof:-$id}"
-mapfile -t values < <(jq -r '.values[]?' <<<"$spec")
+# A read loop rather than mapfile, which the bash 3.2 macOS ships lacks.
+values=()
+while IFS= read -r v; do values+=("$v"); done < <(jq -r '.values[]?' <<<"$spec")
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -69,6 +79,7 @@ mkdir -p "$out"
 # --- namespace and client ---------------------------------------------------
 
 kubectl create namespace "$ns" >/dev/null || undecided "namespace $ns exists (previous run not cleaned)"
+created=1
 case "$world" in
   W1 | W2) kubectl label namespace "$ns" istio-injection=enabled >/dev/null ;;
   W3) kubectl label namespace "$ns" istio.io/dataplane-mode=ambient >/dev/null ;;
@@ -103,7 +114,7 @@ args=(install "$release" "$chart" --namespace "$ns" --version "$version"
   --wait --wait-for-jobs --timeout "$deadline")
 [[ -n "$repo" ]] && args+=(--repo "$repo")
 start="$(date +%s)"
-helm "${args[@]}" "${values[@]}" >"$tmp/helm.log" 2>&1
+helm "${args[@]}" ${values[@]+"${values[@]}"} >"$tmp/helm.log" 2>&1
 helm_rc=$?
 duration=$(($(date +%s) - start))
 
@@ -119,7 +130,7 @@ sleep "$settle"
 # owned by a ReplicaSet whose name ends in a template hash; that hash is
 # dropped. Job pods are left to the Job's own condition: a Job that retried
 # and then succeeded is a success, but its failed pod would say otherwise.
-kubectl -n "$ns" get pods -o json >"$tmp/pods.json"
+kubectl -n "$ns" get pods -o json >"$tmp/pods.json" || undecided "could not list pods"
 jq '[.items[]
   | select(.metadata.labels["mmc-client"] == null)
   | (.metadata.ownerReferences[0] // {}) as $o
@@ -146,7 +157,18 @@ jq '[.items[]
                       reason: (.state.waiting.reason // .state.terminated.reason // ""),
                       message: ((.state.waiting.message // .state.terminated.message // "") | .[0:300]),
                       lastExit: (.lastState.terminated | if . then {exitCode, reason} else null end)}]
-    }]' "$tmp/pods.json" >"$tmp/workloads.json"
+    }]' "$tmp/pods.json" >"$tmp/workloads.json" || undecided "could not read pods"
+
+# Every pod, Job pods included, whose image could not be pulled. Such a run
+# measured the registry, and difftable leaves it out; Job pods have to count
+# here because they are not in the workloads above.
+jq '[.items[]
+  | (.metadata.ownerReferences[0] // {}) as $o
+  | (if $o.kind then $o.kind + "/" + $o.name else "Pod/" + .metadata.name end) as $owner
+  | ((.status.initContainerStatuses // []) + (.status.containerStatuses // []))[]
+  | select(.state.waiting.reason == "ErrImagePull" or .state.waiting.reason == "ImagePullBackOff")
+  | {owner: $owner, image}] | unique' \
+  "$tmp/pods.json" >"$tmp/pullfailures.json" || undecided "could not read pods"
 
 # Warning events are evidence, not observations: they explain a difference
 # after the fact, and their wording changes between versions.
@@ -159,12 +181,14 @@ kubectl -n "$ns" get jobs -o json | jq '[.items[] | {
     complete: ((.status.conditions // []) | any(.type == "Complete" and .status == "True")),
     failed: ((.status.conditions // []) | any(.type == "Failed" and .status == "True")),
     active: (.status.active // 0)
-  }]' >"$tmp/jobs.json"
+  }]' >"$tmp/jobs.json" || undecided "could not list jobs"
 
 # --- helm test --------------------------------------------------------------
 
 test_result=none
-if [[ $helm_rc -eq 0 ]] && helm get hooks "$release" -n "$ns" 2>/dev/null | grep -q 'helm.sh/hook: *test'; then
+# The hook key is often quoted ("helm.sh/hook": test) and can hold a list.
+if [[ $helm_rc -eq 0 ]] && helm get hooks "$release" -n "$ns" 2>/dev/null |
+  grep -Eq 'helm\.sh/hook"?:[[:space:]]*"?([a-z-]+,)*test(-success)?([,"[:space:]]|$)'; then
   if helm test "$release" -n "$ns" --timeout 5m >"$tmp/test.log" 2>&1; then test_result=pass; else test_result=fail; fi
 fi
 
@@ -233,13 +257,15 @@ jq -n \
   --rawfile helm_log "$tmp/helm.log" --arg test "$test_result" \
   --slurpfile workloads "$tmp/workloads.json" --slurpfile jobs "$tmp/jobs.json" \
   --slurpfile ports "$tmp/ports.json" --slurpfile analyze "$tmp/analyze.json" \
-  --slurpfile events "$tmp/events.json" --arg fixof "$fixof" '
+  --slurpfile events "$tmp/events.json" --slurpfile pulls "$tmp/pullfailures.json" \
+  --arg fixof "$fixof" '
   ($workloads[0] | group_by(.workload)) as $groups
   | {
     world: $world, chart: $chart, chartVersion: $version, run: $run, fixOf: $fixof,
     environment: ($worldinfo | split("\n") | map(select(length > 0) | split("=") | {(.[0]): (.[1:] | join("="))}) | add),
     helm: {rc: $helm_rc, durationSeconds: $duration, logTail: ($helm_log | split("\n") | .[-15:] | join("\n"))},
     workloads: $workloads[0], jobs: $jobs[0], ports: $ports[0], analyze: $analyze[0], events: $events[0],
+    pullFailures: $pulls[0],
     obs: (
       {"helm:install": (if $helm_rc == 0 then "ok" else "failed" end), "helm:test": $test}
       + ([$groups[] | {("workload:" + .[0].workload + ":ready"):

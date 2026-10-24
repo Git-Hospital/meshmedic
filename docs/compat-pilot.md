@@ -101,7 +101,10 @@ reports that as "same", which is correct: it is not a mesh problem.
 For each run, derived from what the chart rendered, never written per chart:
 
 - **helm** — whether `helm install --wait --wait-for-jobs` succeeded within the
-  chart's deadline, and `helm test` when the chart ships tests
+  chart's deadline, and `helm test` when the chart ships tests. In runs 1 to 3
+  the check for test hooks missed the quoted form (`"helm.sh/hook": test`), so
+  only nats was tested and grafana's tests never ran; it is fixed from run 4
+  on.
 - **workloads** — per Deployment, StatefulSet or DaemonSet: every pod Ready,
   and whether any container restarted
 - **jobs** — every Job, hooks included, complete or not
@@ -133,9 +136,10 @@ Two rules keep the probes from inventing findings, and both have tests in
 - The HTTP probe is ignored where W0 did not speak HTTP. A sniffing sidecar
   turns a GET on a MySQL port into a 502, and that says something about the
   probe, not the chart.
-- The passive probe is ignored on ports the mesh treats as HTTP (a name prefix
-  or `appProtocol` of http, http2, grpc, grpc-web or h2c). Added after the
-  first run, where podinfo's gRPC port "greeted" in W0 and went silent behind
+- The passive probe is ignored in the sidecar worlds on ports a sidecar
+  treats as HTTP (a name prefix or `appProtocol` of http, http2, grpc,
+  grpc-web or h2c). In W3 it is still compared, because ztunnel carries bytes
+  and does not parse HTTP. Added after the first run, where podinfo's gRPC port "greeted" in W0 and went silent behind
   a sidecar: an HTTP/2 server sends its SETTINGS frame as soon as a connection
   opens, and a sidecar opens nothing upstream until the client sends a
   request. Every real HTTP/2 client speaks first, so the silence breaks
@@ -160,10 +164,9 @@ Two rules keep the probes from inventing findings, and both have tests in
   first draft of this page expected that to show up as flaky. It does not: a
   world's three runs share one cluster on one runner, so a refused pull
   repeats 3 of 3 and looks like a finding. Runs that end with a container in
-  ErrImagePull or ImagePullBackOff are therefore left out of the comparison,
-  with the image named, and a world left with fewer than three runs is
-  undecided. A pull failure in a Job pod is not caught this way, because Job
-  pods are not recorded as workloads.
+  ErrImagePull or ImagePullBackOff, in any pod including a Job's, are
+  therefore left out of the comparison, with the image named, and a world
+  left with fewer than three runs is undecided.
 - The three runs of a world are not independent for the same reason: anything
   wrong with one runner or one cluster repeats in all of them. A finding
   counts here only when it held in two separate workflow runs.
@@ -251,7 +254,10 @@ mentions 15008 otherwise.
   completed in every run where the redis image could be pulled: nine of nine
   in W1, six of six in W2, three of three in W3 (run 3 only). With native
   sidecars the proxy ends with the Job. W3 rests on one workflow run, so it
-  is the weakest cell in the table.
+  is the weakest cell in the table. The issue's recent comments report the
+  hang without Istio, from Argo CD syncing itself and a TTL race, which a
+  `helm install` does not exercise, so the pilot has nothing new to add there
+  and sends nothing.
 - **kube-prometheus-stack**, the admission webhook patch Jobs of
   [#1183](https://github.com/prometheus-community/helm-charts/issues/1183):
   installs in W1 and W2 like in W0. The same native-sidecar effect.
