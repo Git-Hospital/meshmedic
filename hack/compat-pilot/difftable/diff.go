@@ -26,6 +26,55 @@ type Record struct {
 		Name        string `json:"name"`
 		AppProtocol string `json:"appProtocol"`
 	} `json:"ports"`
+	Workloads []struct {
+		Workload   string   `json:"workload"`
+		Reasons    []string `json:"reasons"`
+		Containers []struct {
+			Image  string `json:"image"`
+			Reason string `json:"reason"`
+		} `json:"containers"`
+	} `json:"workloads"`
+}
+
+// pullFailure names the image a run could not pull, if any. Such a run
+// measured the registry, not the chart: the second pilot run found argo-cd's
+// redis image failing to pull from ecr-public.aws.com in whichever worlds the
+// registry happened to refuse, W0 included, and since a world's three runs
+// share one cluster and one runner, the failure repeated 3 of 3 and passed for
+// a finding.
+//
+// Records from before containers were recorded carry only the pod's reasons,
+// so those count too, naming the workload instead of the image.
+func pullFailure(r Record) string {
+	pull := func(reason string) bool { return reason == "ErrImagePull" || reason == "ImagePullBackOff" }
+	for _, w := range r.Workloads {
+		for _, c := range w.Containers {
+			if pull(c.Reason) {
+				return c.Image
+			}
+		}
+		for _, reason := range w.Reasons {
+			if pull(reason) {
+				return w.Workload
+			}
+		}
+	}
+	return ""
+}
+
+// usable drops the runs that measured something other than the chart, and
+// says why for each.
+func usable(world string, rs []Record) ([]Record, []string) {
+	var out []Record
+	var dropped []string
+	for _, r := range rs {
+		if img := pullFailure(r); img != "" {
+			dropped = append(dropped, fmt.Sprintf("%s run %d: image pull failed (%s)", world, r.Run, img))
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, dropped
 }
 
 // absent is the value of a key a run did not produce. A hook Job that W0
@@ -55,6 +104,7 @@ type Comparison struct {
 	Findings     []Difference // consistent differences
 	Flaky        []Difference
 	Analyze      []string // istioctl analyze codes seen in any run
+	Dropped      []string // runs left out, and why
 	Undecided    string   // why no verdict was possible, if none was
 }
 
@@ -178,7 +228,11 @@ func BuildOracle(w0 []Record, universe []string) Oracle {
 // fewer runs than that on either side means the comparison is undecided, not
 // that the chart is compatible.
 func Compare(chart, world string, w0, wn []Record, minRuns int) (Comparison, Oracle) {
-	c := Comparison{Chart: chart, World: world, Runs: len(wn)}
+	c := Comparison{Chart: chart, World: world}
+	w0, d0 := usable("W0", w0)
+	wn, dn := usable(world, wn)
+	c.Dropped = append(d0, dn...)
+	c.Runs = len(wn)
 	if len(w0) < minRuns {
 		c.Undecided = fmt.Sprintf("W0 has %d of %d runs", len(w0), minRuns)
 		return c, Oracle{}

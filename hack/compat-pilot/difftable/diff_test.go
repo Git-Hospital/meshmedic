@@ -212,3 +212,45 @@ func TestCertifyRefusesFixForChartWithoutFinding(t *testing.T) {
 		t.Fatalf("certified a fix with nothing to fix: %+v", c)
 	}
 }
+
+func pullFailed(rs []Record, image string) []Record {
+	for i := range rs {
+		rs[i].Workloads = append(rs[i].Workloads, struct {
+			Workload   string   `json:"workload"`
+			Reasons    []string `json:"reasons"`
+			Containers []struct {
+				Image  string `json:"image"`
+				Reason string `json:"reason"`
+			} `json:"containers"`
+		}{Workload: "Deployment/redis", Containers: []struct {
+			Image  string `json:"image"`
+			Reason string `json:"reason"`
+		}{{Image: image, Reason: "ImagePullBackOff"}}})
+	}
+	return rs
+}
+
+// The second pilot run: argo-cd's redis image failed to pull in W0 and W3 and
+// pulled in W1 and W2, 3 of 3 each, because a world's runs share a cluster.
+// The first run had it the other way round. A registry outage is not a
+// finding in either direction.
+func TestImagePullFailureLeavesTheRunOut(t *testing.T) {
+	ok := map[string]string{"helm:install": "ok"}
+	failed := map[string]string{"helm:install": "failed"}
+	w0 := pullFailed(same("W0", 3, failed), "ecr-public.aws.com/docker/library/redis:8.6.4-alpine")
+	c, _ := Compare("c", "W1", w0, same("W1", 3, ok), 3)
+	if c.Verdict() != "undecided" || len(c.Dropped) != 3 {
+		t.Fatalf("want undecided with three runs left out, got %+v", c)
+	}
+	if !strings.Contains(c.Dropped[0], "ecr-public.aws.com") {
+		t.Fatalf("the reason should name the image, got %q", c.Dropped[0])
+	}
+
+	// One bad run out of four still leaves three to decide on.
+	w1 := append(same("W1", 3, ok), pullFailed(runs("W1", failed), "x")...)
+	w1[3].Run = 4
+	c, _ = Compare("c", "W1", same("W0", 3, ok), w1, 3)
+	if c.Verdict() != "same" || len(c.Dropped) != 1 {
+		t.Fatalf("want same with one run left out, got %+v", c)
+	}
+}

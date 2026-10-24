@@ -10,8 +10,12 @@
     "repo": "https://argoproj.github.io/argo-helm",
     "chart": "argo-cd",
     "version": "10.11.1",
+    "values": [
+      "--set",
+      "redis.image.repository=mirror.gcr.io/library/redis"
+    ],
     "deadline": "10m",
-    "why": "redis-secret-init hook Job reported hanging under a sidecar (argoproj/argo-helm#2887, open)"
+    "why": "redis-secret-init hook Job reported hanging under a sidecar (argoproj/argo-helm#2887, open); the redis image comes from Google's Docker Hub mirror because ecr-public.aws.com refused pulls from the runners at random in the first two runs"
   },
   {
     "id": "prometheus-pushgateway",

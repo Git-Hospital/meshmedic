@@ -15,6 +15,11 @@ on:
       - "hack/compat-pilot/**"
       - ".github/workflows/compat-pilot.yml"
   workflow_dispatch:
+    inputs:
+      charts:
+        description: "Chart ids to run, separated by spaces (empty runs them all)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -37,7 +42,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: charts
-        run: echo "charts=$(jq -c '[.[].id]' hack/compat-pilot/charts.json)" >> "$GITHUB_OUTPUT"
+        env:
+          ONLY: ${{ inputs.charts }}
+        run: |
+          echo "charts=$(jq -c --arg only "$ONLY" '
+            ($only | split(" ") | map(select(. != ""))) as $ids
+            | [.[].id | select(($ids | length) == 0 or (. as $id | $ids | index($id)))]
+          ' hack/compat-pilot/charts.json)" >> "$GITHUB_OUTPUT"
 
   observe:
     needs: plan

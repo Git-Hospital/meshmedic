@@ -156,6 +156,12 @@ func render(w io.Writer, records []Record, minRuns int) error {
 		}
 		for _, c := range results[chart] {
 			p("### %s: %s\n\n", c.World, c.Verdict())
+			for _, d := range c.Dropped {
+				p("- left out: %s\n", d)
+			}
+			if len(c.Dropped) > 0 {
+				p("\n")
+			}
 			if c.Undecided != "" {
 				p("%s.\n\n", c.Undecided)
 				continue
