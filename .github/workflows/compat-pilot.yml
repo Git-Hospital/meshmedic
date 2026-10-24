@@ -83,20 +83,20 @@ jobs:
           set -euo pipefail
           mkdir -p "$HOME/bin" && cd "$RUNNER_TEMP"
 
-          curl -fsSLO "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
-          curl -fsSLO "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64.sha256sum"
           sha256sum -c kind-linux-amd64.sha256sum
           install kind-linux-amd64 "$HOME/bin/kind"
 
           tarball="istioctl-${ISTIO_VERSION}-linux-amd64.tar.gz"
-          curl -fsSLO "https://github.com/istio/istio/releases/download/${ISTIO_VERSION}/${tarball}"
-          curl -fsSLO "https://github.com/istio/istio/releases/download/${ISTIO_VERSION}/${tarball}.sha256"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/istio/istio/releases/download/${ISTIO_VERSION}/${tarball}"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/istio/istio/releases/download/${ISTIO_VERSION}/${tarball}.sha256"
           # Istio's checksum file has one space where sha256sum expects two.
           echo "$(cut -d' ' -f1 "${tarball}.sha256")  ${tarball}" | sha256sum -c
           tar xzf "$tarball" && install istioctl "$HOME/bin/istioctl"
 
-          curl -fsSLO "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl -fsSLO "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          curl -fsSLO --retry 4 --retry-all-errors "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO --retry 4 --retry-all-errors "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
           sha256sum -c "helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
           tar xzf "helm-${HELM_VERSION}-linux-amd64.tar.gz" && install linux-amd64/helm "$HOME/bin/helm"
 

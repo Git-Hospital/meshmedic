@@ -190,7 +190,21 @@ test_result=none
 # The hook key is often quoted ("helm.sh/hook": test) and can hold a list.
 if [[ $helm_rc -eq 0 ]] && helm get hooks "$release" -n "$ns" 2>/dev/null |
   grep -Eq 'helm\.sh/hook"?:[[:space:]]*"?([a-z-]+,)*test(-success)?([,"[:space:]]|$)'; then
-  if helm test "$release" -n "$ns" --timeout 5m --logs >"$tmp/test.log" 2>&1; then test_result=pass; else test_result=fail; fi
+  if helm test "$release" -n "$ns" --timeout 5m >"$tmp/test.log" 2>&1; then
+    test_result=pass
+  else
+    test_result=fail
+    # Not `helm test --logs`: it fails the whole test when a passing pod has
+    # already been deleted by its hook-succeeded policy, which turned every
+    # world into "fail" in run 5. A failed test pod stays, so read those.
+    kubectl -n "$ns" get pods -o json | jq -r '.items[]
+      | select((.metadata.annotations["helm.sh/hook"] // "") | test("(^|,)test(-success)?(,|$)"))
+      | select(.status.phase != "Succeeded") | .metadata.name' |
+      while read -r pod; do
+        echo "--- $pod"
+        kubectl -n "$ns" logs "$pod" --all-containers --tail=20 2>&1
+      done >>"$tmp/test.log"
+  fi
 fi
 
 # --- service ports ----------------------------------------------------------
