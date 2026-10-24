@@ -1,0 +1,156 @@
+name: compat-pilot-2
+
+# The second pilot (docs/compat-pilot-2.md): progressive-delivery tools that
+# program Istio, each holding a canary at 10%, in sidecar mode (W1, the
+# oracle), ambient (W3) and ambient with a waypoint (W4). Three runs per
+# world; the table holds W3 and W4 against W1.
+#
+# Like the first pilot it runs on its branch and by hand, never on pull
+# requests.
+on:
+  push:
+    branches: [feat/compat-pilot-2]
+    paths:
+      - "hack/compat-pilot/canary/**"
+      - "hack/compat-pilot/world.sh"
+      - ".github/workflows/compat-pilot-2.yml"
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: "Scenario ids to run, separated by spaces (empty runs them all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat-pilot-2-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ISTIO_VERSION: "1.31.3"
+  KIND_VERSION: "v0.33.0"
+  KIND_NODE_IMAGE: "kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed"
+  HELM_VERSION: "v4.0.4"
+  GATEWAY_API_VERSION: "v1.6.0"
+  # HTTPRoute scenarios run in the sidecar world too, so every world gets the
+  # Gateway API CRDs.
+  MMC_GATEWAY_API: "1"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      scenarios: ${{ steps.scenarios.outputs.scenarios }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: scenarios
+        env:
+          ONLY: ${{ inputs.scenarios }}
+        run: |
+          echo "scenarios=$(jq -c --arg only "$ONLY" '
+            ($only | split(" ") | map(select(. != ""))) as $ids
+            | [.[].id | select(($ids | length) == 0 or (. as $id | $ids | index($id)))]
+          ' hack/compat-pilot/canary/scenarios.json)" >> "$GITHUB_OUTPUT"
+
+  observe:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: ${{ fromJSON(needs.plan.outputs.scenarios) }}
+        world: [W1, W3, W4]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: raise inotify limits
+        run: sudo sysctl -w fs.inotify.max_user_watches=524288 fs.inotify.max_user_instances=512
+
+      - name: install pinned tools
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin" && cd "$RUNNER_TEMP"
+
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          sha256sum -c kind-linux-amd64.sha256sum
+          install kind-linux-amd64 "$HOME/bin/kind"
+
+          tarball="istioctl-${ISTIO_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/istio/istio/releases/download/${ISTIO_VERSION}/${tarball}"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/istio/istio/releases/download/${ISTIO_VERSION}/${tarball}.sha256"
+          # Istio's checksum file has one space where sha256sum expects two.
+          echo "$(cut -d' ' -f1 "${tarball}.sha256")  ${tarball}" | sha256sum -c
+          tar xzf "$tarball" && install istioctl "$HOME/bin/istioctl"
+
+          curl -fsSLO --retry 4 --retry-all-errors "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO --retry 4 --retry-all-errors "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          sha256sum -c "helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          tar xzf "helm-${HELM_VERSION}-linux-amd64.tar.gz" && install linux-amd64/helm "$HOME/bin/helm"
+
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: world ${{ matrix.world }}
+        run: hack/compat-pilot/world.sh "${{ matrix.world }}"
+
+      - name: controller for ${{ matrix.scenario }}
+        run: hack/compat-pilot/canary/tool.sh "${{ matrix.world }}" "${{ matrix.scenario }}"
+
+      - name: three runs of ${{ matrix.scenario }}
+        run: |
+          set -uo pipefail
+          for run in 1 2 3; do
+            hack/compat-pilot/canary/canary.sh "${{ matrix.world }}" "${{ matrix.scenario }}" "$run" results || exit $?
+          done
+
+      - name: cluster state on failure
+        if: failure()
+        run: |
+          KUBECONFIG="$PWD/.mmc-state/mmc-$(tr '[:upper:]' '[:lower:]' <<<"${{ matrix.world }}").kubeconfig"
+          export KUBECONFIG
+          mkdir -p results/debug
+          kubectl get pods -A -o wide > results/debug/pods.txt 2>&1 || true
+          kubectl get events -A --sort-by=.lastTimestamp > results/debug/events.txt 2>&1 || true
+          kubectl -n argo-rollouts logs deploy/argo-rollouts --tail=200 > results/debug/argo-rollouts.log 2>&1 || true
+          kubectl -n flagger-system logs deploy/flagger --tail=200 > results/debug/flagger.log 2>&1 || true
+          tail -50 results/debug/events.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-${{ matrix.scenario }}-${{ matrix.world }}
+          path: results/
+          if-no-files-found: warn
+
+  table:
+    needs: observe
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          path: results
+          merge-multiple: true
+      - name: table
+        run: |
+          rm -rf results/debug
+          go run ./hack/compat-pilot/difftable -oracle W1 -worlds W3,W4 results | tee table.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compat-pilot-2-table
+          path: |
+            table.md
+            results/

@@ -8,6 +8,8 @@
 #   W1  sidecar, traffic redirected by the istio-init container
 #   W2  sidecar, traffic redirected by the istio-cni node agent
 #   W3  ambient, ztunnel
+#   W4  ambient, installed like W3; the second pilot gives each test namespace
+#       a waypoint (canary.sh), so L7 features have somewhere to run
 #
 # Every mesh world runs mesh-wide STRICT mTLS, because PERMISSIVE hides the
 # class of failure where a client outside the mesh is silently accepted.
@@ -25,14 +27,14 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--delete" ]]; then
-  world="${2:?usage: world.sh --delete W0|W1|W2|W3}"
+  world="${2:?usage: world.sh --delete W0|W1|W2|W3|W4}"
   cluster="mmc-$(tr '[:upper:]' '[:lower:]' <<<"$world")"
   kind delete cluster --name "$cluster"
   exit 0
 fi
 
-world="${1:?usage: world.sh W0|W1|W2|W3}"
-case "$world" in W0 | W1 | W2 | W3) ;; *)
+world="${1:?usage: world.sh W0|W1|W2|W3|W4}"
+case "$world" in W0 | W1 | W2 | W3 | W4) ;; *)
   echo "unknown world: $world" >&2
   exit 2
   ;;
@@ -62,15 +64,17 @@ if [[ "$world" != W0 ]]; then
     exit 2
   fi
 
+  # Ambient needs the Gateway API CRDs for waypoints; kind does not ship
+  # them. W3 deploys no waypoint, but istiod expects the CRDs to exist. The
+  # second pilot routes with HTTPRoute in the sidecar world too
+  # (MMC_GATEWAY_API=1). They go in before istiod, as they always have in W3.
+  if [[ "$world" == W3 || "$world" == W4 || "${MMC_GATEWAY_API:-}" == 1 ]]; then
+    kubectl apply --server-side -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION:-v1.6.0}/standard-install.yaml"
+  fi
   case "$world" in
     W1) istioctl install -y --set profile=default ;;
     W2) istioctl install -y --set profile=default --set components.cni.enabled=true ;;
-    W3)
-      # Ambient needs the Gateway API CRDs for waypoints; kind does not ship
-      # them. W3 deploys no waypoint, but istiod expects the CRDs to exist.
-      kubectl apply --server-side -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION:-v1.6.0}/standard-install.yaml"
-      istioctl install -y --set profile=ambient
-      ;;
+    W3 | W4) istioctl install -y --set profile=ambient ;;
   esac
 
   kubectl apply -f - <<'EOF'
