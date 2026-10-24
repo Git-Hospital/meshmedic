@@ -1,0 +1,121 @@
+[
+  {
+    "id": "podinfo",
+    "chart": "oci://ghcr.io/stefanprodan/charts/podinfo",
+    "version": "6.15.0",
+    "why": "control: a small HTTP app that should behave the same in every world"
+  },
+  {
+    "id": "argo-cd",
+    "repo": "https://argoproj.github.io/argo-helm",
+    "chart": "argo-cd",
+    "version": "10.11.1",
+    "values": [
+      "--set",
+      "redis.image.repository=mirror.gcr.io/library/redis"
+    ],
+    "deadline": "10m",
+    "why": "redis-secret-init hook Job reported hanging under a sidecar (argoproj/argo-helm#2887, open); the redis image comes from Google's Docker Hub mirror because ecr-public.aws.com refused pulls from the runners at random in the first two runs"
+  },
+  {
+    "id": "prometheus-pushgateway",
+    "repo": "https://prometheus-community.github.io/helm-charts",
+    "chart": "prometheus-pushgateway",
+    "version": "3.9.1",
+    "why": "Service port named 'metrics', no protocol prefix (prometheus-community/helm-charts#7404, open)"
+  },
+  {
+    "id": "kube-prometheus-stack",
+    "repo": "https://prometheus-community.github.io/helm-charts",
+    "chart": "kube-prometheus-stack",
+    "version": "92.12.0",
+    "deadline": "12m",
+    "why": "admission webhook patch Jobs, API server to webhook traffic, many scrape ports"
+  },
+  {
+    "id": "redis",
+    "chart": "oci://registry-1.docker.io/bitnamicharts/redis",
+    "version": "28.3.9",
+    "why": "ships a NetworkPolicy by default and replicates between pods; ambient 15008 case reported (bitnami/charts#31394)"
+  },
+  {
+    "id": "rabbitmq",
+    "chart": "oci://registry-1.docker.io/bitnamicharts/rabbitmq",
+    "version": "16.0.14",
+    "values": [
+      "--set",
+      "image.repository=bitnamilegacy/rabbitmq",
+      "--set",
+      "global.security.allowInsecureImages=true",
+      "--set",
+      "replicaCount=3"
+    ],
+    "deadline": "12m",
+    "why": "Erlang clustering between StatefulSet peers (epmd 4369, 25672) plus a default NetworkPolicy; the default image no longer exists on docker.io/bitnami, so it points at bitnamilegacy"
+  },
+  {
+    "id": "cloudnative-pg",
+    "repo": "https://cloudnative-pg.github.io/charts",
+    "chart": "cloudnative-pg",
+    "version": "0.29.1",
+    "why": "operator reported crashing under mTLS until holdApplicationUntilProxyStarts is set (cloudnative-pg/charts#327); webhook traffic from the API server"
+  },
+  {
+    "id": "nats",
+    "repo": "https://nats-io.github.io/k8s/helm/charts/",
+    "chart": "nats",
+    "version": "2.15.1",
+    "values": [
+      "--set",
+      "config.cluster.enabled=true"
+    ],
+    "why": "server-first protocol (INFO greeting) on client and route ports; appProtocol fix merged upstream, so this is a regression check"
+  },
+  {
+    "id": "grafana",
+    "repo": "https://grafana-community.github.io/helm-charts",
+    "chart": "grafana",
+    "version": "14.0.1",
+    "why": "HTTP app with init containers; chart moved to grafana-community in 2026"
+  },
+  {
+    "id": "valkey",
+    "repo": "https://valkey.io/valkey-helm/",
+    "chart": "valkey",
+    "version": "0.12.0",
+    "values": [
+      "--set",
+      "replica.enabled=true"
+    ],
+    "why": "official Valkey chart with replication between pods; no Istio issues on record, so any result is new data"
+  },
+  {
+    "id": "redis-np-15008",
+    "fixOf": "redis",
+    "chart": "oci://registry-1.docker.io/bitnamicharts/redis",
+    "version": "28.3.9",
+    "values": [
+      "--set-json",
+      "networkPolicy.extraIngress=[{\"ports\":[{\"port\":15008,\"protocol\":\"TCP\"}]}]"
+    ],
+    "why": "candidate fix: the chart's NetworkPolicy allows 6379 only, and ambient delivers pod-to-pod traffic on 15008 (HBONE)"
+  },
+  {
+    "id": "rabbitmq-np-15008",
+    "fixOf": "rabbitmq",
+    "chart": "oci://registry-1.docker.io/bitnamicharts/rabbitmq",
+    "version": "16.0.14",
+    "values": [
+      "--set",
+      "image.repository=bitnamilegacy/rabbitmq",
+      "--set",
+      "global.security.allowInsecureImages=true",
+      "--set",
+      "replicaCount=3",
+      "--set-json",
+      "networkPolicy.extraIngress=[{\"ports\":[{\"port\":15008,\"protocol\":\"TCP\"}]}]"
+    ],
+    "deadline": "12m",
+    "why": "candidate fix: same 15008 rule added to the chart's NetworkPolicy"
+  }
+]

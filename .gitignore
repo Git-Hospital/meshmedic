@@ -15,3 +15,7 @@ PRP.md
 
 # Stray capture, kept locally
 meshmedic-pr-screenshot.png
+
+# Compat pilot: per-world kubeconfigs and Helm state, and run records
+.mmc-state/
+/results/
