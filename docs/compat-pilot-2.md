@@ -5,7 +5,7 @@ found one class of failure: a default NetworkPolicy in ambient. Those charts
 do not use Istio; they only run under it. This pilot looks at software that
 does use it, starting with the tools that write Istio routing for you.
 
-Status: run twice (2026-10-24). Every cell came out as the page predicted
+Status: run three times (2026-10-24). Every cell came out as the page predicted
 before the first run: in ambient without a waypoint both tools report a
 canary held at 10% and no request reaches it. By the rule below, the tool
 group stops here. Everything under
@@ -149,8 +149,9 @@ And for the plan:
 |---|---|---|
 | [40126396676](https://github.com/Git-Hospital/meshmedic/actions/runs/40126396676) | 46066be | 12 observe jobs, all passed |
 | [40127366085](https://github.com/Git-Hospital/meshmedic/actions/runs/40127366085) | 46066be | 12 observe jobs, all passed |
+| [40128666184](https://github.com/Git-Hospital/meshmedic/actions/runs/40128666184) | b6b45bb | 12 observe jobs, all passed (after the review fixes) |
 
-Three runs per world in each, so every cell below rests on six runs of 400
+Three runs per world in each, so every cell below rests on nine runs of 400
 requests.
 
 | scenario | W3 ambient | W4 ambient+waypoint |
@@ -166,7 +167,7 @@ Rollouts, `WaitingPromotion` for Flagger), the route held a canary weight of
 
 | | W1 sidecar | W3 ambient | W4 ambient+waypoint |
 |---|---|---|---|
-| all four scenarios | 27 to 51 | 0, in all 24 runs | 25 to 48 |
+| all four scenarios | 23 to 51 | 0, in all 36 runs | 25 to 50 |
 
 `istioctl analyze` reported nothing in any world.
 
@@ -177,7 +178,7 @@ canary that reports 10% and serves none of it, and nothing says so, the
 same shape as the first pilot's finding. Under rule 1 that is worth one
 documentation contribution to each tool: an ambient note saying that
 weighted routing needs a waypoint, and that both the VirtualService and the
-Service-bound HTTPRoute work once there is one (W4, six runs each). Neither
+Service-bound HTTPRoute work once there is one (W4, nine runs each). Neither
 tool's docs show the Service-bound HTTPRoute; both accepted it unchanged.
 
 **Istio, one thing the run turned up that the page did not ask about.** In
