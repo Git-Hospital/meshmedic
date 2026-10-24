@@ -82,8 +82,12 @@ kubectl create namespace "$ns" >/dev/null || undecided "namespace $ns exists (pr
 created=1
 case "$world" in
   W1 | W2) kubectl label namespace "$ns" istio-injection=enabled >/dev/null ;;
-  W3) kubectl label namespace "$ns" istio.io/dataplane-mode=ambient >/dev/null ;;
+  W3 | W4) kubectl label namespace "$ns" istio.io/dataplane-mode=ambient >/dev/null ;;
 esac
+# W4 is W3 with a waypoint for the namespace (see world.sh).
+if [[ "$world" == W4 ]]; then
+  istioctl waypoint apply -n "$ns" --enroll-namespace --wait >/dev/null || undecided "waypoint not ready"
+fi
 
 # The client sits in the same namespace, so it is in the same mesh as the
 # chart: in W1/W2 it gets a sidecar, in W3 its traffic goes through ztunnel.
