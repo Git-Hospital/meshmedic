@@ -186,10 +186,11 @@ kubectl -n "$ns" get jobs -o json | jq '[.items[] | {
 # --- helm test --------------------------------------------------------------
 
 test_result=none
+: >"$tmp/test.log"
 # The hook key is often quoted ("helm.sh/hook": test) and can hold a list.
 if [[ $helm_rc -eq 0 ]] && helm get hooks "$release" -n "$ns" 2>/dev/null |
   grep -Eq 'helm\.sh/hook"?:[[:space:]]*"?([a-z-]+,)*test(-success)?([,"[:space:]]|$)'; then
-  if helm test "$release" -n "$ns" --timeout 5m >"$tmp/test.log" 2>&1; then test_result=pass; else test_result=fail; fi
+  if helm test "$release" -n "$ns" --timeout 5m --logs >"$tmp/test.log" 2>&1; then test_result=pass; else test_result=fail; fi
 fi
 
 # --- service ports ----------------------------------------------------------
@@ -254,7 +255,7 @@ jq -n \
   --arg world "$world" --arg chart "$id" --argjson run "$run" \
   --arg version "$version" --rawfile worldinfo "$state/$cluster.world" \
   --argjson helm_rc "$helm_rc" --argjson duration "$duration" \
-  --rawfile helm_log "$tmp/helm.log" --arg test "$test_result" \
+  --rawfile helm_log "$tmp/helm.log" --arg test "$test_result" --rawfile test_log "$tmp/test.log" \
   --slurpfile workloads "$tmp/workloads.json" --slurpfile jobs "$tmp/jobs.json" \
   --slurpfile ports "$tmp/ports.json" --slurpfile analyze "$tmp/analyze.json" \
   --slurpfile events "$tmp/events.json" --slurpfile pulls "$tmp/pullfailures.json" \
@@ -263,7 +264,8 @@ jq -n \
   | {
     world: $world, chart: $chart, chartVersion: $version, run: $run, fixOf: $fixof,
     environment: ($worldinfo | split("\n") | map(select(length > 0) | split("=") | {(.[0]): (.[1:] | join("="))}) | add),
-    helm: {rc: $helm_rc, durationSeconds: $duration, logTail: ($helm_log | split("\n") | .[-15:] | join("\n"))},
+    helm: {rc: $helm_rc, durationSeconds: $duration, logTail: ($helm_log | split("\n") | .[-15:] | join("\n")),
+           testLogTail: ($test_log | split("\n") | .[-40:] | join("\n"))},
     workloads: $workloads[0], jobs: $jobs[0], ports: $ports[0], analyze: $analyze[0], events: $events[0],
     pullFailures: $pulls[0],
     obs: (
