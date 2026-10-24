@@ -24,6 +24,11 @@ export HELM_REPOSITORY_CACHE="$HELM_CACHE_HOME/repository"
 contexts="$(kubectl config get-contexts -o name)"
 [[ "$contexts" == "kind-$cluster" ]] || { echo "kubeconfig holds '$contexts', expected only kind-$cluster" >&2; exit 2; }
 
+# One controller per world: a second one would run beside the first, and the
+# world file, which every record copies, would name only the last.
+! grep -q '^tool=' "$state/$cluster.world" ||
+  { echo "world $world already has a controller ($(grep '^tool=' "$state/$cluster.world")); make a new world" >&2; exit 2; }
+
 spec="$(jq -ce --arg id "$id" '.[] | select(.id == $id)' "$here/scenarios.json")" ||
   { echo "no scenario '$id' in scenarios.json" >&2; exit 2; }
 tool="$(jq -r .tool <<<"$spec")"

@@ -12,6 +12,7 @@ on:
     branches: [feat/compat-pilot-2]
     paths:
       - "hack/compat-pilot/canary/**"
+      - "hack/compat-pilot/difftable/**"
       - "hack/compat-pilot/world.sh"
       - ".github/workflows/compat-pilot-2.yml"
   workflow_dispatch:
@@ -49,10 +50,15 @@ jobs:
         env:
           ONLY: ${{ inputs.scenarios }}
         run: |
-          echo "scenarios=$(jq -c --arg only "$ONLY" '
+          scenarios="$(jq -c --arg only "$ONLY" '
             ($only | split(" ") | map(select(. != ""))) as $ids
             | [.[].id | select(($ids | length) == 0 or (. as $id | $ids | index($id)))]
-          ' hack/compat-pilot/canary/scenarios.json)" >> "$GITHUB_OUTPUT"
+          ' hack/compat-pilot/canary/scenarios.json)"
+          if [[ "$scenarios" == "[]" ]]; then
+            echo "::error::no scenario in scenarios.json matches '$ONLY'"
+            exit 1
+          fi
+          echo "scenarios=$scenarios" >> "$GITHUB_OUTPUT"
 
   observe:
     needs: plan

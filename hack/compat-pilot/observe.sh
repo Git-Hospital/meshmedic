@@ -57,6 +57,10 @@ undecided() {
 contexts="$(kubectl config get-contexts -o name)"
 [[ "$contexts" == "kind-$cluster" ]] || undecided "kubeconfig holds '$contexts', expected only kind-$cluster"
 
+# W4 belongs to the second pilot. Here its waypoint's own pod and Service
+# would be observed as if the chart had rendered them.
+[[ "$world" != W4 ]] || { echo "observe.sh runs W0 to W3; W4 is canary.sh's" >&2; exit 2; }
+
 spec="$(jq -ce --arg id "$id" '.[] | select(.id == $id)' "$here/charts.json")" ||
   { echo "no chart '$id' in charts.json" >&2; exit 2; }
 chart="$(jq -r .chart <<<"$spec")"
@@ -82,12 +86,8 @@ kubectl create namespace "$ns" >/dev/null || undecided "namespace $ns exists (pr
 created=1
 case "$world" in
   W1 | W2) kubectl label namespace "$ns" istio-injection=enabled >/dev/null ;;
-  W3 | W4) kubectl label namespace "$ns" istio.io/dataplane-mode=ambient >/dev/null ;;
+  W3) kubectl label namespace "$ns" istio.io/dataplane-mode=ambient >/dev/null ;;
 esac
-# W4 is W3 with a waypoint for the namespace (see world.sh).
-if [[ "$world" == W4 ]]; then
-  istioctl waypoint apply -n "$ns" --enroll-namespace --wait >/dev/null || undecided "waypoint not ready"
-fi
 
 # The client sits in the same namespace, so it is in the same mesh as the
 # chart: in W1/W2 it gets a sidecar, in W3 its traffic goes through ztunnel.

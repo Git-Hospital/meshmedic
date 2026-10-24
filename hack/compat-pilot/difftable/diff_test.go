@@ -341,6 +341,7 @@ func TestValidWorlds(t *testing.T) {
 		{"W0", []string{"W1", "W2", "W3"}, true},
 		{"W1", []string{"W3", "W4"}, true},
 		{"W1", []string{"W1", "W3"}, false},
+		{"W1", []string{"W3", "W3"}, false},
 		{"W1", []string{"W5"}, false},
 		{"W9", []string{"W3"}, false},
 		{"W1", []string{""}, false},

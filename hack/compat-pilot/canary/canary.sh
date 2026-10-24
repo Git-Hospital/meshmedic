@@ -104,6 +104,14 @@ container() {
 EOF
 }
 
+# An object that does not exist (yet) has the status {}, so its phase reads
+# "none" rather than an empty string.
+get_status() {
+  local j
+  j="$(kubectl -n "$ns" get "$1" podinfo -o json 2>/dev/null)" || j='{}'
+  jq -c '.status // {}' <<<"$j"
+}
+
 case "$tool" in
   argo-rollouts)
     host=podinfo-stable
@@ -191,7 +199,7 @@ EOF
       kubectl -n "$ns" patch rollout podinfo --type=json \
         -p "[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/image\",\"value\":\"$canary\"}]"
     }
-    status() { kubectl -n "$ns" get rollout podinfo -o json 2>/dev/null | jq -c '.status // {}'; }
+    status() { get_status rollout; }
     ;;
   flagger)
     host=podinfo
@@ -239,7 +247,7 @@ EOF
     start_canary() {
       kubectl -n "$ns" set image deployment/podinfo "podinfo=$canary"
     }
-    status() { kubectl -n "$ns" get canary podinfo -o json 2>/dev/null | jq -c '.status // {}'; }
+    status() { get_status canary; }
     ;;
 esac
 
@@ -288,7 +296,7 @@ fi
 
 # One connection per request, so ztunnel, which balances connections, gets
 # the same number of choices as a proxy that balances requests.
-kubectl -n "$ns" exec mmc-client -- sh -c "
+kubectl -n "$ns" exec mmc-client -c client -- sh -c "
   i=0
   while [ \$i -lt $requests ]; do
     v=\$(wget -q -T 3 -O - http://$host.$ns:9898/api/info 2>/dev/null | sed -n 's/.*\"version\": *\"\\([^\"]*\\)\".*/\\1/p' | head -1)
@@ -296,7 +304,7 @@ kubectl -n "$ns" exec mmc-client -- sh -c "
     i=\$((i + 1))
   done" >"$tmp/answers.txt" 2>"$tmp/exec.log" || undecided "client exec failed: $(tail -1 "$tmp/exec.log")"
 
-count() { grep -cx "$1" "$tmp/answers.txt"; }
+count() { grep -Fcx "$1" "$tmp/answers.txt"; }
 n_canary="$(count "${canary##*:}")"
 n_stable="$(count "${stable##*:}")"
 n_total="$(wc -l <"$tmp/answers.txt" | tr -d ' ')"

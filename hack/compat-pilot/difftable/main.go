@@ -66,15 +66,18 @@ func main() {
 	}
 }
 
-// validWorlds refuses an unknown world and an oracle compared with itself.
+// validWorlds refuses an unknown world, a world named twice and an oracle
+// compared with itself.
 func validWorlds(oracle string, worlds []string) bool {
 	if _, ok := worldLabels[oracle]; !ok {
 		return false
 	}
+	seen := map[string]bool{oracle: true}
 	for _, w := range worlds {
-		if _, ok := worldLabels[w]; !ok || w == oracle {
+		if _, ok := worldLabels[w]; !ok || seen[w] {
 			return false
 		}
+		seen[w] = true
 	}
 	return len(worlds) > 0
 }
