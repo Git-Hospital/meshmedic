@@ -4,7 +4,15 @@ name: compat-repro
 # report quotes it, in a fresh ambient world. A report goes out only after its
 # reproduction has passed here: the pilots ran the same cases through their
 # own harness, not through the commands a maintainer would paste.
+#
+# By hand once it is on main; until then a push to the pilot branch that
+# touches a reproduction runs all of them.
 on:
+  push:
+    branches: [feat/compat-pilot-2]
+    paths:
+      - "hack/compat-pilot/repro/**"
+      - ".github/workflows/compat-repro.yml"
   workflow_dispatch:
     inputs:
       repro:
@@ -29,6 +37,10 @@ jobs:
   repro:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        repro: ${{ inputs.repro && fromJSON(format('["{0}"]', inputs.repro)) || fromJSON('["httproute-resolvedwaypoints","networkpolicy-15008"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,7 +71,7 @@ jobs:
       - name: world W3
         run: hack/compat-pilot/world.sh W3
 
-      - name: ${{ inputs.repro }}
+      - name: ${{ matrix.repro }}
         env:
-          REPRO: ${{ inputs.repro }}
+          REPRO: ${{ matrix.repro }}
         run: hack/compat-pilot/repro/"$REPRO".sh
