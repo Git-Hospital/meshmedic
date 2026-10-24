@@ -132,3 +132,83 @@ func TestRenderTable(t *testing.T) {
 		}
 	}
 }
+
+func withPort(rs []Record, svc string, port int, name string) []Record {
+	for i := range rs {
+		rs[i].Ports = append(rs[i].Ports, struct {
+			Svc         string `json:"svc"`
+			Port        int    `json:"port"`
+			Name        string `json:"name"`
+			AppProtocol string `json:"appProtocol"`
+		}{Svc: svc, Port: port, Name: name})
+	}
+	return rs
+}
+
+// The first pilot run: podinfo's gRPC port greets in W0 (an HTTP/2 SETTINGS
+// frame) and is silent behind a sidecar. Real gRPC clients speak first, so
+// this must not become a finding, while a server-first TCP port still must.
+func TestPassiveProbeIgnoredOnHTTPFamilyPorts(t *testing.T) {
+	obs := func(v string) map[string]string {
+		return map[string]string{"port:podinfo:9999:passive": v, "port:nats:4222:passive": v}
+	}
+	w0 := withPort(withPort(same("W0", 3, obs("bytes")), "podinfo", 9999, "grpc"), "nats", 4222, "tcp-client")
+	w1 := withPort(withPort(same("W1", 3, obs("silent")), "podinfo", 9999, "grpc"), "nats", 4222, "tcp-client")
+	c, _ := Compare("c", "W1", w0, w1, 3)
+	if len(c.Findings) != 1 || c.Findings[0].Key != "port:nats:4222:passive" {
+		t.Fatalf("want only the TCP port as a finding, got %+v", c.Findings)
+	}
+}
+
+func comparisons(chart string, w0 []Record, worlds map[string][]Record) map[string]Comparison {
+	m := map[string]Comparison{}
+	for _, w := range meshWorlds {
+		m[w], _ = Compare(chart, w, w0, worlds[w], 3)
+	}
+	return m
+}
+
+func TestCertifyFixThatClearsTheFinding(t *testing.T) {
+	ok := map[string]string{"workload:StatefulSet/redis-replicas:ready": "true"}
+	bad := map[string]string{"workload:StatefulSet/redis-replicas:ready": "false"}
+	base := comparisons("redis", same("W0", 3, ok), map[string][]Record{
+		"W1": same("W1", 3, ok), "W2": same("W2", 3, ok), "W3": same("W3", 3, bad)})
+	fix := comparisons("redis-fix", same("W0", 3, ok), map[string][]Record{
+		"W1": same("W1", 3, ok), "W2": same("W2", 3, ok), "W3": same("W3", 3, ok)})
+	c := Certify("redis-fix", "redis", fix, base, same("W0", 3, ok), same("W0", 3, ok), 3)
+	if !c.Certified() || len(c.Cleared) != 1 || c.Cleared[0] != "W3" {
+		t.Fatalf("want certified clearing W3, got %+v", c)
+	}
+}
+
+func TestCertifyRefusesFixThatBreaksAnotherWorldOrW0(t *testing.T) {
+	ok := map[string]string{"workload:StatefulSet/redis-replicas:ready": "true", "port:redis:6379:passive": "silent"}
+	bad := map[string]string{"workload:StatefulSet/redis-replicas:ready": "false", "port:redis:6379:passive": "silent"}
+	base := comparisons("redis", same("W0", 3, ok), map[string][]Record{
+		"W1": same("W1", 3, ok), "W2": same("W2", 3, ok), "W3": same("W3", 3, bad)})
+
+	// Clears W3 but breaks W1.
+	fix := comparisons("redis-fix", same("W0", 3, ok), map[string][]Record{
+		"W1": same("W1", 3, bad), "W2": same("W2", 3, ok), "W3": same("W3", 3, ok)})
+	if c := Certify("redis-fix", "redis", fix, base, same("W0", 3, ok), same("W0", 3, ok), 3); c.Certified() {
+		t.Fatalf("a fix that breaks W1 was certified: %+v", c)
+	}
+
+	// Clears every mesh world by changing what the chart does without one.
+	changed := map[string]string{"workload:StatefulSet/redis-replicas:ready": "true", "port:redis:6379:passive": "bytes"}
+	fix = comparisons("redis-fix", same("W0", 3, changed), map[string][]Record{
+		"W1": same("W1", 3, changed), "W2": same("W2", 3, changed), "W3": same("W3", 3, changed)})
+	if c := Certify("redis-fix", "redis", fix, base, same("W0", 3, changed), same("W0", 3, ok), 3); c.Certified() {
+		t.Fatalf("a fix that changes W0 was certified: %+v", c)
+	}
+}
+
+func TestCertifyRefusesFixForChartWithoutFinding(t *testing.T) {
+	ok := map[string]string{"helm:install": "ok"}
+	all := map[string][]Record{"W1": same("W1", 3, ok), "W2": same("W2", 3, ok), "W3": same("W3", 3, ok)}
+	base := comparisons("p", same("W0", 3, ok), all)
+	fix := comparisons("p-fix", same("W0", 3, ok), all)
+	if c := Certify("p-fix", "p", fix, base, same("W0", 3, ok), same("W0", 3, ok), 3); c.Certified() {
+		t.Fatalf("certified a fix with nothing to fix: %+v", c)
+	}
+}

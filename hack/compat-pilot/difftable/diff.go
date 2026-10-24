@@ -14,11 +14,18 @@ type Record struct {
 	Chart        string            `json:"chart"`
 	ChartVersion string            `json:"chartVersion"`
 	Run          int               `json:"run"`
+	FixOf        string            `json:"fixOf"`
 	Environment  map[string]string `json:"environment"`
 	Obs          map[string]string `json:"obs"`
 	Analyze      []struct {
 		Code string `json:"code"`
 	} `json:"analyze"`
+	Ports []struct {
+		Svc         string `json:"svc"`
+		Port        int    `json:"port"`
+		Name        string `json:"name"`
+		AppProtocol string `json:"appProtocol"`
+	} `json:"ports"`
 }
 
 // absent is the value of a key a run did not produce. A hook Job that W0
@@ -74,11 +81,49 @@ type Oracle struct {
 }
 
 // ignored reports whether a key carries no information in this comparison.
+//
 // An HTTP probe of a port that W0 did not answer over HTTP measures the probe:
 // a sniffing sidecar turns the request into a 502 on a MySQL port, and that
 // says nothing about MySQL.
-func ignored(key, oracle string) bool {
-	return strings.HasSuffix(key, ":http") && oracle == "none"
+//
+// The passive probe on a port the mesh treats as HTTP measures the probe too.
+// The first pilot run found it on podinfo's gRPC port: an HTTP/2 server sends
+// its SETTINGS frame as soon as a connection opens, so W0 "greets", while a
+// sidecar proxying HTTP/2 opens nothing upstream until the client sends a
+// request. Every real HTTP/2 client speaks first, so the silence breaks
+// nothing.
+func ignored(key, oracle string, httpPorts map[string]bool) bool {
+	if strings.HasSuffix(key, ":http") && oracle == "none" {
+		return true
+	}
+	if strings.HasSuffix(key, ":passive") && httpPorts[strings.TrimSuffix(key, ":passive")] {
+		return true
+	}
+	return false
+}
+
+// httpFamily is the set of port protocols Istio proxies as HTTP, selected by
+// the port name's prefix or by appProtocol.
+var httpFamily = map[string]bool{
+	"http": true, "http2": true, "grpc": true, "grpc-web": true,
+	"h2c": true, "kubernetes.io/h2c": true,
+}
+
+// httpPorts maps "port:<svc>:<port>" to true for every port, in any record,
+// declared as an HTTP-family protocol.
+func httpPorts(runs ...[]Record) map[string]bool {
+	out := map[string]bool{}
+	for _, rs := range runs {
+		for _, r := range rs {
+			for _, p := range r.Ports {
+				prefix, _, _ := strings.Cut(p.Name, "-")
+				if httpFamily[p.AppProtocol] || httpFamily[prefix] {
+					out[fmt.Sprintf("port:%s:%d", p.Svc, p.Port)] = true
+				}
+			}
+		}
+	}
+	return out
 }
 
 func value(r Record, key string) string {
@@ -146,9 +191,10 @@ func Compare(chart, world string, w0, wn []Record, minRuns int) (Comparison, Ora
 
 	universe := keys(w0, wn)
 	oracle := BuildOracle(w0, universe)
+	skip := httpPorts(w0, wn)
 	for _, k := range universe {
 		want, ok := oracle.Values[k]
-		if !ok || ignored(k, want) {
+		if !ok || ignored(k, want, skip) {
 			continue
 		}
 		d := Difference{Key: k, Oracle: want}
@@ -179,4 +225,57 @@ func Compare(chart, world string, w0, wn []Record, minRuns int) (Comparison, Ora
 	}
 	sort.Strings(c.Analyze)
 	return c, oracle
+}
+
+// Certificate is the verdict on a candidate fix (ADR 0001, section 4): a chart
+// entry whose fixOf names the chart it repairs, installed under the same
+// release name so that its observations line up key by key.
+type Certificate struct {
+	Fix, Base string
+	Cleared   []string // mesh worlds where the base differed and the fix does not
+	Problems  []string // why it is not certified
+}
+
+// Certified needs at least one cleared world and nothing else wrong. A fix for
+// a chart that never differed has nothing to prove.
+func (c Certificate) Certified() bool { return len(c.Problems) == 0 && len(c.Cleared) > 0 }
+
+// Certify holds a fix to three conditions: in every mesh world it behaves like
+// its own W0 (so the finding is gone, 3 of 3, and nothing new broke), with no
+// flaky keys either; and its W0 behaves like the base chart's W0, because a
+// fix that changes the chart without a mesh is a different chart.
+func Certify(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0, baseW0 []Record, minRuns int) Certificate {
+	c := Certificate{Fix: fix, Base: base}
+	for _, w := range meshWorlds {
+		f, b := fixCmp[w], baseCmp[w]
+		switch {
+		case f.Undecided != "":
+			c.Problems = append(c.Problems, w+" undecided: "+f.Undecided)
+		case len(f.Findings) > 0:
+			c.Problems = append(c.Problems, fmt.Sprintf("%s still differs from W0: %s", w, keyList(f.Findings)))
+		case len(f.Flaky) > 0:
+			c.Problems = append(c.Problems, fmt.Sprintf("%s flaky: %s", w, keyList(f.Flaky)))
+		case len(b.Findings) > 0:
+			c.Cleared = append(c.Cleared, w)
+		}
+	}
+	w0, _ := Compare(fix, "W0", baseW0, fixW0, minRuns)
+	switch {
+	case w0.Undecided != "":
+		c.Problems = append(c.Problems, "W0 comparison with the base undecided: "+w0.Undecided)
+	case len(w0.Findings) > 0:
+		c.Problems = append(c.Problems, "changes the chart without a mesh: "+keyList(w0.Findings))
+	}
+	if len(c.Cleared) == 0 && len(c.Problems) == 0 {
+		c.Problems = append(c.Problems, base+" has no finding for this fix to clear")
+	}
+	return c
+}
+
+func keyList(ds []Difference) string {
+	ks := make([]string, len(ds))
+	for i, d := range ds {
+		ks[i] = d.Key
+	}
+	return strings.Join(ks, ", ")
 }

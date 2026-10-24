@@ -39,9 +39,12 @@
     "chart": "oci://registry-1.docker.io/bitnamicharts/rabbitmq",
     "version": "16.0.14",
     "values": [
-      "--set", "image.repository=bitnamilegacy/rabbitmq",
-      "--set", "global.security.allowInsecureImages=true",
-      "--set", "replicaCount=3"
+      "--set",
+      "image.repository=bitnamilegacy/rabbitmq",
+      "--set",
+      "global.security.allowInsecureImages=true",
+      "--set",
+      "replicaCount=3"
     ],
     "deadline": "12m",
     "why": "Erlang clustering between StatefulSet peers (epmd 4369, 25672) plus a default NetworkPolicy; the default image no longer exists on docker.io/bitnami, so it points at bitnamilegacy"
@@ -58,7 +61,10 @@
     "repo": "https://nats-io.github.io/k8s/helm/charts/",
     "chart": "nats",
     "version": "2.15.1",
-    "values": ["--set", "config.cluster.enabled=true"],
+    "values": [
+      "--set",
+      "config.cluster.enabled=true"
+    ],
     "why": "server-first protocol (INFO greeting) on client and route ports; appProtocol fix merged upstream, so this is a regression check"
   },
   {
@@ -73,7 +79,39 @@
     "repo": "https://valkey.io/valkey-helm/",
     "chart": "valkey",
     "version": "0.12.0",
-    "values": ["--set", "replica.enabled=true"],
+    "values": [
+      "--set",
+      "replica.enabled=true"
+    ],
     "why": "official Valkey chart with replication between pods; no Istio issues on record, so any result is new data"
+  },
+  {
+    "id": "redis-np-15008",
+    "fixOf": "redis",
+    "chart": "oci://registry-1.docker.io/bitnamicharts/redis",
+    "version": "28.3.9",
+    "values": [
+      "--set-json",
+      "networkPolicy.extraIngress=[{\"ports\":[{\"port\":15008,\"protocol\":\"TCP\"}]}]"
+    ],
+    "why": "candidate fix: the chart's NetworkPolicy allows 6379 only, and ambient delivers pod-to-pod traffic on 15008 (HBONE)"
+  },
+  {
+    "id": "rabbitmq-np-15008",
+    "fixOf": "rabbitmq",
+    "chart": "oci://registry-1.docker.io/bitnamicharts/rabbitmq",
+    "version": "16.0.14",
+    "values": [
+      "--set",
+      "image.repository=bitnamilegacy/rabbitmq",
+      "--set",
+      "global.security.allowInsecureImages=true",
+      "--set",
+      "replicaCount=3",
+      "--set-json",
+      "networkPolicy.extraIngress=[{\"ports\":[{\"port\":15008,\"protocol\":\"TCP\"}]}]"
+    ],
+    "deadline": "12m",
+    "why": "candidate fix: same 15008 rule added to the chart's NetworkPolicy"
   }
 ]

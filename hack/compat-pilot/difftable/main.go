@@ -114,6 +114,41 @@ func render(w io.Writer, records []Record, minRuns int) error {
 		p("| %s | %s | %s |\n", chart, version, strings.Join(cells, " | "))
 	}
 
+	var certs []Certificate
+	for _, chart := range charts {
+		base := ""
+		for _, rs := range byChart[chart] {
+			if len(rs) > 0 {
+				base = rs[0].FixOf
+				break
+			}
+		}
+		if base == "" {
+			continue
+		}
+		byWorld := func(chart string) map[string]Comparison {
+			m := map[string]Comparison{}
+			for _, c := range results[chart] {
+				m[c.World] = c
+			}
+			return m
+		}
+		certs = append(certs, Certify(chart, base, byWorld(chart), byWorld(base),
+			byChart[chart]["W0"], byChart[base]["W0"], minRuns))
+	}
+	if len(certs) > 0 {
+		p("\n## Certificates\n\n")
+		p("A fix is certified when every mesh world behaves like its W0, 3 of 3 with nothing flaky, and its W0 behaves like the base chart's W0.\n\n")
+		p("| fix | for | clears | verdict |\n|---|---|---|---|\n")
+		for _, c := range certs {
+			verdict := "certified"
+			if !c.Certified() {
+				verdict = "not certified: " + strings.Join(c.Problems, "; ")
+			}
+			p("| %s | %s | %s | %s |\n", c.Fix, c.Base, strings.Join(c.Cleared, ", "), verdict)
+		}
+	}
+
 	for _, chart := range charts {
 		p("\n## %s\n\n", chart)
 		if o, ok := oracles[chart]; ok && len(o.Unstable) > 0 {

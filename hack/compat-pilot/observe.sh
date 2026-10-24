@@ -55,6 +55,11 @@ chart="$(jq -r .chart <<<"$spec")"
 version="$(jq -r .version <<<"$spec")"
 repo="$(jq -r '.repo // empty' <<<"$spec")"
 deadline="$(jq -r '.deadline // "8m"' <<<"$spec")"
+fixof="$(jq -r '.fixOf // empty' <<<"$spec")"
+# A candidate fix installs under the release name of the chart it fixes, so
+# every resource, and so every observation key, is named the same and the two
+# can be compared key by key.
+release="${fixof:-$id}"
 mapfile -t values < <(jq -r '.values[]?' <<<"$spec")
 
 tmp="$(mktemp -d)"
@@ -94,7 +99,7 @@ kubectl -n "$ns" wait pod/mmc-client --for=condition=Ready --timeout=180s >/dev/
 
 # --- install ----------------------------------------------------------------
 
-args=(install "$id" "$chart" --namespace "$ns" --version "$version"
+args=(install "$release" "$chart" --namespace "$ns" --version "$version"
   --wait --wait-for-jobs --timeout "$deadline")
 [[ -n "$repo" ]] && args+=(--repo "$repo")
 start="$(date +%s)"
@@ -129,8 +134,25 @@ jq '[.items[]
       restarts: ([.status.containerStatuses[]?.restartCount, .status.initContainerStatuses[]?.restartCount] | add // 0),
       reasons: ([.status.containerStatuses[]?, .status.initContainerStatuses[]?
                  | .state.waiting.reason // .state.terminated.reason // .lastState.terminated.reason // empty]
-                | unique)
+                | unique),
+      # Which container, which image, and what it said. A reason without the
+      # container it belongs to was not enough to read the first pilot run:
+      # "ImagePullBackOff" on a pod that also has an init container and a
+      # proxy does not say which image failed.
+      containers: [(.status.initContainerStatuses[]? | . + {init: true}), .status.containerStatuses[]?
+                   | select(.ready != true or .restartCount > 0)
+                   | {name, image, init: (.init // false), restarts: .restartCount,
+                      state: (.state | keys[0]),
+                      reason: (.state.waiting.reason // .state.terminated.reason // ""),
+                      message: ((.state.waiting.message // .state.terminated.message // "") | .[0:300]),
+                      lastExit: (.lastState.terminated | if . then {exitCode, reason} else null end)}]
     }]' "$tmp/pods.json" >"$tmp/workloads.json"
+
+# Warning events are evidence, not observations: they explain a difference
+# after the fact, and their wording changes between versions.
+kubectl -n "$ns" get events --field-selector type=Warning -o json | jq '[.items[]
+  | {object: (.involvedObject.kind + "/" + .involvedObject.name), reason, message: (.message | .[0:300]), count}]
+  | unique_by(.object, .reason) | .[0:40]' >"$tmp/events.json" || echo '[]' >"$tmp/events.json"
 
 kubectl -n "$ns" get jobs -o json | jq '[.items[] | {
     job: .metadata.name,
@@ -142,8 +164,8 @@ kubectl -n "$ns" get jobs -o json | jq '[.items[] | {
 # --- helm test --------------------------------------------------------------
 
 test_result=none
-if [[ $helm_rc -eq 0 ]] && helm get hooks "$id" -n "$ns" 2>/dev/null | grep -q 'helm.sh/hook: *test'; then
-  if helm test "$id" -n "$ns" --timeout 5m >"$tmp/test.log" 2>&1; then test_result=pass; else test_result=fail; fi
+if [[ $helm_rc -eq 0 ]] && helm get hooks "$release" -n "$ns" 2>/dev/null | grep -q 'helm.sh/hook: *test'; then
+  if helm test "$release" -n "$ns" --timeout 5m >"$tmp/test.log" 2>&1; then test_result=pass; else test_result=fail; fi
 fi
 
 # --- service ports ----------------------------------------------------------
@@ -210,13 +232,14 @@ jq -n \
   --argjson helm_rc "$helm_rc" --argjson duration "$duration" \
   --rawfile helm_log "$tmp/helm.log" --arg test "$test_result" \
   --slurpfile workloads "$tmp/workloads.json" --slurpfile jobs "$tmp/jobs.json" \
-  --slurpfile ports "$tmp/ports.json" --slurpfile analyze "$tmp/analyze.json" '
+  --slurpfile ports "$tmp/ports.json" --slurpfile analyze "$tmp/analyze.json" \
+  --slurpfile events "$tmp/events.json" --arg fixof "$fixof" '
   ($workloads[0] | group_by(.workload)) as $groups
   | {
-    world: $world, chart: $chart, chartVersion: $version, run: $run,
+    world: $world, chart: $chart, chartVersion: $version, run: $run, fixOf: $fixof,
     environment: ($worldinfo | split("\n") | map(select(length > 0) | split("=") | {(.[0]): (.[1:] | join("="))}) | add),
     helm: {rc: $helm_rc, durationSeconds: $duration, logTail: ($helm_log | split("\n") | .[-15:] | join("\n"))},
-    workloads: $workloads[0], jobs: $jobs[0], ports: $ports[0], analyze: $analyze[0],
+    workloads: $workloads[0], jobs: $jobs[0], ports: $ports[0], analyze: $analyze[0], events: $events[0],
     obs: (
       {"helm:install": (if $helm_rc == 0 then "ok" else "failed" end), "helm:test": $test}
       + ([$groups[] | {("workload:" + .[0].workload + ":ready"):
@@ -235,6 +258,6 @@ echo "$id $world run$run: helm rc=$helm_rc in ${duration}s, $(jq '.obs | length'
 
 # The next run must start from nothing, so a namespace that will not go away
 # makes this run's successors meaningless. Say so instead of carrying on.
-helm uninstall "$id" -n "$ns" --wait --timeout 3m >/dev/null 2>&1 || true
+helm uninstall "$release" -n "$ns" --wait --timeout 3m >/dev/null 2>&1 || true
 kubectl delete namespace "$ns" --wait --timeout=5m >/dev/null || undecided "namespace $ns did not delete"
 exit 0
