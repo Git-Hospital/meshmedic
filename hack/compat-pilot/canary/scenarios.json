@@ -1,0 +1,50 @@
+[
+  {
+    "id": "rollouts-istio",
+    "tool": "argo-rollouts",
+    "toolVersion": "v1.10.1",
+    "chart": "argo-rollouts",
+    "chartVersion": "2.43.8",
+    "repo": "https://argoproj.github.io/argo-helm",
+    "router": "virtualservice",
+    "why": "Argo Rollouts' Istio traffic routing writes VirtualService weights; Istio documents VirtualService in ambient as Alpha and only at a waypoint, and Argo Rollouts' docs do not mention ambient"
+  },
+  {
+    "id": "rollouts-gatewayapi",
+    "tool": "argo-rollouts",
+    "toolVersion": "v1.10.1",
+    "chart": "argo-rollouts",
+    "chartVersion": "2.43.8",
+    "repo": "https://argoproj.github.io/argo-helm",
+    "router": "httproute",
+    "plugin": {
+      "name": "argoproj-labs/gatewayAPI",
+      "version": "v0.17.0",
+      "location": "https://github.com/argoproj-labs/rollouts-plugin-trafficrouter-gatewayapi/releases/download/v0.17.0/gatewayapi-plugin-linux-amd64",
+      "sha256": "1904ca787d33107c140521899d61fff030ee75d99908bd175fca5a4647759061"
+    },
+    "why": "the same canary through the Gateway API plugin and an HTTPRoute bound to the Service, the form Istio recommends for waypoints"
+  },
+  {
+    "id": "flagger-istio",
+    "tool": "flagger",
+    "toolVersion": "1.45.0",
+    "chart": "flagger",
+    "chartVersion": "1.45.0",
+    "repo": "https://flagger.app",
+    "router": "virtualservice",
+    "meshProvider": "istio",
+    "why": "Flagger's istio provider generates the VirtualService; its docs do not mention ambient"
+  },
+  {
+    "id": "flagger-gatewayapi",
+    "tool": "flagger",
+    "toolVersion": "1.45.0",
+    "chart": "flagger",
+    "chartVersion": "1.45.0",
+    "repo": "https://flagger.app",
+    "router": "httproute",
+    "meshProvider": "gatewayapi:v1",
+    "why": "Flagger's Gateway API provider with the Service as the route's parent; flagger#1822 (open) reports this setup in ambient"
+  }
+]

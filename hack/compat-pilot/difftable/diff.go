@@ -242,12 +242,12 @@ func Compare(chart, world string, w0, wn []Record, minRuns int) (Comparison, Ora
 		minRuns = 1
 	}
 	c := Comparison{Chart: chart, World: world}
-	w0, d0 := usable("W0", w0)
+	w0, d0 := usable(oracleWorld, w0)
 	wn, dn := usable(world, wn)
 	c.Dropped = append(d0, dn...)
 	c.Runs = len(wn)
 	if len(w0) < minRuns {
-		c.Undecided = fmt.Sprintf("W0 has %d of %d runs", len(w0), minRuns)
+		c.Undecided = fmt.Sprintf("%s has %d of %d runs", oracleWorld, len(w0), minRuns)
 		return c, Oracle{}
 	}
 	if len(wn) < minRuns {
@@ -319,21 +319,21 @@ func Certify(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0, bas
 		case f.Undecided != "":
 			c.Problems = append(c.Problems, w+" undecided: "+f.Undecided)
 		case len(f.Findings) > 0:
-			c.Problems = append(c.Problems, fmt.Sprintf("%s still differs from W0: %s", w, keyList(f.Findings)))
+			c.Problems = append(c.Problems, fmt.Sprintf("%s still differs from %s: %s", w, oracleWorld, keyList(f.Findings)))
 		case len(f.Flaky) > 0:
 			c.Problems = append(c.Problems, fmt.Sprintf("%s flaky: %s", w, keyList(f.Flaky)))
 		case len(b.Findings) > 0:
 			c.Cleared = append(c.Cleared, w)
 		}
 	}
-	w0, _ := Compare(fix, "W0", baseW0, fixW0, minRuns)
+	w0, _ := Compare(fix, oracleWorld, baseW0, fixW0, minRuns)
 	switch {
 	case w0.Undecided != "":
-		c.Problems = append(c.Problems, "W0 comparison with the base undecided: "+w0.Undecided)
+		c.Problems = append(c.Problems, oracleWorld+" comparison with the base undecided: "+w0.Undecided)
 	case len(w0.Findings) > 0:
-		c.Problems = append(c.Problems, "changes the chart without a mesh: "+keyList(w0.Findings))
+		c.Problems = append(c.Problems, "changes the chart in "+oracleWorld+": "+keyList(w0.Findings))
 	case len(w0.Flaky) > 0:
-		c.Problems = append(c.Problems, "flaky against the chart without a mesh: "+keyList(w0.Flaky))
+		c.Problems = append(c.Problems, "flaky against the chart in "+oracleWorld+": "+keyList(w0.Flaky))
 	}
 	if len(c.Cleared) == 0 && len(c.Problems) == 0 {
 		c.Problems = append(c.Problems, base+" has no finding for this fix to clear")

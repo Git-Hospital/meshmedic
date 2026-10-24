@@ -57,6 +57,10 @@ undecided() {
 contexts="$(kubectl config get-contexts -o name)"
 [[ "$contexts" == "kind-$cluster" ]] || undecided "kubeconfig holds '$contexts', expected only kind-$cluster"
 
+# W4 belongs to the second pilot. Here its waypoint's own pod and Service
+# would be observed as if the chart had rendered them.
+[[ "$world" != W4 ]] || { echo "observe.sh runs W0 to W3; W4 is canary.sh's" >&2; exit 2; }
+
 spec="$(jq -ce --arg id "$id" '.[] | select(.id == $id)' "$here/charts.json")" ||
   { echo "no chart '$id' in charts.json" >&2; exit 2; }
 chart="$(jq -r .chart <<<"$spec")"

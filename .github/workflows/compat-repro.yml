@@ -1,0 +1,77 @@
+name: compat-repro
+
+# Runs one reproduction from hack/compat-pilot/repro, exactly as an upstream
+# report quotes it, in a fresh ambient world. A report goes out only after its
+# reproduction has passed here: the pilots ran the same cases through their
+# own harness, not through the commands a maintainer would paste.
+#
+# By hand once it is on main; until then a push to the pilot branch that
+# touches a reproduction runs all of them.
+on:
+  push:
+    branches: [feat/compat-pilot-2]
+    paths:
+      - "hack/compat-pilot/repro/**"
+      - ".github/workflows/compat-repro.yml"
+  workflow_dispatch:
+    inputs:
+      repro:
+        description: "Reproduction to run"
+        required: true
+        type: choice
+        options:
+          - httproute-resolvedwaypoints
+          - networkpolicy-15008
+
+permissions:
+  contents: read
+
+env:
+  ISTIO_VERSION: "1.31.3"
+  KIND_VERSION: "v0.33.0"
+  KIND_NODE_IMAGE: "kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed"
+  HELM_VERSION: "v4.0.4"
+  GATEWAY_API_VERSION: "v1.6.0"
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        repro: ${{ inputs.repro && fromJSON(format('["{0}"]', inputs.repro)) || fromJSON('["httproute-resolvedwaypoints","networkpolicy-15008"]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install pinned tools
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin" && cd "$RUNNER_TEMP"
+
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          sha256sum -c kind-linux-amd64.sha256sum
+          install kind-linux-amd64 "$HOME/bin/kind"
+
+          tarball="istioctl-${ISTIO_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/istio/istio/releases/download/${ISTIO_VERSION}/${tarball}"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/istio/istio/releases/download/${ISTIO_VERSION}/${tarball}.sha256"
+          # Istio's checksum file has one space where sha256sum expects two.
+          echo "$(cut -d' ' -f1 "${tarball}.sha256")  ${tarball}" | sha256sum -c
+          tar xzf "$tarball" && install istioctl "$HOME/bin/istioctl"
+
+          curl -fsSLO --retry 4 --retry-all-errors "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO --retry 4 --retry-all-errors "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          sha256sum -c "helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          tar xzf "helm-${HELM_VERSION}-linux-amd64.tar.gz" && install linux-amd64/helm "$HOME/bin/helm"
+
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: world W3
+        run: hack/compat-pilot/world.sh W3
+
+      - name: ${{ matrix.repro }}
+        env:
+          REPRO: ${{ matrix.repro }}
+        run: hack/compat-pilot/repro/"$REPRO".sh

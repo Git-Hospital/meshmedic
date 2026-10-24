@@ -8,7 +8,11 @@
 //
 // Usage:
 //
-//	go run ./hack/compat-pilot/difftable [-runs 3] RESULTS_DIR
+//	go run ./hack/compat-pilot/difftable [-runs 3] [-oracle W0] [-worlds W1,W2,W3] RESULTS_DIR
+//
+// The first pilot holds every mesh world against W0. The second tests Istio
+// features that do not exist without a mesh, so it holds the ambient worlds
+// against W1, sidecar mode, where those features are documented to work.
 package main
 
 import (
@@ -22,13 +26,29 @@ import (
 	"strings"
 )
 
-var meshWorlds = []string{"W1", "W2", "W3"}
+// oracleWorld and meshWorlds are set once from the flags, before anything is
+// compared.
+var (
+	oracleWorld = "W0"
+	meshWorlds  = []string{"W1", "W2", "W3"}
+)
+
+var worldLabels = map[string]string{
+	"W0": "no mesh",
+	"W1": "sidecar+init",
+	"W2": "sidecar+cni",
+	"W3": "ambient",
+	"W4": "ambient+waypoint",
+}
 
 func main() {
 	minRuns := flag.Int("runs", 3, "runs per world needed for a verdict")
+	oracle := flag.String("oracle", "W0", "the world every other world is held against")
+	worlds := flag.String("worlds", "W1,W2,W3", "the worlds compared with the oracle, comma separated")
 	flag.Parse()
-	if flag.NArg() != 1 || *minRuns < 1 {
-		fmt.Fprintln(os.Stderr, "usage: difftable [-runs 3] RESULTS_DIR")
+	oracleWorld, meshWorlds = *oracle, strings.Split(*worlds, ",")
+	if flag.NArg() != 1 || *minRuns < 1 || !validWorlds(oracleWorld, meshWorlds) {
+		fmt.Fprintln(os.Stderr, "usage: difftable [-runs 3] [-oracle W0] [-worlds W1,W2,W3] RESULTS_DIR")
 		os.Exit(2)
 	}
 	records, err := load(flag.Arg(0))
@@ -44,6 +64,22 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+}
+
+// validWorlds refuses an unknown world, a world named twice and an oracle
+// compared with itself.
+func validWorlds(oracle string, worlds []string) bool {
+	if _, ok := worldLabels[oracle]; !ok {
+		return false
+	}
+	seen := map[string]bool{oracle: true}
+	for _, w := range worlds {
+		if _, ok := worldLabels[w]; !ok || seen[w] {
+			return false
+		}
+		seen[w] = true
+	}
+	return len(worlds) > 0
 }
 
 func load(dir string) ([]Record, error) {
@@ -100,7 +136,7 @@ func render(w io.Writer, records []Record, minRuns int) error {
 	oracles := map[string]Oracle{}
 	for _, chart := range charts {
 		for _, world := range meshWorlds {
-			c, o := Compare(chart, world, byChart[chart]["W0"], byChart[chart][world], minRuns)
+			c, o := Compare(chart, world, byChart[chart][oracleWorld], byChart[chart][world], minRuns)
 			results[chart] = append(results[chart], c)
 			if o.Values != nil {
 				oracles[chart] = o
@@ -110,8 +146,12 @@ func render(w io.Writer, records []Record, minRuns int) error {
 
 	p := func(format string, a ...any) { fmt.Fprintf(w, format, a...) }
 	p("# Compat pilot\n\n")
-	p("A finding is an observation that held in every W0 run and differed in every run of a mesh world (%d runs each).\n\n", minRuns)
-	p("| chart | version | W1 sidecar+init | W2 sidecar+cni | W3 ambient |\n|---|---|---|---|---|\n")
+	p("A finding is an observation that held in every %s run and differed in every run of another world (%d runs each).\n\n", oracleWorld, minRuns)
+	p("| chart | version |")
+	for _, world := range meshWorlds {
+		p(" %s %s |", world, worldLabels[world])
+	}
+	p("\n|---|---|%s\n", strings.Repeat("---|", len(meshWorlds)))
 	for _, chart := range charts {
 		version := ""
 		for _, rs := range byChart[chart] {
@@ -147,11 +187,11 @@ func render(w io.Writer, records []Record, minRuns int) error {
 			return m
 		}
 		certs = append(certs, Certify(chart, base, byWorld(chart), byWorld(base),
-			byChart[chart]["W0"], byChart[base]["W0"], minRuns))
+			byChart[chart][oracleWorld], byChart[base][oracleWorld], minRuns))
 	}
 	if len(certs) > 0 {
 		p("\n## Certificates\n\n")
-		p("A fix is certified when every mesh world behaves like its W0, 3 of 3 with nothing flaky, and its W0 behaves like the base chart's W0.\n\n")
+		p("A fix is certified when every world behaves like its %[1]s, 3 of 3 with nothing flaky, and its %[1]s behaves like the base chart's %[1]s.\n\n", oracleWorld)
 		p("| fix | for | clears | verdict |\n|---|---|---|---|\n")
 		for _, c := range certs {
 			verdict := "certified"
@@ -165,7 +205,7 @@ func render(w io.Writer, records []Record, minRuns int) error {
 	for _, chart := range charts {
 		p("\n## %s\n\n", chart)
 		if o, ok := oracles[chart]; ok && len(o.Unstable) > 0 {
-			p("Unstable in W0, so not compared: %s\n\n", code(o.Unstable))
+			p("Unstable in %s, so not compared: %s\n\n", oracleWorld, code(o.Unstable))
 		}
 		for _, c := range results[chart] {
 			p("### %s: %s\n\n", c.World, c.Verdict())
@@ -180,10 +220,10 @@ func render(w io.Writer, records []Record, minRuns int) error {
 				continue
 			}
 			for _, d := range c.Findings {
-				p("- `%s`: W0 `%s`, %s `%s` (%d/%d)\n", d.Key, d.Oracle, c.World, d.Seen[0], d.Misses, len(d.Seen))
+				p("- `%s`: %s `%s`, %s `%s` (%d/%d)\n", d.Key, oracleWorld, d.Oracle, c.World, d.Seen[0], d.Misses, len(d.Seen))
 			}
 			for _, d := range c.Flaky {
-				p("- flaky `%s`: W0 `%s`, %s %s (%d/%d)\n", d.Key, d.Oracle, c.World, code(d.Seen), d.Misses, len(d.Seen))
+				p("- flaky `%s`: %s `%s`, %s %s (%d/%d)\n", d.Key, oracleWorld, d.Oracle, c.World, code(d.Seen), d.Misses, len(d.Seen))
 			}
 			if len(c.Analyze) > 0 {
 				p("- istioctl analyze: %s\n", code(c.Analyze))
@@ -209,7 +249,7 @@ func code(xs []string) string {
 // cannot be quoted without them.
 func environment(worlds map[string][]Record) string {
 	var parts []string
-	for _, world := range append([]string{"W0"}, meshWorlds...) {
+	for _, world := range append([]string{oracleWorld}, meshWorlds...) {
 		rs := worlds[world]
 		if len(rs) == 0 {
 			continue

@@ -303,3 +303,51 @@ func TestRenderRefusesMixedVersions(t *testing.T) {
 		t.Fatal("mixed versions were tabled")
 	}
 }
+
+// The second pilot holds the ambient worlds against W1, because a canary
+// weight does nothing without a mesh: a W0 to compare with does not exist.
+func TestRenderAgainstAnotherOracle(t *testing.T) {
+	defer func(o string, ws []string) { oracleWorld, meshWorlds = o, ws }(oracleWorld, meshWorlds)
+	oracleWorld, meshWorlds = "W1", []string{"W3", "W4"}
+
+	atWeight := map[string]string{"traffic:canary": "at-weight"}
+	records := append(same("W1", 3, atWeight), same("W3", 3, map[string]string{"traffic:canary": "zero"})...)
+	records = append(records, same("W4", 3, atWeight)...)
+	var b bytes.Buffer
+	if err := render(&b, records, 3); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, want := range []string{
+		"| chart | version | W3 ambient | W4 ambient+waypoint |",
+		"| c |  | differs (1) | same |",
+		"- `traffic:canary`: W1 `at-weight`, W3 `zero` (3/3)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("table lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "W0") {
+		t.Errorf("table mentions W0 although the oracle is W1:\n%s", out)
+	}
+}
+
+func TestValidWorlds(t *testing.T) {
+	for _, tc := range []struct {
+		oracle string
+		worlds []string
+		ok     bool
+	}{
+		{"W0", []string{"W1", "W2", "W3"}, true},
+		{"W1", []string{"W3", "W4"}, true},
+		{"W1", []string{"W1", "W3"}, false},
+		{"W1", []string{"W3", "W3"}, false},
+		{"W1", []string{"W5"}, false},
+		{"W9", []string{"W3"}, false},
+		{"W1", []string{""}, false},
+	} {
+		if got := validWorlds(tc.oracle, tc.worlds); got != tc.ok {
+			t.Errorf("validWorlds(%s, %v) = %v, want %v", tc.oracle, tc.worlds, got, tc.ok)
+		}
+	}
+}
