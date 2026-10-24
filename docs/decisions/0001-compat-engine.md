@@ -195,6 +195,9 @@ one CI run. For each: does it differ, can the difference be explained by a
 documented requirement, does the smallest fix heal it, does an upstream issue
 already exist. The pilot's table decides whether this ADR is accepted.
 
+The pilot's charts, worlds, observations and decision rule are in
+[`docs/compat-pilot.md`](../compat-pilot.md).
+
 ## Not decided here
 
 - Which charts form the atlas and how many (by Artifact Hub stars, downloads,
