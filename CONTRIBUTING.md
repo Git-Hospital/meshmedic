@@ -132,7 +132,7 @@ the claim and what would have to change. An entry with no proof and no
 declaration is the ambiguous kind: nobody can tell whether it has not been got
 to yet or cannot be done.
 
-**6. Attach the evidence.** Put the incident report your run produced in the
+**7. Attach the evidence.** Put the incident report your run produced in the
 pull request. That is the review; the YAML is just how it is written down.
 
 Approval is a separate, human step, and deliberately not part of the pull
@@ -157,7 +157,7 @@ an entry was removed without its approval being retired. Go 1.21 or newer.
 ## Contributing a benchmark scenario instead
 
 If what you have is a real Istio incident rather than a detector for one, it
-belongs in [mesh-incidents-bench](https://github.com/kassvl/mesh-incidents-bench),
+belongs in [boards](https://github.com/Git-Hospital/boards),
 and it is worth more there. That repository scores any tool against reproducible
 mesh failures, and its honest limit is that its author also wrote MeshMedic.
 Scenarios written by somebody else are the fix for that, and they are welcome

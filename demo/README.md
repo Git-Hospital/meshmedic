@@ -9,11 +9,11 @@ Everything below is a captured run against that testbed. The raw output sits
 beside this file; this is the reading of it.
 
 ```console
-$ ./scripts/00-cluster.sh          # kind cluster
-$ ./scripts/01-istio.sh            # Istio ambient, Gateway API CRDs, Prometheus, kube-state-metrics
-$ ./scripts/02-app.sh              # payments v1/v2, ledger, ingress, loadgen, sidecar orders
+$ demo/scripts/00-cluster.sh   # kind cluster
+$ demo/scripts/01-istio.sh     # Istio ambient, Gateway API CRDs, Prometheus, kube-state-metrics
+$ demo/scripts/02-app.sh       # payments v1/v2, ledger, ingress, loadgen, sidecar orders
 $ kubectl -n istio-system port-forward svc/prometheus 9090:9090 &
-$ meshmedic watch --config watch.yaml
+$ meshmedic watch --config demo/watch.yaml
 ```
 
 Add `./scripts/03-argocd.sh` with a `GITHUB_TOKEN` to close the loop through a

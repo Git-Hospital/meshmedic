@@ -1,6 +1,10 @@
 # MeshMedic
 
-Deterministic first responder for service-mesh incidents: it detects in
+[![CI](https://github.com/Git-Hospital/meshmedic/actions/workflows/ci.yml/badge.svg)](https://github.com/Git-Hospital/meshmedic/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Git-Hospital/meshmedic)](https://github.com/Git-Hospital/meshmedic/releases)
+[![License](https://img.shields.io/github/license/Git-Hospital/meshmedic)](LICENSE)
+
+Deterministic first responder for Istio service-mesh incidents: it detects in
 seconds, opens an evidence-dossier pull request, and does it with zero LLM
 and zero cluster mutation.
 
@@ -27,13 +31,13 @@ Prefer a binary? Either of these:
 $ go install github.com/kassvl/meshmedic/cmd/meshmedic@latest   # Go 1.21+
 ```
 
-or a [release archive](https://github.com/kassvl/meshmedic/releases) for linux
+or a [release archive](https://github.com/Git-Hospital/meshmedic/releases) for linux
 and macOS on amd64 and arm64.
 
 Building from a clone works too and needs nothing but Go:
 
 ```console
-$ git clone https://github.com/kassvl/meshmedic.git && cd meshmedic
+$ git clone https://github.com/Git-Hospital/meshmedic.git && cd meshmedic
 $ go build -o meshmedic ./cmd/meshmedic
 $ ./meshmedic validate
 catalog OK: 18 scenarios
@@ -61,7 +65,7 @@ resolution report and the time the incident was open.
 
 How it compares to `istioctl analyze`, Istio's own configuration analyzer, and
 the reproducible scenarios behind that comparison, are in
-[mesh-incidents-bench](https://github.com/kassvl/mesh-incidents-bench).
+[boards](https://github.com/Git-Hospital/boards).
 
 ## The gap it fills
 
@@ -185,7 +189,7 @@ Some entries exist because the usual signals are silent:
 - `mtls-policy-conflict-ambient` reads ztunnel's L4 telemetry
   (`istio_tcp_connections_closed_total` with `response_flags="DENY"`), the
   denials that never become L7 requests in ambient mode. See the
-  [reference doc](https://github.com/kassvl/mesh-incidents-bench/blob/main/docs/ambient-l4-denial-telemetry.md).
+  [reference doc](https://github.com/Git-Hospital/boards/blob/main/docs/ambient-l4-denial-telemetry.md).
 - `traffic-vanished-triage` fires on the *absence* of traffic that used to
   flow, then attaches the client's own failure logs and the most recent
   rollout diff. A bad client deploy stops the traffic and shows up nowhere
@@ -249,7 +253,7 @@ it is complementary rather than competing: `istioctl analyze` is a config-time
 linter that catches invalid configuration before traffic, while MeshMedic
 detects what a valid configuration does wrong at runtime. Run istioctl analyze
 in CI; run MeshMedic against live telemetry. The comparison is measured in the
-[benchmark](https://github.com/kassvl/mesh-incidents-bench).
+[benchmark](https://github.com/Git-Hospital/boards).
 
 The limits are deliberate and worth stating plainly. Total coverage is
 impossible for any tool: even the strongest LLM agents top out well short of
@@ -280,12 +284,14 @@ download, are in [SECURITY.md](SECURITY.md).
 
 See [ROADMAP.md](ROADMAP.md). The 60 second video of a mesh healing itself
 through a merged pull request and the
-[reproducible mesh incident benchmark](https://github.com/kassvl/mesh-incidents-bench)
+[reproducible mesh incident benchmark](https://github.com/Git-Hospital/boards)
 are both done, as are the baseline-memory, closed-loop, and
-unmatched-incident-recorder layers above. Current work extends the
-deterministic taxonomy from the mesh's own failure vocabulary (Envoy response
-flags) and hardens the benchmark's credibility with scenarios authored
-independently of this tool.
+unmatched-incident-recorder layers above. Current work proves that each
+entry's patch heals its fault once applied (`meshmedic-prove remediate`), and
+builds a compatibility atlas: how popular Helm charts and the tools that
+program Istio behave in sidecar and ambient mode
+([ADR 0001](docs/decisions/0001-compat-engine.md), the
+[first pilot](docs/compat-pilot.md) and the [second](docs/compat-pilot-2.md)).
 
 ## License
 
