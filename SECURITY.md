@@ -59,7 +59,7 @@ unaffected.
 
 ## Reporting a vulnerability
 
-Open a [security advisory](https://github.com/kassvl/meshmedic/security/advisories/new)
+Open a [security advisory](https://github.com/Git-Hospital/meshmedic/security/advisories/new)
 rather than a public issue. If you would rather email, the address on the commits
 in this repository reaches the maintainer.
 

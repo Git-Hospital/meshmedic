@@ -154,8 +154,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   command, injecting nothing, with an exit code a script can branch on. They
   existed already but only as the opening act of a run that then mutates the
   cluster, so the question "is this testbed fit to measure anything" could not
-  be asked without answering it destructively. It was asked by hand five times
-  in one session before a suite was trusted to start.
+  be asked without answering it destructively.
 - **`--wait-observer` on the prover.** Before each proof, wait for Prometheus
   to answer rather than injecting into a cluster nobody is watching. A suite
   outlives the port-forward that was up when it started, and the previous
@@ -167,8 +166,8 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   not fire is a finding, and a harness that retries findings until they
   disappear is a machine for producing green. This is the same line the
   detector draws between `blind` and `clear`.
-- **`--results` on the prover**, writing the run as JSON. Eleven scenarios were
-  scored by hand into a scratch file on 2026-08-19 for want of this.
+- **`--results` on the prover**, writing the run as JSON, so a suite's verdicts
+  no longer have to be copied out of its log by hand.
 - **`hack/port-forward.sh`**, a forward that survives a long suite. It waits for
   the listening socket to drain before rebinding, because restarting
   immediately loses the race against its own predecessor and turns a
@@ -307,7 +306,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The traffic-vanished baseline uses `max_over_time` rather than a fixed
   offset, which went blind inside back-to-back outages.
 
-[Unreleased]: https://github.com/kassvl/meshmedic/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/kassvl/meshmedic/compare/v0.3.1...v1.0.0
-[0.3.1]: https://github.com/kassvl/meshmedic/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/kassvl/meshmedic/releases/tag/v0.3.0
+[Unreleased]: https://github.com/Git-Hospital/meshmedic/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/Git-Hospital/meshmedic/compare/v0.3.1...v1.0.0
+[0.3.1]: https://github.com/Git-Hospital/meshmedic/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/Git-Hospital/meshmedic/releases/tag/v0.3.0

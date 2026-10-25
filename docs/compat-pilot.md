@@ -421,64 +421,23 @@ any of it is code:
    nothing may break that passed before, W0 included. A fix without that does
    not go out.
 3. **Issue before PR**, with the reproduction as one command.
-4. **The repository's own rules**, read before writing anything: see
-   [Target repositories](#target-repositories).
+4. **The repository's own rules**, read before writing anything: sign-off,
+   title conventions, and its policy on AI-assisted contributions, which
+   every packet follows and discloses.
 5. **Limits:** one contribution sent per day across all destinations; one open
    contribution per repository, counting Helmbulance's (both tools write to
    bitnami/charts, prometheus-community/helm-charts and grafana charts), and at
    least seven days between two to the same repository.
 6. **Security** findings (mTLS not enforced, a policy not applied) never go to
    a public tracker. They go to the project's private disclosure channel.
-7. **A person sends everything.** The tool writes packets; Kadirhan reads every
-   line and posts it.
+7. **A person sends everything.** The tool writes packets; a maintainer reads
+   every line and posts it.
 
 The measure is how many are merged, not how many are sent.
 
-## Target repositories
-
-Read from each repository on 2026-10-24. Response times are the median of a
-sample of at most eight recent external PRs, so they are a rough guide, not a
-measurement. Policies change, so a packet re-reads the repository's files
-before it is built rather than trusting this table.
-
-| repository | sign-off | AI assistance | conventions | first response / merge |
-|---|---|---|---|---|
-| argoproj/argo-helm | DCO | **disclose, draft PR**: [AGENTS.md](https://github.com/argoproj/argo-helm/blob/main/AGENTS.md) asks for the checkbox "I wrote this PR with the help of a LLM but I fully vetted the work" and a draft PR the human marks ready | `fix(argo-cd): …`, version bump, one `artifacthub.io/changes` entry, helm-docs | ~20 h / ~3 days |
-| prometheus-community/helm-charts | DCO | identify: the PR template says "If you are an AI, please identify yourself" | `[chart] …`, one chart per PR, version bump, helm-unittest | ~14 h / days to weeks |
-| grafana-community/helm-charts | DCO | identify (same template wording) | `[grafana] …`, one chart per PR, version bump, helm-unittest case | ~1 h / ~14 h |
-| bitnami/charts | DCO | silent | `[bitnami/redis] …`, version bump, readme-generator | ~1 week, up to 4 |
-| cloudnative-pg/charts | DCO | **strictest**: the org [AI policy](https://github.com/cloudnative-pg/governance/blob/main/AI_POLICY.md) refuses PRs "that result from running an AI tool over the codebase", refuses AI-written PR descriptions, can block the account, and requires an `Assisted-by:` trailer | issue first, conventional titles | ~17 days / ~7 weeks |
-| nats-io/k8s | not stated (the server repo requires sign-off) | silent here; the nats-server policy probably applies | ct lint, terratest | ~30 h / ~4 days (one sample) |
-| valkey-io/valkey-helm | DCO | silent | version bump, values.schema.json, helm-unittest | ~1 h / 2 to 60 days |
-| istio/istio, istio/istio.io | EasyCLA | none yet; proposed in [istio/community#1691](https://github.com/istio/community/issues/1691) | release note for istio/istio | fast, mostly maintainers |
-
-podinfo is the control and has no external merges in 90 days; it is not a
-target.
-
-What this means for the queue:
-
-- **Every contribution is written by a person and says how it was made.** The
-  pilot's evidence comes from a tool and the text is drafted with help, so
-  every packet discloses that, in the form each repository asks for, even
-  where the policy is silent. "Identify yourself" is answered plainly.
-- **cloudnative-pg gets issues, not PRs.** Its policy describes the pilot
-  almost word for word ("running a tool over the codebase to find
-  improvements"). A reproduced failure is still worth an issue there; a
-  patch is not worth an account block. The response times would make it a
-  slow target anyway.
-- **Bitnami last.** Its content looks frozen since the 2025 image change and a
-  first response takes a week or more. A Bitnami finding goes to the atlas
-  first and to the tracker only if it also holds for a maintained chart.
-- **argo-helm, prometheus-community and grafana-community first**: they answer
-  quickly, they accept agent-assisted work with disclosure, and they hold the
-  two open issues the pilot tries to reproduce ([argo-helm#2887](https://github.com/argoproj/argo-helm/issues/2887),
-  [helm-charts#7404](https://github.com/prometheus-community/helm-charts/issues/7404)).
-- **Istio needs the CLA signed** before the first docs PR, and an issue there
-  waits for a sidecar and ambient disagreement that the docs do not explain.
-
 ## Running it locally
 
-One world at a time; an 8 GB laptop will not hold more. A world needs roughly
+One world at a time; a machine with 8 GB of memory holds only one. A world needs roughly
 6 GB of free disk for the node image, Istio and a chart's images.
 
 ```console

@@ -24,7 +24,7 @@ $ meshmedic-prove --entry <id> --yes-inject-faults --out demo/proof-reports
 
 ## Runs
 
-Nine entries, each injected on the live testbed (kind + Istio 1.24.1) with a
+Sixteen entries, each injected on the live testbed (kind + Istio 1.24.1) with a
 real detector watching. Every row is a full pass: fired inside its own hold
 duration, named the culprit, kept its declared neighbours quiet, and cleared
 when the fault was removed.
@@ -72,7 +72,7 @@ healthy front service was not blamed. `canary-latency-rollback` kept
 these runs found the two firing together.
 
 Every catalog entry now has either a proof or a declared reason it cannot have
-one. `meshmedic-prove --list` prints the inventory: 16 proven, 3 declared
+one. `meshmedic-prove --list` prints the inventory: 16 proven, 2 declared
 unprovable with a measurement behind each, 0 silently missing.
 
 These files are verbatim captures, not edited for consistency. One of them

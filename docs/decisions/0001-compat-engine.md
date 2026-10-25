@@ -11,7 +11,7 @@ rest of this record is the proposal as written.
 
 MeshMedic today answers one question: a mesh that was working is now failing,
 what broke and what is the fix. It answers it from Prometheus, for one cluster,
-for whoever runs it. That has two limits the 2026-10-22 review committee made
+for whoever runs it. An internal review on 2026-10-22 made two of its limits
 concrete:
 
 - Nothing has ever applied a rendered patch. `remediate.Render` has three
@@ -107,7 +107,7 @@ A fix is accepted only when, with the patch applied:
 
 The certificate records the chart version, the worlds, the Istio and
 Kubernetes versions, the runs, and the diff. The same harness then closes the
-committee's first finding for the incident catalog: inject the fault, apply the
+review's first finding for the incident catalog: inject the fault, apply the
 entry's patch to the throwaway cluster, and require the signal to clear. An
 incident entry that cannot earn a certificate drops to `report-only`.
 
@@ -185,7 +185,7 @@ spam, and these limits are code, not intentions:
   (argv commands, idempotent reset, expectations, the blind outcome),
   `remediate.Render`, the lock and approve flow, `pkg/kube`. New: worlds,
   observations, the differ, certification, the queue.
-- This will not run on an 8 GB laptop beyond one world at a time. Local work
+- A machine with 8 GB of memory runs only one world at a time. Local work
   is a single world; the matrix runs in CI.
 - The supply of findings is unknown. A pilot measures it before the engine is
   built (below). If few popular charts break, the atlas is still useful as a
@@ -209,5 +209,5 @@ The pilot's charts, worlds, observations and decision rule are in
 - Whether W4 (waypoint) and Istio version sweeps come in the first atlas.
 - Where the atlas is published (a page in this repo, or its own repository in
   the org).
-- How the compat cases are shared with mesh-incidents-bench (the bench's
+- How the compat cases are shared with [boards](https://github.com/Git-Hospital/boards) (the benchmark's
   `case.yaml` schema is a separate decision).

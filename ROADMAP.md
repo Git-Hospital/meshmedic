@@ -20,17 +20,19 @@ Needs, in order:
 
 **M1 is done.**
 
-## M2: mesh-incidents-bench
+## M2: the benchmark (now boards)
 
 A separate repo of reproducible mesh failure scenarios (grown out of an
 ambient-mesh AIOps thesis) with a harness that scores any tool's diagnosis
-and remediation against them. Publish results for the obvious contenders.
-Nobody has a mesh incident benchmark today; the leaderboard is the point.
+and remediation against them. It is now
+[boards](https://github.com/Git-Hospital/boards), the Git-Hospital benchmark,
+which scores every tool through an adapter and marks the cases written
+alongside MeshMedic as contaminated for it.
 
-## M2.5: win the benchmark outright
+## M2.5: close the gaps the benchmark found
 
-The bench (M2) found the gaps; close them and grow the lead where agentic
-investigators structurally cannot follow:
+The bench (M2) found the gaps; close them where a deterministic pipeline has
+the edge over an agent investigation:
 
 - [x] Labeled evidence: per-workload breakdowns survive into the report, so
   the diagnosis names the offending subset, not just a ratio
@@ -139,7 +141,7 @@ that had never fired anywhere, which was measured, explained, and retired.
   shot versus driving an agent investigation, measured side by side, to show
   the edge is the deterministic pipeline, not the model
 - Present MeshMedic to the community (Istio meeting demo, a CFP for a lightning
-  talk). This sells our own system; it does not contribute to another tool
+  talk)
 
 ## M4: earn the right to be a project
 
@@ -147,3 +149,13 @@ CNCF Sandbox needs adopters and outside contributors. That conversation only
 makes sense after M1 through M3 have produced users. Until then, this repo
 optimizes for one thing: every scenario it claims to fix, it can demonstrably
 fix on camera.
+
+## Now (October 2026)
+
+- Remediation proofs: apply each entry's rendered patch to a throwaway cluster
+  with the fault live, and require the signal to clear
+  (`meshmedic-prove remediate`).
+- The compatibility atlas: popular charts and Istio-programming tools run
+  unchanged in sidecar and ambient worlds, against a no-mesh oracle
+  ([ADR 0001](docs/decisions/0001-compat-engine.md),
+  [pilot 1](docs/compat-pilot.md), [pilot 2](docs/compat-pilot-2.md)).

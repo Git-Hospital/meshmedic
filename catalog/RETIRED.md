@@ -30,7 +30,7 @@ The mesh recorded nothing:
 
 A sidecar drops the connection at the TLS layer before any metric exists to
 stamp it. Cross-checked against every recorded run in this repository and in
-[mesh-incidents-bench](https://github.com/kassvl/mesh-incidents-bench): the only
+[boards](https://github.com/Git-Hospital/boards): the only
 entry that has ever fired for this failure class is
 `mtls-policy-conflict-ambient`. This one never fired anywhere, on any run, at
 any point.
@@ -42,7 +42,7 @@ emits `istio_tcp_connections_closed_total{response_flags="DENY"}` for this
 denial and a sidecar emits nothing at all. Any tool watching a sidecar mesh for
 this class is waiting for something that will never arrive. The full write-up
 is in the benchmark's
-[ambient L4 denial telemetry reference](https://github.com/kassvl/mesh-incidents-bench/blob/main/docs/ambient-l4-denial-telemetry.md).
+[ambient L4 denial telemetry reference](https://github.com/Git-Hospital/boards/blob/main/docs/ambient-l4-denial-telemetry.md).
 
 **What would bring it back.** A signal built on telemetry a sidecar actually
 emits for a rejected handshake. Nothing in the current Istio metric surface
