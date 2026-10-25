@@ -209,5 +209,5 @@ The pilot's charts, worlds, observations and decision rule are in
 - Whether W4 (waypoint) and Istio version sweeps come in the first atlas.
 - Where the atlas is published (a page in this repo, or its own repository in
   the org).
-- How the compat cases are shared with mesh-incidents-bench (the bench's
+- How the compat cases are shared with [boards](https://github.com/Git-Hospital/boards) (the benchmark's
   `case.yaml` schema is a separate decision).

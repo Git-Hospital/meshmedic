@@ -16,8 +16,8 @@ $ kubectl -n istio-system port-forward svc/prometheus 9090:9090 &
 $ meshmedic watch --config demo/watch.yaml
 ```
 
-Add `./scripts/03-argocd.sh` with a `GITHUB_TOKEN` to close the loop through a
-config repository, and `./scripts/04-grafana.sh` for the dashboard used in the
+Add `demo/scripts/03-argocd.sh` with a `GITHUB_TOKEN` to close the loop through a
+config repository, and `demo/scripts/04-grafana.sh` for the dashboard used in the
 video.
 
 ---
