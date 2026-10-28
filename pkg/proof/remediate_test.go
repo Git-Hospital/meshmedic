@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
 )
 
 // remediableEntry is an entry that proposes a patch, so there is something to

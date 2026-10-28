@@ -42,8 +42,8 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
-	"github.com/kassvl/meshmedic/pkg/prom"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/prom"
 )
 
 // Verdict is one entry's standing on a healthy cluster.

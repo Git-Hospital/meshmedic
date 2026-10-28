@@ -39,11 +39,11 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
-	"github.com/kassvl/meshmedic/pkg/detect"
-	"github.com/kassvl/meshmedic/pkg/kube"
-	"github.com/kassvl/meshmedic/pkg/prom"
-	"github.com/kassvl/meshmedic/pkg/proof"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/detect"
+	"github.com/Git-Hospital/meshmedic/pkg/kube"
+	"github.com/Git-Hospital/meshmedic/pkg/prom"
+	"github.com/Git-Hospital/meshmedic/pkg/proof"
 	"gopkg.in/yaml.v3"
 )
 

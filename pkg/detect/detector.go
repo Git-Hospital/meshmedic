@@ -16,10 +16,10 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
-	"github.com/kassvl/meshmedic/pkg/kube"
-	"github.com/kassvl/meshmedic/pkg/prom"
-	"github.com/kassvl/meshmedic/pkg/recorder"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/kube"
+	"github.com/Git-Hospital/meshmedic/pkg/prom"
+	"github.com/Git-Hospital/meshmedic/pkg/recorder"
 )
 
 // Querier is the slice of Prometheus the detector needs. prom.Client

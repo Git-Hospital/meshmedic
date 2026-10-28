@@ -1,4 +1,4 @@
-module github.com/kassvl/meshmedic
+module github.com/Git-Hospital/meshmedic
 
 go 1.21
 

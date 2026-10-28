@@ -115,7 +115,7 @@ release:
     Against a Prometheus you already run, no config file and no testbed:
 
     ```console
-    $ docker run --rm --network host ghcr.io/kassvl/meshmedic:{{ .Tag }} \
+    $ docker run --rm --network host ghcr.io/git-hospital/meshmedic:{{ .Tag }} \
         watch --prometheus http://localhost:9090 \
               --target service=payments,namespace=demo
     ```

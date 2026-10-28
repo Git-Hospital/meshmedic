@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/baseline"
-	"github.com/kassvl/meshmedic/pkg/catalog"
-	"github.com/kassvl/meshmedic/pkg/detect"
+	"github.com/Git-Hospital/meshmedic/pkg/baseline"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/detect"
 )
 
 // Silence is the other half of the proof suite, and it exists because the

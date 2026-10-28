@@ -10,10 +10,10 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/calibrate"
-	"github.com/kassvl/meshmedic/pkg/catalog"
-	"github.com/kassvl/meshmedic/pkg/detect"
-	"github.com/kassvl/meshmedic/pkg/prom"
+	"github.com/Git-Hospital/meshmedic/pkg/calibrate"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/detect"
+	"github.com/Git-Hospital/meshmedic/pkg/prom"
 )
 
 // runCalibrate observes the whole catalog against a cluster the operator

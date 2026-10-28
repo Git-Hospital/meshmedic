@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
 )
 
 func holdScenario(id string, hold time.Duration) catalog.Scenario {

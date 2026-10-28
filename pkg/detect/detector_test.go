@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/baseline"
-	"github.com/kassvl/meshmedic/pkg/catalog"
-	"github.com/kassvl/meshmedic/pkg/kube"
-	"github.com/kassvl/meshmedic/pkg/prom"
-	"github.com/kassvl/meshmedic/pkg/recorder"
+	"github.com/Git-Hospital/meshmedic/pkg/baseline"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/kube"
+	"github.com/Git-Hospital/meshmedic/pkg/prom"
+	"github.com/Git-Hospital/meshmedic/pkg/recorder"
 )
 
 // testProbe is the coverage-probe query every fake below answers with one

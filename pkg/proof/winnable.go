@@ -5,8 +5,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
-	"github.com/kassvl/meshmedic/pkg/detect"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/detect"
 )
 
 // minimumSlack is how much room a proof needs between the moment its entry

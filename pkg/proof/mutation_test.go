@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
 )
 
 // Mutation testing, applied to the guards rather than to the code.

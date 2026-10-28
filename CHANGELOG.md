@@ -7,6 +7,17 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The module path is now `github.com/Git-Hospital/meshmedic`, and versions
+  restart in 0.x.** The repository moved to the Git-Hospital organization while
+  `go.mod` still declared `github.com/kassvl/meshmedic`, so the documented
+  `go install` line installed from the old path. The image name in the docs
+  was stale for the same reason: the release workflow already pushes to
+  `ghcr.io/git-hospital/meshmedic`. The 1.0.0 tag promised a stable interface
+  that the project, still changing direction, cannot keep, so the next release
+  is a 0.x one under the new path. `github.com/kassvl/meshmedic@v1.0.0` stays
+  installable from the Go module proxy, which never forgets a version, and is
+  not updated further.
+
 - **The cycle summary no longer says `firing` for three different things.**
   In Prometheus's vocabulary an alert fires once it has held for its `for`
   duration; this counter turned true the moment the comparison did, which is
