@@ -14,10 +14,12 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   was stale for the same reason: the release workflow already pushes to
   `ghcr.io/git-hospital/meshmedic`. The 1.0.0 tag promised a stable interface
   that the project, still changing direction, cannot keep, so numbering
-  restarts at 0.0.1 under the new path. The earlier tags (0.3.0 to 1.0.0)
-  declared the old module path and broke `go install ...@latest` on the new
-  one, so they and their GitHub releases were removed; the sections below link
-  to the commits they pointed at. `github.com/kassvl/meshmedic@v1.0.0` stays
+  restarts in 0.x under the new path, at 0.4.0, above the old 0.3.x. The
+  earlier tags (0.3.0 to 1.0.0) declared the old module path and broke
+  `go install ...@latest` on the new one, so they and their GitHub releases
+  were removed; the sections below link to the commits they pointed at. The
+  module proxy still lists them under the new path, so `go.mod` retracts
+  0.3.0 to 1.0.1, and a single 1.0.1 tag publishes that retraction. `github.com/kassvl/meshmedic@v1.0.0` stays
   installable from the Go module proxy, which never forgets a version, and is
   not updated further.
 
