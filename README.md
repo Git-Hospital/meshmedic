@@ -8,6 +8,12 @@ Deterministic first responder for Istio service-mesh incidents: it detects in
 seconds, opens an evidence-dossier pull request, and does it with zero LLM
 and zero cluster mutation.
 
+![MeshMedic demo: chaos to merged PR to healed mesh](demo/video/meshmedic-demo.gif)
+
+*Every frame above is real: a live kind + Istio ambient mesh, a real latency
+fault, the pull request MeshMedic opened with evidence from Prometheus, a
+human merge, and Argo CD syncing the fix. Recording script in `demo/video/`.*
+
 ## Run it
 
 Against a Prometheus you already run. No config file, no demo cluster, nothing
@@ -47,12 +53,6 @@ However you get it, the reviewed catalog and its lock are compiled into the
 binary, so a single file is the whole tool: no directory to place, nothing to
 point at, and it runs from anywhere. `--catalog` still overrides both when you
 want to run entries of your own.
-
-![MeshMedic demo: chaos to merged PR to healed mesh](demo/video/meshmedic-demo.gif)
-
-*Every frame above is real: a live kind + Istio ambient mesh, a real latency
-fault, the pull request MeshMedic opened with evidence from Prometheus, a
-human merge, and Argo CD syncing the fix. Recording script in `demo/video/`.*
 
 MeshMedic watches Istio's Prometheus telemetry, matches a human-reviewed
 catalog of failure scenarios, and answers with a GitOps pull request that
