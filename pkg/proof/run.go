@@ -11,13 +11,13 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/baseline"
-	"github.com/kassvl/meshmedic/pkg/catalog"
-	"github.com/kassvl/meshmedic/pkg/detect"
-	"github.com/kassvl/meshmedic/pkg/kube"
-	"github.com/kassvl/meshmedic/pkg/prom"
-	"github.com/kassvl/meshmedic/pkg/remediate"
-	"github.com/kassvl/meshmedic/pkg/report"
+	"github.com/Git-Hospital/meshmedic/pkg/baseline"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/detect"
+	"github.com/Git-Hospital/meshmedic/pkg/kube"
+	"github.com/Git-Hospital/meshmedic/pkg/prom"
+	"github.com/Git-Hospital/meshmedic/pkg/remediate"
+	"github.com/Git-Hospital/meshmedic/pkg/report"
 )
 
 // Result is the outcome of one entry's proof.

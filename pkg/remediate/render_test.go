@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
 )
 
 // fullParams is the complete parameter vocabulary catalog templates may use.

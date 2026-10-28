@@ -21,16 +21,16 @@ import (
 	"text/tabwriter"
 	"time"
 
-	meshmedic "github.com/kassvl/meshmedic"
-	"github.com/kassvl/meshmedic/pkg/baseline"
-	"github.com/kassvl/meshmedic/pkg/catalog"
-	"github.com/kassvl/meshmedic/pkg/detect"
-	"github.com/kassvl/meshmedic/pkg/gitops"
-	"github.com/kassvl/meshmedic/pkg/kube"
-	"github.com/kassvl/meshmedic/pkg/prom"
-	"github.com/kassvl/meshmedic/pkg/recorder"
-	"github.com/kassvl/meshmedic/pkg/remediate"
-	"github.com/kassvl/meshmedic/pkg/report"
+	meshmedic "github.com/Git-Hospital/meshmedic"
+	"github.com/Git-Hospital/meshmedic/pkg/baseline"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/detect"
+	"github.com/Git-Hospital/meshmedic/pkg/gitops"
+	"github.com/Git-Hospital/meshmedic/pkg/kube"
+	"github.com/Git-Hospital/meshmedic/pkg/prom"
+	"github.com/Git-Hospital/meshmedic/pkg/recorder"
+	"github.com/Git-Hospital/meshmedic/pkg/remediate"
+	"github.com/Git-Hospital/meshmedic/pkg/report"
 )
 
 // version is stamped at build time (-ldflags "-X main.version=..."). The

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
-	"github.com/kassvl/meshmedic/pkg/detect"
-	"github.com/kassvl/meshmedic/pkg/remediate"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/detect"
+	"github.com/Git-Hospital/meshmedic/pkg/remediate"
 )
 
 // A remediation proof asks the question an operator actually has.

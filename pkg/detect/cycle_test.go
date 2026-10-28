@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
 )
 
 // The cycle summary is the one line an operator reads on every tick, and for

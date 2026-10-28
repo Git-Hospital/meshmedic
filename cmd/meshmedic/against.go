@@ -11,9 +11,9 @@ import (
 	"text/tabwriter"
 	"text/template"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
-	"github.com/kassvl/meshmedic/pkg/prom"
-	"github.com/kassvl/meshmedic/pkg/promql"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/prom"
+	"github.com/Git-Hospital/meshmedic/pkg/promql"
 )
 
 // Label sets were verified live on one Istio version. When Istio renames a

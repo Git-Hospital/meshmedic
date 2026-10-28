@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/kassvl/meshmedic/pkg/proof"
+	"github.com/Git-Hospital/meshmedic/pkg/proof"
 )
 
 func specs(ids ...string) []proof.Spec {

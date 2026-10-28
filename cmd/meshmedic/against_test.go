@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
 )
 
 func istioMetrics() map[string]bool {

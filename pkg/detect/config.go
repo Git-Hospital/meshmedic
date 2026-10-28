@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
 	"gopkg.in/yaml.v3"
 )
 

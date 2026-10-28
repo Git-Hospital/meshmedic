@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/detect"
-	"github.com/kassvl/meshmedic/pkg/prom"
+	"github.com/Git-Hospital/meshmedic/pkg/detect"
+	"github.com/Git-Hospital/meshmedic/pkg/prom"
 )
 
 // Markdown renders one incident and its proposed patch.

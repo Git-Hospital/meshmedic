@@ -14,7 +14,7 @@ Against a Prometheus you already run. No config file, no demo cluster, nothing
 to install but a container runtime:
 
 ```console
-$ docker run --rm --network host ghcr.io/kassvl/meshmedic:latest \
+$ docker run --rm --network host ghcr.io/git-hospital/meshmedic:latest \
     watch --prometheus http://localhost:9090 \
           --target service=payments,namespace=demo
 meshmedic: watching 18 scenarios for 1 targets against http://localhost:9090 every 30s
@@ -28,7 +28,7 @@ write credentials at all.
 Prefer a binary? Either of these:
 
 ```console
-$ go install github.com/kassvl/meshmedic/cmd/meshmedic@latest   # Go 1.21+
+$ go install github.com/Git-Hospital/meshmedic/cmd/meshmedic@latest   # Go 1.21+
 ```
 
 or a [release archive](https://github.com/Git-Hospital/meshmedic/releases) for linux

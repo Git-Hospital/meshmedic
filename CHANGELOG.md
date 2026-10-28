@@ -7,6 +7,24 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The module path is now `github.com/Git-Hospital/meshmedic`, and versions
+  restart in 0.x.** The repository moved to the Git-Hospital organization while
+  `go.mod` still declared `github.com/kassvl/meshmedic`, so the documented
+  `go install` line installed from the old path. The image name in the docs
+  was stale for the same reason: the release workflow already pushes to
+  `ghcr.io/git-hospital/meshmedic`. The 1.0.0 tag promised a stable interface
+  that the project, still changing direction, cannot keep, so numbering
+  restarts in 0.x under the new path, at 0.4.0, above the old 0.3.x. The
+  earlier tags (0.3.0 to 1.0.0) declared the old module path and broke
+  `go install ...@latest` on the new one, so they and their GitHub releases
+  were removed; the sections below link to the commits they pointed at. The
+  module proxy still lists them under the new path, so `go.mod` retracts
+  0.3.0 to 0.3.1 and 1.0.0-rc1 to 1.0.1, two ranges that leave 0.4.0 and later
+  outside, and a single 1.0.1 tag publishes that retraction.
+  `github.com/kassvl/meshmedic@v1.0.0` stays
+  installable from the Go module proxy, which never forgets a version, and is
+  not updated further.
+
 - **The cycle summary no longer says `firing` for three different things.**
   In Prometheus's vocabulary an alert fires once it has held for its `for`
   duration; this counter turned true the moment the comparison did, which is
@@ -306,7 +324,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The traffic-vanished baseline uses `max_over_time` rather than a fixed
   offset, which went blind inside back-to-back outages.
 
-[Unreleased]: https://github.com/Git-Hospital/meshmedic/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/Git-Hospital/meshmedic/compare/v0.3.1...v1.0.0
-[0.3.1]: https://github.com/Git-Hospital/meshmedic/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/Git-Hospital/meshmedic/releases/tag/v0.3.0
+[Unreleased]: https://github.com/Git-Hospital/meshmedic/commits/main
+[1.0.0]: https://github.com/Git-Hospital/meshmedic/tree/fdcb7dc850a0cc1ef5ba27f33ef08dd46a9b8c4a
+[0.3.1]: https://github.com/Git-Hospital/meshmedic/tree/f1617a53203b5172d35142b7b3527342501a4a83
+[0.3.0]: https://github.com/Git-Hospital/meshmedic/tree/667d9f497d963210d221a9d483fb8db4683b8b6b

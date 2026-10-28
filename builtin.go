@@ -1,6 +1,6 @@
 // Package meshmedic embeds the reviewed catalog and its lock into the binary.
 //
-// Without this, `go install github.com/kassvl/meshmedic/cmd/meshmedic@latest`
+// Without this, `go install github.com/Git-Hospital/meshmedic/cmd/meshmedic@latest`
 // produces a binary that cannot start: go install delivers an executable and
 // nothing else, while the engine reads a directory of YAML files at startup.
 // The very first command a new user runs died with "catalog invalid: reading

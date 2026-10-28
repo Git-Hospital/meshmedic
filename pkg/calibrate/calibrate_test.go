@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
-	"github.com/kassvl/meshmedic/pkg/prom"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/prom"
 )
 
 // scriptedQuerier replays a fixed series of answers, one per Sample call.

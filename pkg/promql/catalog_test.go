@@ -6,7 +6,7 @@ import (
 	"testing"
 	"text/template"
 
-	"github.com/kassvl/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
 )
 
 type catalogQuery struct {
