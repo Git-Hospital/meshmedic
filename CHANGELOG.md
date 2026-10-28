@@ -19,7 +19,9 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `go install ...@latest` on the new one, so they and their GitHub releases
   were removed; the sections below link to the commits they pointed at. The
   module proxy still lists them under the new path, so `go.mod` retracts
-  0.3.0 to 1.0.1, and a single 1.0.1 tag publishes that retraction. `github.com/kassvl/meshmedic@v1.0.0` stays
+  0.3.0 to 0.3.1 and 1.0.0-rc1 to 1.0.1, two ranges that leave 0.4.0 and later
+  outside, and a single 1.0.1 tag publishes that retraction.
+  `github.com/kassvl/meshmedic@v1.0.0` stays
   installable from the Go module proxy, which never forgets a version, and is
   not updated further.
 
