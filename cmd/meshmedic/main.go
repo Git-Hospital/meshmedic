@@ -283,6 +283,11 @@ func runWatch(args []string) {
 		os.Exit(1)
 	}
 
+	if err := validateScenarioIDs(cfg.Targets, scenarios); err != nil {
+		fmt.Fprintln(os.Stderr, "config invalid:", err)
+		os.Exit(1)
+	}
+
 	logger := log.New(os.Stderr, "meshmedic: ", log.LstdFlags)
 
 	var opener *gitops.Client
@@ -460,6 +465,11 @@ func runCheck(args []string) {
 		os.Exit(1)
 	}
 
+	if err := validateScenarioIDs(cfg.Targets, scenarios); err != nil {
+		fmt.Fprintln(os.Stderr, "config invalid:", err)
+		os.Exit(1)
+	}
+
 	logger := log.New(os.Stderr, "meshmedic: ", 0)
 	// A check must not act on what it finds: no incidents delivered, no
 	// resolutions, no pull requests. It only measures whether the tool can
@@ -494,6 +504,16 @@ func runCheck(args []string) {
 			cycle.Unobserved, len(cfg.Targets))
 		os.Exit(1)
 	}
+}
+
+func validateScenarioIDs(targets []detect.Target, scenarios []catalog.Scenario) error {
+	unknown := detect.UnknownScenarios(targets, scenarios)
+	for i, target := range targets {
+		if ids := unknown[i]; len(ids) > 0 {
+			return fmt.Errorf("target %d (%s): unknown scenarios: %s", i, describeTarget(target.Params), strings.Join(ids, ", "))
+		}
+	}
+	return nil
 }
 
 // describeTarget names the incident's subject for the PR title, preferring

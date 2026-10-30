@@ -49,6 +49,25 @@ type GitOps struct {
 
 const defaultInterval = 30 * time.Second
 
+// UnknownScenarios returns each target's scenario IDs that are absent from
+// the catalog, keyed by target index. An empty scenario list selects the
+// entire catalog and is valid.
+func UnknownScenarios(targets []Target, scenarios []catalog.Scenario) map[int][]string {
+	known := make(map[string]bool, len(scenarios))
+	for _, scenario := range scenarios {
+		known[scenario.ID] = true
+	}
+	unknown := make(map[int][]string)
+	for i, target := range targets {
+		for _, id := range target.Scenarios {
+			if !known[id] {
+				unknown[i] = append(unknown[i], id)
+			}
+		}
+	}
+	return unknown
+}
+
 // LoadConfig reads and validates a watch config file.
 func LoadConfig(path string) (Config, error) {
 	var c Config
