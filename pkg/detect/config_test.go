@@ -3,10 +3,32 @@ package detect
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Git-Hospital/meshmedic/pkg/catalog"
 )
+
+func TestUnknownScenarios(t *testing.T) {
+	scenarios := []catalog.Scenario{{ID: "known"}, {ID: "also-known"}}
+	for _, tt := range []struct {
+		name    string
+		targets []Target
+		want    map[int][]string
+	}{
+		{"known", []Target{{Scenarios: []string{"known", "also-known"}}}, map[int][]string{}},
+		{"unknown", []Target{{Scenarios: []string{"known"}}, {Scenarios: []string{"typo", "also-known", "other-typo"}}}, map[int][]string{1: {"typo", "other-typo"}}},
+		{"all", []Target{{}}, map[int][]string{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := UnknownScenarios(tt.targets, scenarios); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("UnknownScenarios = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
