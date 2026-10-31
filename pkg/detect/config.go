@@ -1,7 +1,10 @@
 package detect
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -75,7 +78,12 @@ func LoadConfig(path string) (Config, error) {
 	if err != nil {
 		return c, err
 	}
-	if err := yaml.Unmarshal(data, &c); err != nil {
+	// Strict decoding: a mistyped key must fail the load instead of being
+	// silently ignored (a typo like `statefile` for `stateFile` would disable
+	// persistence and make a restart re-open settled incidents).
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {
 		return c, fmt.Errorf("%s: %w", path, err)
 	}
 	if c.Prometheus == "" {

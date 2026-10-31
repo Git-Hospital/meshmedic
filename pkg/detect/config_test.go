@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,5 +155,76 @@ func TestParseTargetSpecRejectsMalformedInput(t *testing.T) {
 	}
 	if params["subset"] != "" || len(params) != 2 {
 		t.Errorf("params = %v", params)
+	}
+}
+
+func TestLoadConfigRejectsUnknownKeys(t *testing.T) {
+	// The message must name the offending key and line so a typo is easy to
+	// find; a silent ignore would leave the feature switched off.
+	cases := map[string]struct{ content, key string }{
+		"stateFile typo": {
+			content: `prometheus: http://localhost:9090
+statefile: /var/lib/meshmedic/state.json
+targets:
+  - params:
+      service: payments
+`,
+			key: "statefile",
+		},
+		"scenarios typo on a target": {
+			content: `prometheus: http://localhost:9090
+targets:
+  - params:
+      service: payments
+    scenario: canary-latency-rollback
+`,
+			key: "scenario",
+		},
+		"baselineState typo": {
+			content: `prometheus: http://localhost:9090
+baselinestate: /tmp/baseline.json
+targets:
+  - params:
+      service: payments
+`,
+			key: "baselinestate",
+		},
+		"gitops key typo": {
+			content: `prometheus: http://localhost:9090
+gitops:
+  repo: kassvl/config
+  branch: main
+targets:
+  - params:
+      service: payments
+`,
+			key: "branch",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := LoadConfig(writeConfig(t, tc.content))
+			if err == nil {
+				t.Fatalf("want an error for unknown key %q", tc.key)
+			}
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("error %q does not name the offending key %q", err, tc.key)
+			}
+			if !strings.Contains(err.Error(), "line") {
+				t.Fatalf("error %q does not include the line", err)
+			}
+		})
+	}
+}
+
+func TestLoadConfigAcceptsRepositoryExamples(t *testing.T) {
+	for _, path := range []string{
+		"../../examples/watch.yaml",
+		"../../demo/watch.yaml",
+		"../../demo/f9-recorder/watch.yaml",
+	} {
+		if _, err := LoadConfig(path); err != nil {
+			t.Errorf("%s: %v", path, err)
+		}
 	}
 }
