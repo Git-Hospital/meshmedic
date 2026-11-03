@@ -7,6 +7,10 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Targets with unknown scenario IDs now fail startup.** `watch` and `check`
+  name the target and unknown IDs before querying Prometheus. An empty scenario
+  list still selects the whole catalog. (#27, closes #14)
+
 - **The module path is now `github.com/Git-Hospital/meshmedic`, and versions
   restart in 0.x.** The repository moved to the Git-Hospital organization while
   `go.mod` still declared `github.com/kassvl/meshmedic`, so the documented
