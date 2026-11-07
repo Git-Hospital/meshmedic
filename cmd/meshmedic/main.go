@@ -327,7 +327,7 @@ func runWatch(args []string) {
 			return nil
 		}
 		url, err := opener.Open(ctx, gitops.PullRequest{
-			Branch:        gitops.BranchFor(inc.Scenario.ID, time.Now()),
+			Branch:        gitops.BranchFor(inc.Scenario.ID, inc.Params, inc.Since),
 			Base:          cfg.GitOps.Base,
 			Title:         fmt.Sprintf("[meshmedic] %s: %s", inc.Scenario.Title, describeTarget(inc.Params)),
 			Body:          doc,
