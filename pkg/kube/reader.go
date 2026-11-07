@@ -107,7 +107,7 @@ func (r *Reader) Logs(ctx context.Context, namespace, deployment string, sinceSe
 	if err != nil {
 		return "", err
 	}
-	return string(out), nil
+	return redactLogText(string(out)), nil
 }
 
 // Rollout is one deployment's most recent template change: what rolled, how
@@ -242,6 +242,7 @@ func (r *Reader) progressTimes(ctx context.Context, namespace string) (map[strin
 // lines that differ, unified-diff style. Naive line comparison is enough
 // here: templates are small and the changed field is what matters.
 func diffTemplates(oldT, newT any) string {
+	oldT, newT = redactTemplates(oldT, newT)
 	oldLines := jsonLines(oldT)
 	newLines := jsonLines(newT)
 	oldSet := map[string]bool{}
@@ -394,6 +395,9 @@ func renderValue(v any) string {
 			return s
 		}
 	}
+	// A path that ends on a container or a single env entry is printed as JSON; its secret-like
+	// env values are redacted as in an env list.
+	v = redactEnv(v, func(string, string) string { return redacted })
 	b, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Sprintf("%v", v)
@@ -419,10 +423,15 @@ func renderEnvList(items []any) (string, bool) {
 			return "", false
 		}
 		if val, ok := m["value"].(string); ok {
+			if secretLike(name) {
+				val = redacted
+			}
 			parts = append(parts, name+"="+val)
 			continue
 		}
-		b, err := json.Marshal(m)
+		// Not an env entry with a plain value: a valueFrom entry, or a named object such as a
+		// container, whose own env entries are redacted.
+		b, err := json.Marshal(redactEnv(m, func(string, string) string { return redacted }))
 		if err != nil {
 			return "", false
 		}
