@@ -27,7 +27,6 @@ import (
 	"github.com/Git-Hospital/meshmedic/pkg/detect"
 	"github.com/Git-Hospital/meshmedic/pkg/gitops"
 	"github.com/Git-Hospital/meshmedic/pkg/kube"
-	"github.com/Git-Hospital/meshmedic/pkg/prom"
 	"github.com/Git-Hospital/meshmedic/pkg/recorder"
 	"github.com/Git-Hospital/meshmedic/pkg/remediate"
 	"github.com/Git-Hospital/meshmedic/pkg/report"
@@ -133,6 +132,7 @@ func runValidate(args []string) {
 	strict := fs.Bool("strict", false, "exit non-zero if any entry is unlocked (missing or edited)")
 	noDrift := fs.Bool("no-drift", false, "exit non-zero only if an approved entry was edited without re-approval")
 	against := fs.String("against-prometheus", "", "check every entry's metric and label references against a live Prometheus")
+	promAuth := addPromAuthFlags(fs)
 	fs.Parse(args)
 
 	scenarios, lock, lockPath, err := loadCatalog(*dir)
@@ -148,9 +148,18 @@ func runValidate(args []string) {
 	w.Flush()
 	fmt.Printf("catalog OK: %d scenarios\n", len(scenarios))
 
+	if *against == "" && promAuth.auth() != nil {
+		fmt.Fprintln(os.Stderr, "--prometheus-token-env and --prometheus-ca-file need --against-prometheus")
+		os.Exit(2)
+	}
 	if *against != "" {
 		fmt.Println()
-		runAgainstPrometheus(scenarios, *against, nil, *strict)
+		var cfg detect.Config
+		if err := promAuth.apply(&cfg, true); err != nil {
+			fmt.Fprintln(os.Stderr, "config invalid:", err)
+			os.Exit(1)
+		}
+		runAgainstPrometheus(scenarios, newPromClient(*against, cfg.PrometheusAuth), *against, nil, *strict)
 	}
 
 	// The lock standing is part of validation, not a separate concern: a
@@ -249,6 +258,7 @@ func runWatch(args []string) {
 	strict := fs.Bool("strict", false, "refuse to start if any catalog entry is unlocked")
 	var targets multiFlag
 	fs.Var(&targets, "target", "target params as key=value,key=value (repeatable, flag form only)")
+	promAuth := addPromAuthFlags(fs)
 	fs.Parse(args)
 
 	scenarios, lock, lockPath, err := loadCatalog(*dir)
@@ -277,6 +287,9 @@ func runWatch(args []string) {
 			os.Exit(2)
 		}
 		cfg, err = detect.LoadConfig(path)
+	}
+	if err == nil {
+		err = promAuth.apply(&cfg, *promURL != "")
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config invalid:", err)
@@ -368,7 +381,7 @@ func runWatch(args []string) {
 			len(unlocked), len(scenarios))
 	}
 
-	d := detect.New(scenarios, cfg.Targets, prom.NewClient(cfg.Prometheus), handler)
+	d := detect.New(scenarios, cfg.Targets, newPromClient(cfg.Prometheus, cfg.PrometheusAuth), handler)
 	d.Log = logger.Printf
 	d.CoverageProbe = cfg.CoverageProbe
 	d.Unlocked = unlocked
@@ -442,6 +455,7 @@ func runCheck(args []string) {
 	once := fs.Bool("once", true, "evaluate every target once and exit (the only mode today)")
 	var targets multiFlag
 	fs.Var(&targets, "target", "target params as key=value,key=value (repeatable)")
+	promAuth := addPromAuthFlags(fs)
 	fs.Parse(args)
 	_ = *once
 
@@ -460,6 +474,9 @@ func runCheck(args []string) {
 		}
 		cfg, err = detect.LoadConfig(path)
 	}
+	if err == nil {
+		err = promAuth.apply(&cfg, *promURL != "")
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config invalid:", err)
 		os.Exit(1)
@@ -474,7 +491,7 @@ func runCheck(args []string) {
 	// A check must not act on what it finds: no incidents delivered, no
 	// resolutions, no pull requests. It only measures whether the tool can
 	// see, which is why the handler is a no-op.
-	d := detect.New(scenarios, cfg.Targets, prom.NewClient(cfg.Prometheus),
+	d := detect.New(scenarios, cfg.Targets, newPromClient(cfg.Prometheus, cfg.PrometheusAuth),
 		func(context.Context, detect.Incident) error { return nil })
 	d.Log = logger.Printf
 	d.CoverageProbe = cfg.CoverageProbe

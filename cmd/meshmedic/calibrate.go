@@ -13,7 +13,6 @@ import (
 	"github.com/Git-Hospital/meshmedic/pkg/calibrate"
 	"github.com/Git-Hospital/meshmedic/pkg/catalog"
 	"github.com/Git-Hospital/meshmedic/pkg/detect"
-	"github.com/Git-Hospital/meshmedic/pkg/prom"
 )
 
 // runCalibrate observes the whole catalog against a cluster the operator
@@ -36,6 +35,7 @@ func runCalibrate(args []string) {
 	strict := fs.Bool("strict", false, "exit non-zero unless every applicable entry is calibrated")
 	var targets multiFlag
 	fs.Var(&targets, "target", "target params as key=value,key=value (repeatable)")
+	promAuth := addPromAuthFlags(fs)
 	fs.Parse(args)
 
 	scenarios, _, _, err := loadCatalog(*dir)
@@ -52,6 +52,9 @@ func runCalibrate(args []string) {
 			path = "watch.yaml"
 		}
 		cfg, err = detect.LoadConfig(path)
+	}
+	if err == nil {
+		err = promAuth.apply(&cfg, *promURL != "")
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config invalid:", err)
@@ -80,7 +83,7 @@ func runCalibrate(args []string) {
 		Interval:     *interval,
 		MarginFactor: *marginFactor,
 		MinSamples:   *minSamples,
-	}, scenarios, calTargets, prom.NewClient(cfg.Prometheus))
+	}, scenarios, calTargets, newPromClient(cfg.Prometheus, cfg.PrometheusAuth))
 	runner.Log = logger.Printf
 
 	logger.Printf("observing %d entries across %d targets for %s, sampling every %s",
