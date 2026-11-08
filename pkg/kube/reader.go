@@ -320,7 +320,9 @@ func resourceArg(apiVersion, kind string) string {
 // structured renders as compact JSON. A path that matches nothing is an
 // error so the report says "unavailable" instead of silently omitting it.
 func ExtractField(obj map[string]any, path string) (string, error) {
-	matches, err := walk(obj, strings.Split(path, "."))
+	// Redacted before the walk, so a path that ends on a value itself (env[*].value, or one
+	// argument) is redacted like a path that ends on the list or the container.
+	matches, err := walk(redactAll(obj), strings.Split(path, "."))
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", path, err)
 	}
@@ -397,7 +399,7 @@ func renderValue(v any) string {
 	}
 	// A path that ends on a container or a single env entry is printed as JSON; its secret-like
 	// env values are redacted as in an env list.
-	v = redactEnv(v, func(string, string) string { return redacted })
+	v = redactAll(v)
 	b, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Sprintf("%v", v)
@@ -431,7 +433,7 @@ func renderEnvList(items []any) (string, bool) {
 		}
 		// Not an env entry with a plain value: a valueFrom entry, or a named object such as a
 		// container, whose own env entries are redacted.
-		b, err := json.Marshal(redactEnv(m, func(string, string) string { return redacted }))
+		b, err := json.Marshal(redactAll(m))
 		if err != nil {
 			return "", false
 		}

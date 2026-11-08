@@ -98,3 +98,75 @@ func TestRedactLogText(t *testing.T) {
 		}
 	}
 }
+
+// Two containers with the same env name and different values: each value is compared with its own
+// container's, by name, so a rollout that leaves both alone shows no credential change and a real
+// change in one shows (review of #29). Map order varies between runs; run it with -count to see.
+func TestDiffTemplatesKeysEnvByContainer(t *testing.T) {
+	c := func(name, password, image string) map[string]any {
+		return map[string]any{"name": name, "image": image, "env": []any{map[string]any{"name": "DB_PASSWORD", "value": password}}}
+	}
+	tmpl := func(initC, app map[string]any) map[string]any {
+		return map[string]any{"spec": map[string]any{"initContainers": []any{initC}, "containers": []any{app}}}
+	}
+	old := tmpl(c("migrate", "admin-pw", "m:1"), c("app", "app-pw", "a:1"))
+
+	diff := diffTemplates(old, tmpl(c("migrate", "admin-pw", "m:1"), c("app", "app-pw", "a:2")))
+	if strings.Contains(diff, "changed") || !strings.Contains(diff, `+ "image": "a:2"`) {
+		t.Errorf("image-only rollout:\n%s", diff)
+	}
+
+	diff = diffTemplates(old, tmpl(c("migrate", "admin-pw", "m:1"), c("app", "admin-pw", "a:1")))
+	if !strings.Contains(diff, `+ "value": "[redacted, changed]"`) || strings.Contains(diff, "-pw") {
+		t.Errorf("the app's password changed to the initContainer's:\n%s", diff)
+	}
+
+	// The same containers in another order: nothing changed.
+	two := func(a, b map[string]any) map[string]any {
+		return map[string]any{"spec": map[string]any{"containers": []any{a, b}}}
+	}
+	diff = diffTemplates(two(c("x", "x-pw", "i"), c("y", "y-pw", "i")), two(c("y", "y-pw", "i"), c("x", "x-pw", "i")))
+	if strings.Contains(diff, "changed") {
+		t.Errorf("reordered containers:\n%s", diff)
+	}
+}
+
+// A secret-like name=value in a string, such as an argument, is redacted in the diff, and a change
+// to its value is marked without showing either value.
+func TestDiffTemplatesRedactsArgs(t *testing.T) {
+	tmpl := func(password, level string) map[string]any {
+		return map[string]any{"spec": map[string]any{"containers": []any{map[string]any{
+			"name": "app", "args": []any{"--db-password=" + password, "--log-level=" + level},
+		}}}}
+	}
+	diff := diffTemplates(tmpl("hunter2", "info"), tmpl("hunter3", "info"))
+	if strings.Contains(diff, "hunter") || !strings.Contains(diff, `+ "--db-password=[redacted, changed]"`) {
+		t.Errorf("a changed argument:\n%s", diff)
+	}
+	diff = diffTemplates(tmpl("hunter2", "info"), tmpl("hunter2", "debug"))
+	if strings.Contains(diff, "hunter") || strings.Contains(diff, "changed") || !strings.Contains(diff, `+ "--log-level=debug"`) {
+		t.Errorf("an unchanged argument:\n%s", diff)
+	}
+}
+
+// A catalog path that ends on the value itself is redacted like one that ends on the list.
+func TestExtractFieldRedactsValuePaths(t *testing.T) {
+	obj := map[string]any{"spec": map[string]any{"containers": []any{map[string]any{
+		"name": "app",
+		"args": []any{"--api-token=tok-123"},
+		"env":  []any{map[string]any{"name": "DB_PASSWORD", "value": "s3cr3t"}, map[string]any{"name": "MODE", "value": "fast"}},
+	}}}}
+	for path, want := range map[string]string{
+		"spec.containers[*].env[*].value": "[redacted]; fast",
+		"spec.containers[0].env[0].value": "[redacted]",
+		"spec.containers[0].args[0]":      "--api-token=[redacted]",
+	} {
+		got, err := ExtractField(obj, path)
+		if err != nil || got != want {
+			t.Errorf("%s: got %q, %v; want %q", path, got, err, want)
+		}
+	}
+	if obj["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["args"].([]any)[0] != "--api-token=tok-123" {
+		t.Error("ExtractField changed the object it was given")
+	}
+}

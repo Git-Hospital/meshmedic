@@ -36,48 +36,74 @@ func redactLogText(text string) string {
 	return logAssignment.ReplaceAllString(text, "${1}="+redacted)
 }
 
-// redactTemplates returns copies of two pod templates with the plain values of secret-like env
-// entries replaced. A value that differs between the two is marked changed in the newer one, so
-// the diff still shows that a credential changed without showing either value. valueFrom
-// entries hold no value and are left as they are.
+// redactTemplates returns copies of two pod templates with secret-like values replaced: the plain
+// values of secret-like env entries, and secret-like name=value text in other strings, such as
+// --db-password=... in args. A value that differs between the two is marked changed in the newer
+// one, so the diff still shows that a credential changed without showing either value. Values are
+// matched by where they are, not by name alone: an env var is known by its container's name and its
+// own, since two containers (an initContainer and the app, say) often share a name like DB_PASSWORD
+// with different values. Container names, not list indexes, so reordering changes nothing.
+// valueFrom entries hold no value and are left as they are.
 func redactTemplates(oldT, newT any) (any, any) {
 	before := map[string]string{}
-	oldR := redactEnv(oldT, func(name, value string) string {
-		if _, seen := before[name]; !seen {
-			before[name] = value
+	oldR := redactTree(oldT, "", func(key, value string) bool {
+		if _, seen := before[key]; !seen {
+			before[key] = value
 		}
-		return redacted
+		return false
 	})
-	newR := redactEnv(newT, func(name, value string) string {
-		if prev, seen := before[name]; seen && prev != value {
-			return redactedChanged
-		}
-		return redacted
+	newR := redactTree(newT, "", func(key, value string) bool {
+		prev, seen := before[key]
+		return seen && prev != value
 	})
 	return oldR, newR
 }
 
-// redactEnv copies v and, in every object shaped like a Kubernetes env entry (a string name and
-// a string value) with a secret-like name, replaces the value with what mark returns.
-func redactEnv(v any, mark func(name, value string) string) any {
+// redactAll returns a copy of v with every secret-like value replaced.
+func redactAll(v any) any {
+	return redactTree(v, "", func(string, string) bool { return false })
+}
+
+// redactTree copies v and replaces, in every object shaped like a Kubernetes env entry (a string
+// name and a string value) with a secret-like name, the value, and in every other string the values
+// of secret-like name=value pairs. changed is asked, with a key for the value's place in the tree
+// and the plain value, whether to mark it changed. scope names the place: the object keys on the
+// way down and the names of named objects such as containers, never list indexes.
+func redactTree(v any, scope string, changed func(key, value string) bool) any {
 	switch t := v.(type) {
 	case map[string]any:
-		out := make(map[string]any, len(t))
-		for k, e := range t {
-			out[k] = redactEnv(e, mark)
-		}
 		name, okName := t["name"].(string)
 		value, okValue := t["value"].(string)
+		inner := scope
+		if okName {
+			inner = scope + "/" + name
+		}
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = redactTree(e, inner+"."+k, changed)
+		}
 		if okName && okValue && secretLike(name) {
-			out["value"] = mark(name, value)
+			out["value"] = redacted
+			if changed(scope+"\x00env\x00"+name, value) {
+				out["value"] = redactedChanged
+			}
 		}
 		return out
 	case []any:
 		out := make([]any, len(t))
 		for i, e := range t {
-			out[i] = redactEnv(e, mark)
+			out[i] = redactTree(e, scope, changed)
 		}
 		return out
+	case string:
+		r := redactLogText(t)
+		if r == t {
+			return t
+		}
+		if changed(scope+"\x00text\x00"+r, t) {
+			return logAssignment.ReplaceAllString(t, "${1}="+redactedChanged)
+		}
+		return r
 	default:
 		return v
 	}
