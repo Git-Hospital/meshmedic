@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/prom"
 )
 
 func TestUnknownScenarios(t *testing.T) {
@@ -226,5 +227,63 @@ func TestLoadConfigAcceptsRepositoryExamples(t *testing.T) {
 		if _, err := LoadConfig(path); err != nil {
 			t.Errorf("%s: %v", path, err)
 		}
+	}
+}
+
+func TestLoadConfigPrometheusAuth(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, `
+prometheus: https://prom.example
+prometheusAuth:
+  bearerTokenEnv: PROM_TOKEN
+  caFile: /etc/meshmedic/ca.pem
+targets:
+  - params:
+      service: payments
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"PROM_TOKEN": "t0k3n"}
+	a, err := cfg.PrometheusAuth.Resolve(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.BearerToken != "t0k3n" || a.CAFile != "/etc/meshmedic/ca.pem" || a.Username != "" {
+		t.Fatalf("resolved %+v", a)
+	}
+
+	var none *PrometheusAuth
+	if a, err := none.Resolve(func(string) string { return "x" }); err != nil || a != (prom.Auth{}) {
+		t.Fatalf("no auth section resolved to %+v, %v", a, err)
+	}
+}
+
+// A credential pasted where a variable name belongs must not be repeated in an error, which
+// ends up in logs.
+func TestPrometheusAuthErrorsDoNotRepeatValues(t *testing.T) {
+	const pasted = "eyJhbGciOiJIUzI1NiJ9.c2VjcmV0.c2ln"
+	for name, tc := range map[string]struct{ auth, want string }{
+		"token as the name":    {"bearerTokenEnv: " + pasted, "must be the name of an environment variable"},
+		"password as the name": {"usernameEnv: U\n  passwordEnv: \"hunter2!\"", "passwordEnv must be the name"},
+		"bearer and basic":     {"bearerTokenEnv: T\n  usernameEnv: U\n  passwordEnv: P", "alternatives"},
+		"half of basic":        {"usernameEnv: U", "needs both"},
+		"empty":                {"caFile: \"\"", "is empty"},
+	} {
+		_, err := LoadConfig(writeConfig(t, "prometheus: https://p\nprometheusAuth:\n  "+tc.auth+"\ntargets:\n  - params:\n      service: payments\n"))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: got %v, want %q", name, err, tc.want)
+			continue
+		}
+		if strings.Contains(err.Error(), pasted) || strings.Contains(err.Error(), "hunter2") {
+			t.Errorf("%s: the error repeats the value: %v", name, err)
+		}
+	}
+
+	// A variable that is named but not set fails before any request, without its name: a token
+	// can look like a variable name.
+	a := &PrometheusAuth{BearerTokenEnv: "PASTED_CREDENTIAL_NOT_A_NAME"}
+	_, err := a.Resolve(func(string) string { return "" })
+	if err == nil || strings.Contains(err.Error(), "PASTED_CREDENTIAL_NOT_A_NAME") || !strings.Contains(err.Error(), "bearerTokenEnv") {
+		t.Errorf("unset variable: %v", err)
 	}
 }
