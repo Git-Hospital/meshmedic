@@ -32,8 +32,13 @@ func Markdown(inc detect.Incident, patch string) string {
 
 	fmt.Fprintf(&b, "## Incident: %s\n\n", s.Title)
 	fmt.Fprintf(&b, "Scenario `%s` (severity %s) fired for %s.\n\n", s.ID, s.Severity, formatParams(inc.Params))
-	fmt.Fprintf(&b, "The signal has held at **%.4g** (threshold %s %.4g%s for %s) since %s.\n\n",
-		inc.Value, s.Signal.Comparison, threshold, thresholdNote, s.Signal.For,
+	// signal.for is optional in the catalog; without it there is no hold time to name.
+	holdFor := ""
+	if s.Signal.For != "" {
+		holdFor = " for " + s.Signal.For
+	}
+	fmt.Fprintf(&b, "The signal has held at **%.4g** (threshold %s %.4g%s%s) since %s.\n\n",
+		inc.Value, s.Signal.Comparison, threshold, thresholdNote, holdFor,
 		inc.Since.UTC().Format(time.RFC3339))
 
 	fmt.Fprintf(&b, "### Diagnosis\n\n%s\n", strings.TrimSpace(s.Description))
@@ -42,11 +47,11 @@ func Markdown(inc detect.Incident, patch string) string {
 		fmt.Fprintf(&b, "\n### Evidence\n\n| query | value |\n| --- | --- |\n")
 		for _, e := range inc.Evidence {
 			if e.Err != nil {
-				fmt.Fprintf(&b, "| %s | unavailable (%v) |\n", e.Name, e.Err)
+				fmt.Fprintf(&b, "| %s | unavailable (%s) |\n", cell(e.Name), cell(e.Err.Error()))
 				continue
 			}
 			for _, s := range rankedSamples(e.Samples) {
-				fmt.Fprintf(&b, "| %s | %.4g |\n", sampleName(e.Name, s.Labels), s.Value)
+				fmt.Fprintf(&b, "| %s | %.4g |\n", cell(sampleName(e.Name, s.Labels)), s.Value)
 			}
 		}
 	}
@@ -55,7 +60,7 @@ func Markdown(inc detect.Incident, patch string) string {
 		fmt.Fprintf(&b, "\n### Configuration evidence\n\n")
 		for _, o := range inc.ObjectEvidence {
 			if o.Err != nil {
-				fmt.Fprintf(&b, "- %s (%s): unavailable (%v)\n", o.Name, o.Ref, o.Err)
+				fmt.Fprintf(&b, "- %s (%s): unavailable (%s)\n", o.Name, o.Ref, oneLine(o.Err.Error()))
 				continue
 			}
 			paths := make([]string, 0, len(o.Fields))
@@ -64,7 +69,7 @@ func Markdown(inc detect.Incident, patch string) string {
 			}
 			sort.Strings(paths)
 			for _, p := range paths {
-				fmt.Fprintf(&b, "- %s (`%s`) `%s`: `%s`\n", o.Name, o.Ref, p, o.Fields[p])
+				fmt.Fprintf(&b, "- %s (%s) %s: %s\n", o.Name, code(o.Ref), code(p), code(o.Fields[p]))
 			}
 		}
 	}
@@ -73,7 +78,7 @@ func Markdown(inc detect.Incident, patch string) string {
 		fmt.Fprintf(&b, "\n### Log evidence\n\n")
 		for _, le := range inc.LogEvidence {
 			if le.Err != nil {
-				fmt.Fprintf(&b, "- %s: unavailable (%v)\n", le.Name, le.Err)
+				fmt.Fprintf(&b, "- %s: unavailable (%s)\n", le.Name, oneLine(le.Err.Error()))
 				continue
 			}
 			deps := make([]string, 0, len(le.Matches))
@@ -87,11 +92,9 @@ func Markdown(inc detect.Incident, patch string) string {
 					continue
 				}
 				hit = true
-				fmt.Fprintf(&b, "**%s**, `%s`:\n\n```\n", le.Name, dep)
-				for _, line := range le.Matches[dep] {
-					fmt.Fprintf(&b, "%s\n", line)
-				}
-				fmt.Fprintf(&b, "```\n")
+				body := strings.Join(le.Matches[dep], "\n")
+				f := fence(body)
+				fmt.Fprintf(&b, "**%s**, %s:\n\n%s\n%s\n%s\n", le.Name, code(dep), f, body, f)
 			}
 			if !hit {
 				fmt.Fprintf(&b, "- %s: no matching log lines in the namespace\n", le.Name)
@@ -103,7 +106,7 @@ func Markdown(inc detect.Incident, patch string) string {
 		fmt.Fprintf(&b, "\n### Recent rollouts\n\n")
 		for _, re := range inc.RolloutEvidence {
 			if re.Err != nil {
-				fmt.Fprintf(&b, "- %s: unavailable (%v)\n", re.Name, re.Err)
+				fmt.Fprintf(&b, "- %s: unavailable (%s)\n", re.Name, oneLine(re.Err.Error()))
 				continue
 			}
 			if len(re.Rollouts) == 0 {
@@ -111,13 +114,15 @@ func Markdown(inc detect.Incident, patch string) string {
 				continue
 			}
 			for _, r := range re.Rollouts {
-				fmt.Fprintf(&b, "**%s**: `%s` rolled %ds ago, template diff (previous to current):\n\n```diff\n%s\n```\n",
-					re.Name, r.Deployment, r.AgeSeconds, r.Diff)
+				f := fence(r.Diff)
+				fmt.Fprintf(&b, "**%s**: %s rolled %ds ago, template diff (previous to current):\n\n%sdiff\n%s\n%s\n",
+					re.Name, code(r.Deployment), r.AgeSeconds, f, r.Diff, f)
 			}
 		}
 	}
 
-	fmt.Fprintf(&b, "\n### Proposed patch (%s)\n\n```yaml\n%s```\n", s.Remediation.Target.Kind, patch)
+	f := fence(patch)
+	fmt.Fprintf(&b, "\n### Proposed patch (%s)\n\n%syaml\n%s%s\n", s.Remediation.Target.Kind, f, patch, f)
 	fmt.Fprintf(&b, "\n### Rollback\n\n%s\n", strings.TrimSpace(s.Rollback))
 
 	if s.Guardrails.RequiresApproval {
@@ -197,4 +202,50 @@ func formatParams(params map[string]string) string {
 		parts = append(parts, fmt.Sprintf("`%s=%s`", k, params[k]))
 	}
 	return strings.Join(parts, " ")
+}
+
+// Text from the cluster (log lines, template diffs, label values, field values, error strings)
+// goes into a pull request body that a person is about to approve. These helpers keep that text
+// from closing a code block, breaking a table or starting new markdown (#19).
+
+// fence returns a code fence longer than the longest run of backticks in text. A CommonMark
+// fence closes only at a run of backticks at least as long as the one that opened it, so a
+// log line holding three backticks cannot end the block early.
+func fence(text string) string {
+	return strings.Repeat("`", max(3, longestBacktickRun(text)+1))
+}
+
+// code renders text as one inline code span on one line, delimited by more backticks than
+// any run inside it, padded with a space when the text starts or ends with a backtick.
+func code(text string) string {
+	text = oneLine(text)
+	d := strings.Repeat("`", longestBacktickRun(text)+1)
+	if strings.HasPrefix(text, "`") || strings.HasSuffix(text, "`") {
+		text = " " + text + " "
+	}
+	return d + text + d
+}
+
+// cell makes text safe inside a table cell: one line, and a literal | escaped so it does not
+// start a new column.
+func cell(text string) string {
+	return strings.ReplaceAll(oneLine(text), "|", `\|`)
+}
+
+// oneLine replaces line breaks with spaces, so text cannot end a list item or a table row.
+func oneLine(text string) string {
+	return strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(text)
+}
+
+func longestBacktickRun(text string) int {
+	longest, run := 0, 0
+	for _, r := range text {
+		if r != '`' {
+			run = 0
+			continue
+		}
+		run++
+		longest = max(longest, run)
+	}
+	return longest
 }
