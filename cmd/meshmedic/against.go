@@ -58,8 +58,7 @@ var checkParams = map[string]string{
 
 // runAgainstPrometheus checks every catalog entry's metric and label
 // references against a live server, and reports per scenario.
-func runAgainstPrometheus(scenarios []catalog.Scenario, promURL string, params map[string]string, strict bool) {
-	client := prom.NewClient(promURL)
+func runAgainstPrometheus(scenarios []catalog.Scenario, client *prom.Client, promURL string, params map[string]string, strict bool) {
 	ctx := context.Background()
 	_ = ctx
 

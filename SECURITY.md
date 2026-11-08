@@ -25,6 +25,17 @@ else, and it is deliberately reachable only from a config file rather than a
 flag, so it cannot be enabled by pasting a command out of a README. Without
 it, incidents are printed and nothing leaves the process.
 
+**Prometheus credentials stay out of the config file.** The `prometheusAuth`
+section and the `--prometheus-token-env` flag name the environment variable
+that holds a bearer token or a basic-auth user and password, never the value,
+and errors about them name the field, not the variable or its value, in case a
+credential was pasted where a name belongs. The credential is sent on every
+request to the configured Prometheus URL. On a redirect, net/http forwards it
+only to the same domain or a subdomain of it, and MeshMedic refuses a redirect
+from `https://` to `http://`. Use an `https://` URL: over plain `http://` the
+credential is readable on the path, and MeshMedic warns. The token needs read
+access to the query API and nothing more.
+
 **Incident reports contain cluster data.** Labeled metrics, object fields you
 selected as evidence, and matched log lines all end up in the report, and
 therefore in the pull request body. Log evidence is filtered to lines matching

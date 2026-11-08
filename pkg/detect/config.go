@@ -6,20 +6,25 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/prom"
 	"gopkg.in/yaml.v3"
 )
 
 // Config is the watch configuration: where Prometheus lives, how often to
 // evaluate, and which targets to watch.
 type Config struct {
-	Prometheus string   `yaml:"prometheus"`
-	Interval   string   `yaml:"interval"`
-	Targets    []Target `yaml:"targets"`
-	GitOps     *GitOps  `yaml:"gitops"`
+	Prometheus string `yaml:"prometheus"`
+	// PrometheusAuth reaches a Prometheus behind a token, basic auth or a
+	// private CA. Nil sends no credentials.
+	PrometheusAuth *PrometheusAuth `yaml:"prometheusAuth"`
+	Interval       string          `yaml:"interval"`
+	Targets        []Target        `yaml:"targets"`
+	GitOps         *GitOps         `yaml:"gitops"`
 	// BaselineState is where the learned per-signal baseline is persisted.
 	// Empty disables baseline-relative thresholds; scenarios then use their
 	// static thresholds only.
@@ -40,6 +45,81 @@ type Config struct {
 	// Both must be set, and BaselineState too, for the recorder to run.
 	AnomalyWatch []catalog.Query `yaml:"anomalyWatch"`
 	UnmatchedLog string          `yaml:"unmatchedLog"`
+}
+
+// PrometheusAuth names the environment variables that hold the credentials,
+// never the credentials themselves, so a config file can be committed and
+// shared the way the GitHub token is kept out of it (SECURITY.md).
+type PrometheusAuth struct {
+	BearerTokenEnv string `yaml:"bearerTokenEnv"`
+	UsernameEnv    string `yaml:"usernameEnv"`
+	PasswordEnv    string `yaml:"passwordEnv"`
+	// CAFile is a PEM file of extra CA certificates to trust.
+	CAFile string `yaml:"caFile"`
+}
+
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// Check reports a malformed auth section. Its messages name the field and
+// never repeat the value, in case a credential was pasted where a variable
+// name belongs.
+func (a *PrometheusAuth) Check() error {
+	for _, f := range a.envFields() {
+		if f.name != "" && !envName.MatchString(f.name) {
+			return fmt.Errorf("prometheusAuth.%s must be the name of an environment variable (letters, digits and _), not the credential itself", label(f.field))
+		}
+	}
+	basic := a.UsernameEnv != "" || a.PasswordEnv != ""
+	switch {
+	case a.BearerTokenEnv != "" && basic:
+		return errors.New("prometheusAuth: bearerTokenEnv and usernameEnv/passwordEnv are alternatives; set one")
+	case basic && (a.UsernameEnv == "" || a.PasswordEnv == ""):
+		return errors.New("prometheusAuth: basic auth needs both usernameEnv and passwordEnv")
+	case a.BearerTokenEnv == "" && !basic && a.CAFile == "":
+		return errors.New("prometheusAuth is empty; remove it or set bearerTokenEnv, usernameEnv/passwordEnv or caFile")
+	}
+	return nil
+}
+
+// Resolve reads the named variables with getenv and returns the client
+// settings. A named variable that is unset or empty is an error: sending a
+// request without the credential the config asks for would only fail later,
+// as a 401 nobody connects to the missing variable.
+func (a *PrometheusAuth) Resolve(getenv func(string) string) (prom.Auth, error) {
+	if a == nil {
+		return prom.Auth{}, nil
+	}
+	if err := a.Check(); err != nil {
+		return prom.Auth{}, err
+	}
+	out := prom.Auth{CAFile: a.CAFile}
+	dst := map[string]*string{"bearerTokenEnv": &out.BearerToken, "usernameEnv": &out.Username, "passwordEnv": &out.Password}
+	for _, f := range a.envFields() {
+		if f.name == "" {
+			continue
+		}
+		// The variable's name is left out too: a token can look like a name.
+		if *dst[f.field] = getenv(f.name); *dst[f.field] == "" {
+			return prom.Auth{}, fmt.Errorf("the environment variable named in prometheusAuth.%s is not set", label(f.field))
+		}
+	}
+	return out, nil
+}
+
+// label names a field the way the user may have set it: the token also comes from a flag.
+func label(field string) string {
+	if field == "bearerTokenEnv" {
+		return field + " (--prometheus-token-env)"
+	}
+	return field
+}
+
+func (a *PrometheusAuth) envFields() []struct{ field, name string } {
+	return []struct{ field, name string }{
+		{"bearerTokenEnv", a.BearerTokenEnv},
+		{"usernameEnv", a.UsernameEnv},
+		{"passwordEnv", a.PasswordEnv},
+	}
 }
 
 // GitOps configures where remediation pull requests go. Absent means watch
@@ -100,6 +180,11 @@ func LoadConfig(path string) (Config, error) {
 	if c.Interval != "" {
 		if _, err := time.ParseDuration(c.Interval); err != nil {
 			return c, fmt.Errorf("%s: interval: %w", path, err)
+		}
+	}
+	if c.PrometheusAuth != nil {
+		if err := c.PrometheusAuth.Check(); err != nil {
+			return c, fmt.Errorf("%s: %w", path, err)
 		}
 	}
 	if c.GitOps != nil {

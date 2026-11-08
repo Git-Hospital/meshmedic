@@ -24,7 +24,7 @@ var representativeParams = map[string]string{
 
 // catalogQueries renders every signal, evidence and anomaly query in the
 // shipped catalog with representative parameters.
-func catalogQueries(t *testing.T) []catalogQuery {
+func catalogQueries(t testing.TB) []catalogQuery {
 	t.Helper()
 	scenarios, err := catalog.LoadDir("../../catalog")
 	if err != nil {

@@ -137,7 +137,9 @@ func Extract(query string) (Refs, error) {
 			// is a label key. __name__ is special: its value is a metric.
 			if next := peek(toks, i+1); next != nil && next.kind == punct && isMatcher(next.text) {
 				if tk.text == "__name__" {
-					if v := peek(toks, i+2); v != nil && v.kind == str {
+					// Only an equality names one metric. `!=`, `=~` and `!~` select by
+					// exclusion or pattern, and "" names nothing.
+					if v := peek(toks, i+2); v != nil && v.kind == str && next.text == "=" && v.text != "" {
 						metrics[v.text] = true
 					}
 					continue
