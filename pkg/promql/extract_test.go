@@ -59,6 +59,14 @@ func TestExtractRealCatalogSignals(t *testing.T) {
 			wantLabels:  []string{"response_flags"},
 		},
 		{
+			// Found while writing FuzzExtract: these select by exclusion or pattern, or name
+			// nothing, and none is a metric the query depends on.
+			name:        "__name__ names a metric only by equality",
+			query:       `up / {__name__!="down"} / {__name__=~"istio_.*"} / {__name__!~"go_.*"} / {__name__=""}`,
+			wantMetrics: []string{"up"},
+			wantLabels:  nil,
+		},
+		{
 			name:        "bare metric with no selector",
 			query:       `up`,
 			wantMetrics: []string{"up"},
