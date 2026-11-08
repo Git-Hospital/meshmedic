@@ -235,6 +235,13 @@ after the episode, one commit with the patch file, and the incident report as
 the PR body. This is deliberately config-file-only, because write access to a
 repository should not be reachable from a flag pasted out of a README.
 
+If GitHub is down or rate limits the request, the incident stays pending and is
+tried again on the next tick. 5xx and network errors get three attempts with
+backoff; 429, and 403 with a rate-limit header, wait as long as GitHub asks, up
+to two minutes per wait, and a longer wait fails the attempt. A retry of the same episode reuses its branch, and picks up the
+pull request if an earlier attempt opened it, so a failure halfway leaves no
+stray branch behind.
+
 ```yaml
 gitops:
   repo: you/your-config-repo
