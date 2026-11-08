@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -242,6 +243,7 @@ func (r *Reader) progressTimes(ctx context.Context, namespace string) (map[strin
 // lines that differ, unified-diff style. Naive line comparison is enough
 // here: templates are small and the changed field is what matters.
 func diffTemplates(oldT, newT any) string {
+	rawOld, rawNew := oldT, newT
 	oldT, newT = redactTemplates(oldT, newT)
 	oldLines := jsonLines(oldT)
 	newLines := jsonLines(newT)
@@ -265,6 +267,12 @@ func diffTemplates(oldT, newT any) string {
 		}
 	}
 	if b.Len() == 0 {
+		// Redaction can make two different values print alike (two equal-looking secrets in one
+		// container, a credential that moved between containers), and lines are compared as sets. A
+		// change must never read as none.
+		if !reflect.DeepEqual(rawOld, rawNew) {
+			return "~ the template changed in a way these lines do not show: a redacted value, or only the order"
+		}
 		return "(no template change: restart or scale only)"
 	}
 	return strings.TrimRight(b.String(), "\n")

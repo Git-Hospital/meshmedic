@@ -121,12 +121,12 @@ func TestDiffTemplatesKeysEnvByContainer(t *testing.T) {
 		t.Errorf("the app's password changed to the initContainer's:\n%s", diff)
 	}
 
-	// The same containers in another order: nothing changed.
+	// The same containers in another order: no credential changed (the order did, and is said so).
 	two := func(a, b map[string]any) map[string]any {
 		return map[string]any{"spec": map[string]any{"containers": []any{a, b}}}
 	}
 	diff = diffTemplates(two(c("x", "x-pw", "i"), c("y", "y-pw", "i")), two(c("y", "y-pw", "i"), c("x", "x-pw", "i")))
-	if strings.Contains(diff, "changed") {
+	if strings.Contains(diff, "[redacted, changed]") || strings.Contains(diff, "-pw") {
 		t.Errorf("reordered containers:\n%s", diff)
 	}
 }
@@ -168,5 +168,19 @@ func TestExtractFieldRedactsValuePaths(t *testing.T) {
 	}
 	if obj["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["args"].([]any)[0] != "--api-token=tok-123" {
 		t.Error("ExtractField changed the object it was given")
+	}
+}
+
+// Redaction can make two different templates print alike; the diff still says something changed.
+func TestDiffTemplatesNeverHidesAChange(t *testing.T) {
+	tmpl := func(args ...any) map[string]any {
+		return map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "app", "args": args}}}}
+	}
+	diff := diffTemplates(tmpl("--password=a", "--password=b"), tmpl("--password=a", "--password=a"))
+	if strings.Contains(diff, "no template change") || strings.Contains(diff, "=a") || strings.Contains(diff, "=b") {
+		t.Errorf("a change between equal-looking secrets: %s", diff)
+	}
+	if diff := diffTemplates(tmpl("--password=a"), tmpl("--password=a")); diff != "(no template change: restart or scale only)" {
+		t.Errorf("no change: %s", diff)
 	}
 }
