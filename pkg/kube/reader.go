@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -107,7 +108,7 @@ func (r *Reader) Logs(ctx context.Context, namespace, deployment string, sinceSe
 	if err != nil {
 		return "", err
 	}
-	return string(out), nil
+	return redactLogText(string(out)), nil
 }
 
 // Rollout is one deployment's most recent template change: what rolled, how
@@ -242,6 +243,8 @@ func (r *Reader) progressTimes(ctx context.Context, namespace string) (map[strin
 // lines that differ, unified-diff style. Naive line comparison is enough
 // here: templates are small and the changed field is what matters.
 func diffTemplates(oldT, newT any) string {
+	rawOld, rawNew := oldT, newT
+	oldT, newT = redactTemplates(oldT, newT)
 	oldLines := jsonLines(oldT)
 	newLines := jsonLines(newT)
 	oldSet := map[string]bool{}
@@ -264,6 +267,12 @@ func diffTemplates(oldT, newT any) string {
 		}
 	}
 	if b.Len() == 0 {
+		// Redaction can make two different values print alike (two equal-looking secrets in one
+		// container, a credential that moved between containers), and lines are compared as sets. A
+		// change must never read as none.
+		if !reflect.DeepEqual(rawOld, rawNew) {
+			return "~ the template changed in a way these lines do not show: a redacted value, or only the order"
+		}
 		return "(no template change: restart or scale only)"
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -319,7 +328,9 @@ func resourceArg(apiVersion, kind string) string {
 // structured renders as compact JSON. A path that matches nothing is an
 // error so the report says "unavailable" instead of silently omitting it.
 func ExtractField(obj map[string]any, path string) (string, error) {
-	matches, err := walk(obj, strings.Split(path, "."))
+	// Redacted before the walk, so a path that ends on a value itself (env[*].value, or one
+	// argument) is redacted like a path that ends on the list or the container.
+	matches, err := walk(redactAll(obj), strings.Split(path, "."))
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", path, err)
 	}
@@ -394,6 +405,9 @@ func renderValue(v any) string {
 			return s
 		}
 	}
+	// A path that ends on a container or a single env entry is printed as JSON; its secret-like
+	// env values are redacted as in an env list.
+	v = redactAll(v)
 	b, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Sprintf("%v", v)
@@ -419,10 +433,15 @@ func renderEnvList(items []any) (string, bool) {
 			return "", false
 		}
 		if val, ok := m["value"].(string); ok {
+			if secretLike(name) {
+				val = redacted
+			}
 			parts = append(parts, name+"="+val)
 			continue
 		}
-		b, err := json.Marshal(m)
+		// Not an env entry with a plain value: a valueFrom entry, or a named object such as a
+		// container, whose own env entries are redacted.
+		b, err := json.Marshal(redactAll(m))
 		if err != nil {
 			return "", false
 		}

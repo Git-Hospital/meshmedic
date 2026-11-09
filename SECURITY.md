@@ -42,6 +42,24 @@ therefore in the pull request body. Log evidence is filtered to lines matching
 the entry's curated patterns rather than dumped wholesale, but treat a report
 as carrying whatever your telemetry and logs carry.
 
+**Secret-like values are redacted, by name.** A name containing PASSWORD,
+PASSWD, SECRET, TOKEN, KEY, CREDENTIAL or CERT (any case) has its value
+replaced with `[redacted]` in configuration evidence (whatever path a
+catalog entry reads, down to one env value or one argument), in rollout
+template diffs and in matched log lines. That covers plain `value` env
+entries, and a `NAME=value` pair in any other string, such as an argument
+(`--db-password=...`) or a log line. An unquoted value ends at a space, comma,
+semicolon or `&`, so the rest of a value containing one of those is shown. In
+a diff an env value is compared with the same container's, and a changed
+credential shows as `[redacted, changed]`, so the change is visible without
+either value; when redaction makes two different templates print alike, the
+diff says the template changed rather than nothing. `valueFrom` entries carry
+no value and are shown as they are. Nothing else is redacted: a credential
+under an ordinary name, after a flag in a separate argument
+(`--password`, `hunter2`), in a URL's user info or path, in a JSON log line or in a metric
+label reaches the report unchanged, so scope what the entries read
+accordingly.
+
 ## meshmedic-prove is different, on purpose
 
 `meshmedic-prove` **injects faults into the cluster you point it at**. It
