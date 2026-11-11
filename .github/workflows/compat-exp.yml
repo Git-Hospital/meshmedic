@@ -1,0 +1,402 @@
+name: compat-exp
+
+# The compat experiment (docs/compat-experiment.md): install popular third-party
+# charts, unchanged, in throwaway kind worlds W0 (no mesh), W1 (sidecar) and W3
+# (ambient), three runs each, and table what differs. Modes:
+#
+#   acceptance  the ten pilot-1 charts and the redis fix as values and as a
+#               patch (work item 9). The only mode that runs before the tag
+#               compat-exp-freeze exists.
+#   qualify     W0 only, one job per candidate: hack/compat-exp/qualify.sh.
+#               The last job runs select.sh and uploads charts-exp.json.
+#   observe     the frozen list (hack/compat-exp/charts-exp.json), W0/W1/W3.
+#   certify     one fix entry (fix_id) and its base chart, W0/W1/W3, then
+#               difftable with -cell-worlds and -ignore from the entry.
+#   recheck     chart_ids again on the recheck Istio version.
+#
+# Dispatch by hand only. No pull request trigger of any kind.
+#
+# SECURITY. The charts under test are third-party code. They run inside a
+# throwaway kind cluster on the runner, next to the runner's checkout, the
+# runner's network and the job token. This workflow therefore holds no secrets,
+# uses none, and has read-only permissions (contents: read, nothing broader).
+# It must never be given a secret, a deploy key, a write permission or a
+# self-hosted runner: a hostile chart that escapes the cluster would find
+# them. Every workflow input reaches a script through `env:` and is validated by
+# hack/compat-exp/guard.sh against a strict pattern first; no input is ever
+# interpolated into a `run:` block.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "acceptance, qualify, observe, certify or recheck"
+        type: choice
+        required: true
+        default: acceptance
+        options:
+          - acceptance
+          - qualify
+          - observe
+          - certify
+          - recheck
+      charts_file:
+        description: "Chart list under hack/compat-exp/ (empty: acceptance-charts.json, candidates-charts.json or charts-exp.json by mode)"
+        type: string
+        required: false
+        default: ""
+      fixes_file:
+        description: "Fix entries under hack/compat-exp/fixes/ (observe, certify, recheck; empty for none)"
+        type: string
+        required: false
+        default: ""
+      chart_ids:
+        description: "Chart or fix ids, separated by spaces (empty: the list's primary charts; required for recheck)"
+        type: string
+        required: false
+        default: ""
+      fix_id:
+        description: "certify only: the fix entry to certify"
+        type: string
+        required: false
+        default: ""
+      istio:
+        description: "Istio version. Every mode but recheck needs the first value; recheck needs the second."
+        type: choice
+        required: true
+        default: "1.31.3"
+        options:
+          - "1.31.3"
+          # FREEZE EDIT, this one line: replace the placeholder with the recheck
+          # version decided at the freeze (docs/compat-experiment.md section 4).
+          # While it still reads like this, mode recheck fails in the guard.
+          - "recheck-version-undecided"
+
+permissions:
+  contents: read
+
+# Runs are never cancelled by a newer dispatch: a half-finished run 1 is lost
+# data, and the 12 h gap between the two runs is part of the design.
+concurrency:
+  group: compat-exp-${{ github.ref }}
+  cancel-in-progress: false
+
+# Pinned, and recorded in every result. The Istio version is the dispatch
+# input, validated by the guard; ISTIO_PRIMARY is the version of every mode
+# but recheck. The registry mirror is on in EVERY world, W0 included.
+env:
+  ISTIO_PRIMARY: "1.31.3"
+  KIND_VERSION: "v0.33.0"
+  KIND_NODE_IMAGE: "kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed"
+  HELM_VERSION: "v4.0.4"
+  MMC_REGISTRY_MIRROR: "1"
+
+jobs:
+  # Before any cluster work: the freeze, the hash, the fix entries, the inputs.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # actions/checkout v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: guard
+        env:
+          GUARD_MODE: ${{ inputs.mode }}
+          GUARD_CHARTS_FILE: ${{ inputs.charts_file }}
+          GUARD_FIXES_FILE: ${{ inputs.fixes_file }}
+          GUARD_CHART_IDS: ${{ inputs.chart_ids }}
+          GUARD_FIX_ID: ${{ inputs.fix_id }}
+          GUARD_ISTIO: ${{ inputs.istio }}
+        run: hack/compat-exp/guard.sh check
+
+  # The matrix, computed from the chart list. guard.sh fails the run if it
+  # would pass 256 jobs (GitHub's limit per run).
+  plan:
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+      mode: ${{ steps.plan.outputs.mode }}
+      kind: ${{ steps.plan.outputs.kind }}
+      istio: ${{ steps.plan.outputs.istio }}
+      fix_id: ${{ steps.plan.outputs.fix_id }}
+      cell_worlds: ${{ steps.plan.outputs.cell_worlds }}
+      ignore: ${{ steps.plan.outputs.ignore }}
+    steps:
+      # actions/checkout v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - id: plan
+        env:
+          GUARD_MODE: ${{ inputs.mode }}
+          GUARD_CHARTS_FILE: ${{ inputs.charts_file }}
+          GUARD_FIXES_FILE: ${{ inputs.fixes_file }}
+          GUARD_CHART_IDS: ${{ inputs.chart_ids }}
+          GUARD_FIX_ID: ${{ inputs.fix_id }}
+          GUARD_ISTIO: ${{ inputs.istio }}
+        run: hack/compat-exp/guard.sh plan plan >> "$GITHUB_OUTPUT"
+      # The effective chart list (frozen charts, reserves and fix entries) that
+      # every job below reads through CHARTS_FILE.
+      # actions/upload-artifact v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: plan-${{ github.run_id }}
+          path: plan/
+          if-no-files-found: error
+
+  qualify:
+    needs: plan
+    if: needs.plan.outputs.kind == 'qualify'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      ISTIO_VERSION: ${{ needs.plan.outputs.istio }}
+      CHARTS_FILE: ${{ github.workspace }}/plan/charts.json
+    steps:
+      # actions/checkout v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      # actions/download-artifact v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: plan-${{ github.run_id }}
+          path: plan
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: raise inotify limits
+        run: sudo sysctl -w fs.inotify.max_user_watches=524288 fs.inotify.max_user_instances=512
+      - name: install pinned tools
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin" && cd "$RUNNER_TEMP"
+
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          sha256sum -c kind-linux-amd64.sha256sum
+          install kind-linux-amd64 "$HOME/bin/kind"
+
+          curl -fsSLO --retry 4 --retry-all-errors "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO --retry 4 --retry-all-errors "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          sha256sum -c "helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          tar xzf "helm-${HELM_VERSION}-linux-amd64.tar.gz" && install linux-amd64/helm "$HOME/bin/helm"
+
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          yq --version
+      - name: world W0
+        run: hack/compat-pilot/world.sh W0
+      # A run that cannot decide (exit 3) fails the job; a chart that does not
+      # qualify is a record, not a failure.
+      - name: qualify the candidate
+        env:
+          CHART: ${{ matrix.chart }}
+        run: hack/compat-exp/qualify.sh "$CHART" results
+      - name: cluster state on failure
+        if: failure()
+        run: |
+          KUBECONFIG="$PWD/.mmc-state/mmc-w0.kubeconfig"
+          export KUBECONFIG
+          mkdir -p results/debug
+          kubectl get pods -A -o wide > results/debug/pods.txt 2>&1 || true
+          kubectl get events -A --sort-by=.lastTimestamp > results/debug/events.txt 2>&1 || true
+          tail -50 results/debug/events.txt || true
+      # actions/upload-artifact v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: qual-${{ github.run_id }}-${{ matrix.chart }}
+          path: results/
+          if-no-files-found: warn
+
+  # The records become charts-exp.json: the first 50 qualified, 15 reserves,
+  # the install deadline, the bias table and the hash. Fewer than 40 qualified
+  # is the infeasible stop of section 7, and this job fails with that message.
+  select:
+    needs: [plan, qualify]
+    if: ${{ !cancelled() && needs.plan.outputs.kind == 'qualify' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # actions/checkout v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      # actions/download-artifact v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: qual-${{ github.run_id }}-*
+          path: qual
+          merge-multiple: true
+      - name: select
+        run: |
+          set -euo pipefail
+          rm -rf qual/debug
+          mkdir -p out
+          hack/compat-exp/select.sh hack/compat-exp/candidates.json qual out/charts-exp.json | tee -a "$GITHUB_STEP_SUMMARY"
+      # actions/upload-artifact v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: charts-exp-${{ github.run_id }}
+          path: |
+            out/
+            qual/
+          if-no-files-found: error
+
+  observe:
+    needs: plan
+    if: needs.plan.outputs.kind == 'observe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      ISTIO_VERSION: ${{ needs.plan.outputs.istio }}
+      CHARTS_FILE: ${{ github.workspace }}/plan/charts.json
+    steps:
+      # actions/checkout v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      # actions/download-artifact v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: plan-${{ github.run_id }}
+          path: plan
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: raise inotify limits
+        run: sudo sysctl -w fs.inotify.max_user_watches=524288 fs.inotify.max_user_instances=512
+      - name: install pinned tools
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin" && cd "$RUNNER_TEMP"
+
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          sha256sum -c kind-linux-amd64.sha256sum
+          install kind-linux-amd64 "$HOME/bin/kind"
+
+          tarball="istioctl-${ISTIO_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/istio/istio/releases/download/${ISTIO_VERSION}/${tarball}"
+          curl -fsSLO --retry 4 --retry-all-errors "https://github.com/istio/istio/releases/download/${ISTIO_VERSION}/${tarball}.sha256"
+          # Istio's checksum file has one space where sha256sum expects two.
+          echo "$(cut -d' ' -f1 "${tarball}.sha256")  ${tarball}" | sha256sum -c
+          tar xzf "$tarball" && install istioctl "$HOME/bin/istioctl"
+
+          curl -fsSLO --retry 4 --retry-all-errors "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO --retry 4 --retry-all-errors "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          sha256sum -c "helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          tar xzf "helm-${HELM_VERSION}-linux-amd64.tar.gz" && install linux-amd64/helm "$HOME/bin/helm"
+
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+      - name: world
+        env:
+          WORLD: ${{ matrix.world }}
+        run: hack/compat-pilot/world.sh "$WORLD"
+      # A run that cannot decide (exit 3) ends the loop: the namespace it left
+      # behind would leak into every later run. The table reports the missing
+      # runs as undecided, never as compatible.
+      - name: three runs
+        env:
+          WORLD: ${{ matrix.world }}
+          CHART: ${{ matrix.chart }}
+        run: |
+          set -uo pipefail
+          for run in 1 2 3; do
+            hack/compat-pilot/observe.sh "$WORLD" "$CHART" "$run" results || exit $?
+          done
+      - name: cluster state on failure
+        if: failure()
+        env:
+          WORLD: ${{ matrix.world }}
+        run: |
+          KUBECONFIG="$PWD/.mmc-state/mmc-$(tr '[:upper:]' '[:lower:]' <<<"$WORLD").kubeconfig"
+          export KUBECONFIG
+          mkdir -p results/debug
+          kubectl get pods -A -o wide > results/debug/pods.txt 2>&1 || true
+          kubectl get events -A --sort-by=.lastTimestamp > results/debug/events.txt 2>&1 || true
+          tail -50 results/debug/events.txt || true
+      # The run id is in the artifact name, so records of two runs can be
+      # joined later without guessing which run they came from.
+      # actions/upload-artifact v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: exp-${{ github.run_id }}-${{ matrix.chart }}-${{ matrix.world }}
+          path: results/
+          if-no-files-found: warn
+
+  report:
+    needs: [plan, observe]
+    if: ${{ !cancelled() && needs.plan.outputs.kind == 'observe' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # actions/checkout v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      # actions/setup-go v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+      # actions/download-artifact v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: exp-${{ github.run_id }}-*
+          path: results
+          merge-multiple: true
+      # The experiment has no W2 (it matched W1 in every row of pilot 1), so
+      # difftable compares W1 and W3. Certification passes the fix entry's own
+      # cell worlds and ignore file.
+      - name: difftable
+        env:
+          RUN_ID: ${{ github.run_id }}
+          CELL_WORLDS: ${{ needs.plan.outputs.cell_worlds }}
+          IGNORE_FILE: ${{ needs.plan.outputs.ignore }}
+        run: |
+          set -euo pipefail
+          rm -rf results/debug
+          args=(-worlds W1,W3)
+          if [ -n "$CELL_WORLDS" ]; then args+=(-cell-worlds "$CELL_WORLDS"); fi
+          if [ -n "$IGNORE_FILE" ]; then args+=(-ignore "$IGNORE_FILE"); fi
+          echo "run id: $RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+          go run ./hack/compat-pilot/difftable "${args[@]}" results | tee table.md >> "$GITHUB_STEP_SUMMARY"
+          go run ./hack/compat-pilot/difftable -json "${args[@]}" results > "report-$RUN_ID.json"
+      # Hook, disabled by absence: the tools below are built outside this
+      # change. This step only says which exist; it runs none of them, because
+      # their interfaces are not part of this workflow's contract yet.
+      - name: hook, post-run tools present
+        run: |
+          for tool in staticcheck ledger crossrun; do
+            if [ -d "hack/compat-exp/$tool" ]; then
+              echo "present: hack/compat-exp/$tool (not invoked here; run it on the report artifact)"
+            fi
+          done
+      # actions/upload-artifact v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: compat-exp-report-${{ github.run_id }}
+          path: |
+            report-*.json
+            table.md
+            results/

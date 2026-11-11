@@ -1,0 +1,14 @@
+--- a/values.yaml
++++ b/values.yaml
+@@ -1681,7 +1681,10 @@
+   ##                 values:
+   ##                   - frontend
+   ##
+-  extraIngress: []
++  extraIngress:
++    - ports:
++        - port: 15008
++          protocol: TCP
+   ## @param networkPolicy.extraEgress Add extra egress rules to the NetworkPolicy
+   ## e.g:
+   ## extraEgress:
