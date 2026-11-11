@@ -205,7 +205,9 @@ MeshMedic is a single Go binary carrying the reviewed `catalog/` and its lock
 (`--catalog`, or `MESHMEDIC_CATALOG`, points it at a directory instead, which
 is what you want while editing entries).
 The flag form above is the fast path for one target; a config file is how you
-watch several, tune the interval, and turn on the features below.
+watch several, tune the interval, and turn on the features below. Every field
+of the file, with its default and what the flag form cannot set, is in
+[docs/watch-config.md](docs/watch-config.md).
 
 ```console
 $ meshmedic validate                       # what the engine knows how to fix
