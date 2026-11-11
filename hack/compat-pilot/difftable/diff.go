@@ -38,6 +38,13 @@ type Record struct {
 		Owner string `json:"owner"`
 		Image string `json:"image"`
 	} `json:"pullFailures"`
+	// CapacityPending lists the pods that stayed Pending for lack of cpu or
+	// memory, the way PullFailures lists pull failures. Non-empty leaves the
+	// run out; absent, null or empty is false, so old records still work.
+	CapacityPending []struct {
+		Pod     string `json:"pod"`
+		Message string `json:"message"`
+	} `json:"capacityPending"`
 }
 
 // pullFailure names the image a run could not pull, if any. Such a run
@@ -69,19 +76,52 @@ func pullFailure(r Record) string {
 	return ""
 }
 
-// usable drops the runs that measured something other than the chart, and
-// says why for each.
-func usable(world string, rs []Record) ([]Record, []string) {
+// DroppedRun is one run left out of a comparison, and why.
+type DroppedRun struct {
+	World  string `json:"world"`
+	Run    int    `json:"run"`
+	Reason string `json:"reason"` // "pull-failure" or "capacity"
+	Detail string `json:"detail"`
+	text   string
+}
+
+// Why a run is left out, as the JSON report names it.
+const (
+	reasonPull     = "pull-failure"
+	reasonCapacity = "capacity"
+)
+
+// usableRuns drops the runs that measured something other than the chart, and
+// says why for each: a registry that refused a pull, or a runner without the
+// room to schedule a pod. A run that is both is left out as a pull failure.
+func usableRuns(world string, rs []Record) ([]Record, []DroppedRun) {
 	var out []Record
-	var dropped []string
+	var dropped []DroppedRun
 	for _, r := range rs {
 		if img := pullFailure(r); img != "" {
-			dropped = append(dropped, fmt.Sprintf("%s run %d: image pull failed (%s)", world, r.Run, img))
+			dropped = append(dropped, DroppedRun{World: world, Run: r.Run, Reason: reasonPull, Detail: img,
+				text: fmt.Sprintf("%s run %d: image pull failed (%s)", world, r.Run, img)})
+			continue
+		}
+		if len(r.CapacityPending) > 0 {
+			detail := r.CapacityPending[0].Pod + ": " + r.CapacityPending[0].Message
+			dropped = append(dropped, DroppedRun{World: world, Run: r.Run, Reason: reasonCapacity, Detail: detail,
+				text: fmt.Sprintf("%s run %d: capacity Pending (%s)", world, r.Run, detail)})
 			continue
 		}
 		out = append(out, r)
 	}
 	return out, dropped
+}
+
+// usable is usableRuns with the reasons as the table words them.
+func usable(world string, rs []Record) ([]Record, []string) {
+	out, dropped := usableRuns(world, rs)
+	var text []string
+	for _, d := range dropped {
+		text = append(text, d.text)
+	}
+	return out, text
 }
 
 // absent is the value of a key a run did not produce. A hook Job that W0
@@ -113,6 +153,48 @@ type Comparison struct {
 	Analyze      []string // istioctl analyze codes seen in any run
 	Dropped      []string // runs left out, and why
 	Undecided    string   // why no verdict was possible, if none was
+
+	// What the JSON report adds to the table: every key with its verdict, the
+	// runs used and the runs left out, on both sides.
+	Keys           []KeyResult
+	RunsUsed       []int
+	OracleRunsUsed []int
+	DroppedRuns    []DroppedRun
+}
+
+// Verdicts of one observation key.
+const (
+	keySame      = "same"
+	keyDiffers   = "differs"
+	keyFlaky     = "flaky"
+	keyLeftOut   = "left out"
+	keyUndecided = "undecided"
+)
+
+// KeyResult is one observation key in one mesh world.
+type KeyResult struct {
+	Key     string
+	Class   string  // the part of the key before the first colon
+	Verdict string  // same, differs, flaky, left out or undecided
+	Reason  string  // why the key was left out or undecided
+	Oracle  *string // the value every oracle run agreed on, nil if none
+	Seen    []string
+	Misses  int
+}
+
+// keyClass is the observation class of a key: "helm" for "helm:test".
+func keyClass(key string) string {
+	class, _, _ := strings.Cut(key, ":")
+	return class
+}
+
+func runNumbers(rs []Record) []int {
+	out := make([]int, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, r.Run)
+	}
+	sort.Ints(out)
+	return out
 }
 
 // Verdict is the one-cell summary for the table.
@@ -151,13 +233,18 @@ type Oracle struct {
 // nothing. Only sidecars do this: ztunnel in W3 carries bytes and does not
 // parse HTTP, so there a greeting that stops arriving is still a difference.
 func ignored(key, oracle, world string, httpPorts map[string]bool) bool {
+	return ignoredReason(key, oracle, world, httpPorts) != ""
+}
+
+// ignoredReason is ignored with the reason, empty when the key counts.
+func ignoredReason(key, oracle, world string, httpPorts map[string]bool) string {
 	if strings.HasSuffix(key, ":http") && oracle == "none" {
-		return true
+		return "http probe of a port that " + oracleWorld + " did not answer over http"
 	}
 	if sidecarWorlds[world] && strings.HasSuffix(key, ":passive") && httpPorts[strings.TrimSuffix(key, ":passive")] {
-		return true
+		return "passive probe of an http-family port behind a sidecar"
 	}
-	return false
+	return ""
 }
 
 var sidecarWorlds = map[string]bool{"W1": true, "W2": true}
@@ -242,43 +329,70 @@ func Compare(chart, world string, w0, wn []Record, minRuns int) (Comparison, Ora
 		minRuns = 1
 	}
 	c := Comparison{Chart: chart, World: world}
-	w0, d0 := usable(oracleWorld, w0)
-	wn, dn := usable(world, wn)
-	c.Dropped = append(d0, dn...)
+	w0, d0 := usableRuns(oracleWorld, w0)
+	wn, dn := usableRuns(world, wn)
+	c.DroppedRuns = append(d0, dn...)
+	for _, d := range c.DroppedRuns {
+		c.Dropped = append(c.Dropped, d.text)
+	}
 	c.Runs = len(wn)
-	if len(w0) < minRuns {
-		c.Undecided = fmt.Sprintf("%s has %d of %d runs", oracleWorld, len(w0), minRuns)
-		return c, Oracle{}
-	}
-	if len(wn) < minRuns {
-		c.Undecided = fmt.Sprintf("%s has %d of %d runs", world, len(wn), minRuns)
-		return c, Oracle{}
-	}
+	c.RunsUsed, c.OracleRunsUsed = runNumbers(wn), runNumbers(w0)
 	sort.Slice(wn, func(i, j int) bool { return wn[i].Run < wn[j].Run })
-
 	universe := keys(w0, wn)
+	if len(w0) < minRuns || len(wn) < minRuns {
+		if len(w0) < minRuns {
+			c.Undecided = fmt.Sprintf("%s has %d of %d runs", oracleWorld, len(w0), minRuns)
+		} else {
+			c.Undecided = fmt.Sprintf("%s has %d of %d runs", world, len(wn), minRuns)
+		}
+		for _, k := range universe {
+			kr := KeyResult{Key: k, Class: keyClass(k), Verdict: keyUndecided, Reason: c.Undecided}
+			for _, r := range wn {
+				kr.Seen = append(kr.Seen, value(r, k))
+			}
+			c.Keys = append(c.Keys, kr)
+		}
+		return c, Oracle{}
+	}
+
 	oracle := BuildOracle(w0, universe)
 	skip := httpPorts(w0, wn)
 	for _, k := range universe {
+		kr := KeyResult{Key: k, Class: keyClass(k)}
+		for _, r := range wn {
+			kr.Seen = append(kr.Seen, value(r, k))
+		}
 		want, ok := oracle.Values[k]
-		if !ok || ignored(k, want, world, skip) {
+		if !ok {
+			kr.Verdict, kr.Reason = keyLeftOut, "unstable in "+oracleWorld
+			c.Keys = append(c.Keys, kr)
+			continue
+		}
+		kr.Oracle = &want
+		if why := ignoredReason(k, want, world, skip); why != "" {
+			kr.Verdict, kr.Reason = keyLeftOut, why
+			c.Keys = append(c.Keys, kr)
 			continue
 		}
 		d := Difference{Key: k, Oracle: want}
-		for _, r := range wn {
-			got := value(r, k)
+		for _, got := range kr.Seen {
 			d.Seen = append(d.Seen, got)
 			if got != want {
 				d.Misses++
 			}
 		}
+		kr.Misses = d.Misses
 		switch {
 		case d.Misses == 0:
+			kr.Verdict = keySame
 		case d.Consistent():
+			kr.Verdict = keyDiffers
 			c.Findings = append(c.Findings, d)
 		default:
+			kr.Verdict = keyFlaky
 			c.Flaky = append(c.Flaky, d)
 		}
+		c.Keys = append(c.Keys, kr)
 	}
 
 	codes := map[string]bool{}
@@ -298,33 +412,121 @@ func Compare(chart, world string, w0, wn []Record, minRuns int) (Comparison, Ora
 // entry whose fixOf names the chart it repairs, installed under the same
 // release name so that its observations line up key by key.
 type Certificate struct {
-	Fix, Base string
-	Cleared   []string // mesh worlds where the base differed and the fix does not
-	Problems  []string // why it is not certified
+	Fix, Base  string
+	Cleared    []string     // mesh worlds where the base differed and the fix does not
+	Problems   []string     // why it is not certified
+	CellWorlds []string     // the worlds the fix had to clear; all mesh worlds unless limited
+	Ignored    []IgnoreCell // every cell of the ignore list this certificate did not count
+	// NotCompared are the ignore entries (key "*") for a whole world that has
+	// no verdict, kept apart from Ignored so they cannot pass as ordinary cells.
+	NotCompared []IgnoreCell
 }
 
 // Certified needs at least one cleared world and nothing else wrong. A fix for
 // a chart that never differed has nothing to prove.
 func (c Certificate) Certified() bool { return len(c.Problems) == 0 && len(c.Cleared) > 0 }
 
+// IgnoreCell names a cell that certification must not count as a remaining
+// finding, and why. Key "*" names a whole world that could not be decided.
+type IgnoreCell struct {
+	Chart  string `json:"chart"`
+	World  string `json:"world"`
+	Key    string `json:"key"`
+	Reason string `json:"reason"`
+}
+
+// wholeWorld is the Key of an ignore entry for a world with no verdict.
+const wholeWorld = "*"
+
+// CertifyOpts narrows a certification to one cell. The zero value is the
+// original rule: every mesh world must come out clean.
+type CertifyOpts struct {
+	// CellWorlds are the worlds the fix must clear. In the other mesh worlds
+	// the fix may differ from the oracle only where the base does too; a new
+	// difference there fails it. Empty means every mesh world.
+	CellWorlds []string
+	// Ignore lists cells that remain and do not count (ADR rule 5). Entries
+	// for other charts are carried through untouched.
+	Ignore []IgnoreCell
+}
+
 // Certify holds a fix to three conditions: in every mesh world it behaves like
 // its own W0 (so the finding is gone, 3 of 3, and nothing new broke), with no
 // flaky keys either; and its W0 behaves like the base chart's W0, because a
 // fix that changes the chart without a mesh is a different chart.
 func Certify(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0, baseW0 []Record, minRuns int) Certificate {
-	c := Certificate{Fix: fix, Base: base}
+	return CertifyWith(fix, base, fixCmp, baseCmp, fixW0, baseW0, minRuns, CertifyOpts{})
+}
+
+// CertifyWith is Certify limited to a cell's worlds and with an ignore list.
+// The entries of the list that name this fix or its base and match a cell are
+// returned in Certificate.Ignored; an entry that matches nothing is left for
+// the caller to refuse.
+func CertifyWith(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0, baseW0 []Record, minRuns int, opts CertifyOpts) Certificate {
+	c := Certificate{Fix: fix, Base: base, CellWorlds: opts.CellWorlds}
+	if len(c.CellWorlds) == 0 {
+		c.CellWorlds = meshWorlds
+	}
+	inCell := map[string]bool{}
+	for _, w := range c.CellWorlds {
+		inCell[w] = true
+	}
 	for _, w := range meshWorlds {
 		f, b := fixCmp[w], baseCmp[w]
+		ignore := map[string]bool{}
+		for _, e := range opts.Ignore {
+			if e.World != w || (e.Chart != fix && e.Chart != base) {
+				continue
+			}
+			if e.Key == wholeWorld {
+				if f.Undecided != "" || b.Undecided != "" {
+					ignore[wholeWorld] = true
+					c.NotCompared = append(c.NotCompared, e)
+				}
+				continue
+			}
+			if hasKey(f.Findings, e.Key) || hasKey(f.Flaky, e.Key) || hasKey(b.Findings, e.Key) || hasKey(b.Flaky, e.Key) {
+				ignore[e.Key] = true
+				c.Ignored = append(c.Ignored, e)
+			}
+		}
+		fFind, fFlaky, bFind := without(f.Findings, ignore), without(f.Flaky, ignore), without(b.Findings, ignore)
 		switch {
 		case f.Undecided != "":
-			c.Problems = append(c.Problems, w+" undecided: "+f.Undecided)
-		case len(f.Findings) > 0:
-			c.Problems = append(c.Problems, fmt.Sprintf("%s still differs from %s: %s", w, oracleWorld, keyList(f.Findings)))
-		case len(f.Flaky) > 0:
-			c.Problems = append(c.Problems, fmt.Sprintf("%s flaky: %s", w, keyList(f.Flaky)))
-		case len(b.Findings) > 0:
+			if !ignore[wholeWorld] {
+				c.Problems = append(c.Problems, w+" undecided: "+f.Undecided)
+			}
+		case !inCell[w]:
+			// Not the cell being certified: what the base does here is its
+			// own business, but a difference the base does not have is new.
+			var fresh []Difference
+			for _, d := range append(append([]Difference{}, fFind...), fFlaky...) {
+				if !hasKey(b.Findings, d.Key) && !hasKey(b.Flaky, d.Key) {
+					fresh = append(fresh, d)
+				}
+			}
+			if len(fresh) > 0 {
+				c.Problems = append(c.Problems, fmt.Sprintf("%s differs from %s where %s does not: %s", w, oracleWorld, base, keyList(fresh)))
+			}
+		case len(fFind) > 0:
+			c.Problems = append(c.Problems, fmt.Sprintf("%s still differs from %s: %s", w, oracleWorld, keyList(fFind)))
+		case len(fFlaky) > 0:
+			c.Problems = append(c.Problems, fmt.Sprintf("%s flaky: %s", w, keyList(fFlaky)))
+		case len(bFind) > 0:
 			c.Cleared = append(c.Cleared, w)
 		}
+	}
+	for _, list := range [][]IgnoreCell{c.Ignored, c.NotCompared} {
+		sort.Slice(list, func(i, j int) bool {
+			a, b := list[i], list[j]
+			if a.World != b.World {
+				return a.World < b.World
+			}
+			if a.Key != b.Key {
+				return a.Key < b.Key
+			}
+			return a.Chart < b.Chart
+		})
 	}
 	w0, _ := Compare(fix, oracleWorld, baseW0, fixW0, minRuns)
 	switch {
@@ -339,6 +541,29 @@ func Certify(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0, bas
 		c.Problems = append(c.Problems, base+" has no finding for this fix to clear")
 	}
 	return c
+}
+
+func hasKey(ds []Difference, key string) bool {
+	for _, d := range ds {
+		if d.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// without drops the differences whose key is in the set.
+func without(ds []Difference, drop map[string]bool) []Difference {
+	if len(drop) == 0 {
+		return ds
+	}
+	var out []Difference
+	for _, d := range ds {
+		if !drop[d.Key] {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 func keyList(ds []Difference) string {

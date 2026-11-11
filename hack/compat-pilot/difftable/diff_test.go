@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -349,5 +350,73 @@ func TestValidWorlds(t *testing.T) {
 		if got := validWorlds(tc.oracle, tc.worlds); got != tc.ok {
 			t.Errorf("validWorlds(%s, %v) = %v, want %v", tc.oracle, tc.worlds, got, tc.ok)
 		}
+	}
+}
+
+func capacityPending(rs []Record) []Record {
+	for i := range rs {
+		rs[i].CapacityPending = append(rs[i].CapacityPending, struct {
+			Pod     string `json:"pod"`
+			Message string `json:"message"`
+		}{Pod: "db-0", Message: "0/3 nodes are available: 3 Insufficient cpu."})
+	}
+	return rs
+}
+
+// A pod that stays Pending for lack of cpu or memory measured the runner, not
+// the chart, so the run is left out the way a pull failure is.
+func TestCapacityPendingLeavesTheRunOut(t *testing.T) {
+	ok := map[string]string{"helm:install": "ok"}
+	failed := map[string]string{"helm:install": "failed"}
+	w0 := capacityPending(same("W0", 3, failed))
+	c, _ := Compare("c", "W1", w0, same("W1", 3, ok), 3)
+	if c.Verdict() != "undecided" || len(c.Dropped) != 3 {
+		t.Fatalf("want undecided with three runs left out, got %+v", c)
+	}
+	if !strings.Contains(c.Dropped[0], "capacity") {
+		t.Fatalf("the reason should say capacity, got %q", c.Dropped[0])
+	}
+
+	// One bad run out of four still leaves three to decide on.
+	w1 := append(same("W1", 3, ok), capacityPending(runs("W1", failed))...)
+	w1[3].Run = 4
+	c, _ = Compare("c", "W1", same("W0", 3, ok), w1, 3)
+	if c.Verdict() != "same" || len(c.Dropped) != 1 {
+		t.Fatalf("want same with one run left out, got %+v", c)
+	}
+
+	// A world left with two runs is undecided, not compatible.
+	c, _ = Compare("c", "W1", same("W0", 3, ok), append(same("W1", 2, ok), w1[3]), 3)
+	if c.Verdict() != "undecided" || !strings.Contains(c.Undecided, "W1 has 2 of 3 runs") {
+		t.Fatalf("want undecided on two runs, got %+v", c)
+	}
+}
+
+// A run that is both leaves one reason, the pull failure, as before.
+func TestPullFailureWinsOverCapacity(t *testing.T) {
+	ok := map[string]string{"helm:install": "ok"}
+	w1 := capacityPending(pullFailed(same("W1", 3, ok), "x/y:1"))
+	c, _ := Compare("c", "W1", same("W0", 3, ok), w1, 3)
+	if len(c.Dropped) != 3 || !strings.Contains(c.Dropped[0], "image pull failed") {
+		t.Fatalf("want the pull failure named, got %+v", c.Dropped)
+	}
+}
+
+// Records written before capacityPending existed carry no such field; the
+// field is an array like pullFailures, and null or empty is false.
+func TestRecordCapacityPendingArray(t *testing.T) {
+	read := func(extra string) Record {
+		var r Record
+		if err := json.Unmarshal([]byte(`{"world":"W1","chart":"c","run":1`+extra+`}`), &r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	pending := read(`,"capacityPending":[{"pod":"db-0","message":"0/3 nodes: Insufficient memory."}]`)
+	runs := []Record{read(``), read(`,"capacityPending":null`), read(`,"capacityPending":[]`), pending}
+	got, dropped := usableRuns("W1", runs)
+	if len(got) != 3 || len(dropped) != 1 || dropped[0].Reason != "capacity" ||
+		dropped[0].Detail != "db-0: 0/3 nodes: Insufficient memory." {
+		t.Fatalf("usable %d, dropped %+v", len(got), dropped)
 	}
 }
