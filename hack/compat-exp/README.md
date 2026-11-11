@@ -2,74 +2,129 @@
 
 The specification is [docs/compat-experiment.md](../../docs/compat-experiment.md).
 This directory holds the pieces built for it; the pilot's own scripts stay in
-`hack/compat-pilot/` and are reused unchanged in behaviour.
+`hack/compat-pilot/` and are reused unchanged in behaviour. Everything below
+is built and tested; the workflow has never run on Actions.
 
 ## Files
 
-| file | what it is | state on this branch |
-|---|---|---|
-| `frame/` | Artifact Hub ranking to `candidates.json`, and `frame charts` to the chart-list shape | built, see `frame/README.md` |
-| `qualify.sh` | qualify one candidate in a W0 world: template, server dry-run, 3 installs; one JSON record | built |
-| `select.sh` | qualification records plus `candidates.json` to `charts-exp.json` (50 + 15 reserves, deadline, bias table, sha256); exit 1 when fewer than 40 qualify | built |
-| `guard.sh` | everything the workflow checks before a cluster exists: inputs, freeze tag, frozen files, list hash, fix entries, matrix size | built |
-| `../compat-pilot/observe.sh`, `world.sh` | one chart, one world, one run; the world. `MMC_REGISTRY_MIRROR=1` in every world | built (other work items) |
-| `../compat-pilot/difftable/` | records to table or `-json` report; `-cell-worlds`, `-ignore` for certification | built (other work item) |
-| `RECORD.md`, `DIFFTABLE-JSON.md` | record and report reference | built |
-| `acceptance-charts.json` | the ten pilot-1 charts plus the redis fix as values and as a patch (work item 9) | built |
-| `patches/` | fix patches; data, added after the freeze | `redis-np-15008.patch` only |
-| `fixes/`, `ignore/` | fix entries and certification ignore lists; data, added after the freeze | empty, created when first used |
-| `causes.json` | the nine cause keys | not built on this branch (guard refuses fix entries without it) |
-| `staticcheck/` | static check over `helm template` output, `-world W1\|W3` | not built on this branch |
-| `ledger/`, `crossrun/` | ledger with schema check; two runs into cells, credit, bounds | not built on this branch |
-| `../../.github/workflows/compat-exp.yml` | the workflow, see below | built, never run on Actions |
-| `test/` | `qualify_test.sh` (qualify.sh and select.sh), `guard_test.sh`, `workflow_test.sh`, plus the other builders' tests | built |
+| file | what it is |
+|---|---|
+| `frame/` | Artifact Hub ranking to `candidates.json` (`frame build`), and `frame charts` to the chart-list shape. `frame/exclusions.json` is part of it. See `frame/README.md` |
+| `qualify.sh` | qualify one candidate in a W0 world: template, server dry-run, 3 installs; one JSON record |
+| `select.sh` | qualification records plus `candidates.json` to `charts-exp.json` (50 + 15 reserves, deadline, bias table, sha256, publisher and `qualified` per entry); exit 1 when fewer than 40 qualify |
+| `guard.sh` | everything the workflow checks before a cluster exists: inputs, freeze tag, the whole frozen instrument, list hash, fix entries, matrix size |
+| `static.sh` | per chart and mesh world: `helm template` as `observe.sh` installs, then `staticcheck`; writes the file crossrun reads |
+| `analyze.sh` | the analysis procedure for a maintainer's machine: download, ledger check, static.sh, crossrun |
+| `staticcheck/` | the static checks over rendered manifests, one per cause key that has one |
+| `ledger/`, `ledger.json` | the ledger tool with its schema check (`ledger check`), and the ledger (data) |
+| `crossrun/` | two runs into cells, exclusions, credit, N_new, P_new, D, P_D, S, region, bounds; `INTERPRETATIONS.md` lists every reading chosen |
+| `causes.json` | the nine cause keys: anchors, mechanisms, `worlds`, `staticCheck`; the contract guard.sh, ledger, static.sh and crossrun read |
+| `classification-prompt.md` | the prompt of the fresh-context classification check |
+| `../compat-pilot/observe.sh`, `world.sh`, `render-args.sh` | one chart, one world, one run; the world; the install arguments observe.sh and static.sh share. `MMC_REGISTRY_MIRROR=1` in every world |
+| `../compat-pilot/difftable/` | records to table or `-json` report; `-cell-worlds`, `-ignore` for certification |
+| `RECORD.md`, `DIFFTABLE-JSON.md` | record and report reference |
+| `acceptance-charts.json` | the ten pilot-1 charts plus the redis fix as values and as a patch (work item 9) |
+| `patches/`, `fixes/`, `ignore/` | fix patches, fix entries and certification ignore lists: data, added after the freeze (`fixes/` and `ignore/` are created when first used) |
+| `../../.github/workflows/compat-exp.yml` | the workflow, see below |
+| `test/` | the tests, see the end |
 
-The workflow has one hook for the unbuilt tools: after difftable, a step lists
-which of `staticcheck`, `ledger` and `crossrun` exist as directories. It runs
-none of them; wire them in when their interfaces are fixed, before the freeze.
+The frozen set (what `guard.sh` compares with the tag, byte for byte): `frame/`
+(with `exclusions.json`), `qualify.sh`, `select.sh`, `static.sh`, `analyze.sh`,
+`guard.sh`, `causes.json`, `classification-prompt.md`, `staticcheck/`,
+`ledger/`, `crossrun/`, `candidates.json`, `candidates-charts.json`,
+`../compat-pilot/{observe.sh,render-args.sh,world.sh,difftable}`, the workflow,
+`docs/compat-experiment.md`, `go.mod`, `go.sum`. Data stays outside it:
+`ledger.json`, `patches/`, `fixes/`, `ignore/`, and `charts-exp.json` (which
+keeps its one-commit rule).
 
 ## Order of operations
 
-1. `go run ./hack/compat-exp/frame fetch -out DIR`: the only network step.
-2. `frame build -in DIR -out hack/compat-exp/candidates.json`.
-3. `frame charts -in hack/compat-exp/candidates.json -out hack/compat-exp/candidates-charts.json`.
+Commands run from the repository root.
+
+1. Fetch (the only network step):
+   `go run ./hack/compat-exp/frame fetch -out DIR`
+2. Candidates:
+   `go run ./hack/compat-exp/frame build -in DIR -out hack/compat-exp/candidates.json`
+3. Chart-list shape:
+   `go run ./hack/compat-exp/frame charts -in hack/compat-exp/candidates.json -out hack/compat-exp/candidates-charts.json`
 4. Acceptance run (work item 9): dispatch `compat-exp` with `mode=acceptance`. It needs no tag. Settle any E1 or E2 difference on a pilot "same" chart under rule 5 first.
-5. Build and test the rest (`causes.json`, `staticcheck`, `ledger`, `crossrun`: not built here), edit the recheck line in the workflow, commit.
-6. Freeze: tag `compat-exp-freeze` on that commit. It holds the stored responses, `candidates.json` and `candidates-charts.json`. The guard refuses every mode but acceptance without this tag.
-7. Qualify: `mode=qualify`. One W0 job per candidate; the last job runs `select.sh` and uploads `charts-exp.json` (artifact `charts-exp-<run id>`). Fewer than 40 qualified fails the job as infeasible (section 7).
-8. Select: commit that `charts-exp.json` once, as data, on a descendant of the tag. The guard checks its stored hash and refuses a list touched by more than one commit since the tag.
-9. Run 1: `mode=observe`. Run 2 at least 12 h after run 1 ended (section 2 rule 1).
-10. Certify: `mode=certify` with `fix_id` and `fixes_file`; difftable gets the entry's `cellWorlds` and `ignore`.
-11. Recheck: `mode=recheck`, `istio` = the second choice, `chart_ids` = the cells.
-12. Crossrun and ledger over the stored reports: not built here.
+5. Edit the recheck line in the workflow (the one marked FREEZE EDIT), run all the tests (below), commit.
+6. Freeze: tag `compat-exp-freeze` on that commit: `git tag compat-exp-freeze`. The tag holds the whole frozen set above. The guard refuses every mode but acceptance without it.
+7. Qualify: dispatch `mode=qualify`. One W0 job per candidate; the last job runs `select.sh hack/compat-exp/candidates.json qual out/charts-exp.json` and uploads `charts-exp.json` (artifact `charts-exp-<run id>`). Fewer than 40 qualified fails the job as infeasible (section 7).
+8. Select: commit that `charts-exp.json` once, as `hack/compat-exp/charts-exp.json`, on a descendant of the tag. The guard checks its stored hash and refuses a list touched by more than one commit since the tag.
+9. Run 1: dispatch `mode=observe`. Run 2: the same at least 12 h after run 1 ended (section 2 rule 1). Each run uploads `compat-exp-report-<run id>`: `report-<run id>.json` (difftable `-json -worlds W1,W3`), `table.md`, `results/` (the records).
+10. Ledger rows, fix entries and patches (data, from now on): `hack/compat-exp/ledger.json` (checked by `go run ./hack/compat-exp/ledger/cmd/ledger check`), `hack/compat-exp/fixes/*.json`, `hack/compat-exp/ignore/*.json`, `hack/compat-exp/patches/*.patch`.
+11. Certify: dispatch `mode=certify` with `fixes_file` and `fix_id`, twice (two workflow runs). difftable gets the entry's `cellWorlds` and `ignore`. The guard job runs `ledger check` first.
+12. Recheck: dispatch `mode=recheck`, `istio` = the second choice, `chart_ids` = the cells. The guard job runs `ledger check` first.
+13. Analyze, on a maintainer's machine with `gh` logged in (read access to the runs):
+
+   ```console
+   hack/compat-exp/analyze.sh --out analysis-1 --run1 RUN1 --run2 RUN2 \
+     --cert CERT_RUN_A --cert CERT_RUN_B --recheck RECHECK_RUN
+   ```
+
+   It downloads each run's `compat-exp-report-<id>` (`gh run download`), reads the
+   run times (`gh run view`), writes `inputs.json` (crossrun's manifest), runs
+   `ledger check`, `static.sh hack/compat-exp/charts-exp.json analysis-1/static.json <chart ids of the reports>`
+   and `crossrun`, and leaves `result.json`, `result.md`, `static.json`,
+   `static.json.meta.json` and `ledger-check.txt` in `analysis-1/`. With only `--run1`
+   the cells wait for run 2 and the futility bound still works. Run ids are digits only.
+   The two steps by hand: `hack/compat-exp/static.sh hack/compat-exp/charts-exp.json static.json`
+   and `go run ./hack/compat-exp/crossrun -inputs inputs.json -json result.json -md result.md`.
 
 The order differs from the first draft of this list in one place: the tag comes
 before qualification, because sections 4 and 5 freeze the whole instrument
 before the first qualification job and the guard enforces that.
 
+## One shape per shared file
+
+| file | writer | readers | shape |
+|---|---|---|---|
+| `causes.json` | a person, at the freeze | guard.sh, ledger, crossrun, static.sh | object; list under `keys`; per key `key`, `worlds`, `staticCheck` (id or null) |
+| `candidates.json` | `frame build` | `frame charts`, select.sh | `candidates[]` with `package`, `repository`, `publisher`, `chart`, `repo`, `version`, `rank` |
+| `charts-exp.json` | select.sh | guard.sh, static.sh, crossrun (as its frame) | `charts[]`, `reserves[]` of `id`, `chart`, `version`, `repo`, `deadline`, `publisher`, `qualified`, `rank`, `why` |
+| plan `charts.json` | guard.sh plan | observe.sh (`CHARTS_FILE`) | flat array of charts, reserves and fix entries |
+| records | observe.sh | difftable, crossrun (`podMesh`) | `RECORD.md` |
+| report | difftable `-json` | crossrun | `DIFFTABLE-JSON.md` |
+| `static.json` | static.sh | crossrun | `[{chart, world, check, applicable, flagged}]` |
+| `ledger.json` | a person | ledger check, guard.sh (new keys), crossrun | `ledger/README.md` |
+
+Chart ids are one string everywhere: the package name, or `<repository>-<name>`
+when two candidates share a name. The rule is implemented twice, in `frame
+charts` and in select.sh (the e2e test compares them); observe.sh records it as
+`chart`, difftable reports it as `chart`, and the ledger and crossrun use it.
+
 ## File formats the guard and select.sh use
 
 `charts-exp.json` (written by `select.sh`): `schema`, `sha256`,
 `installDeadlineSeconds`, `counts`, `charts` (50), `reserves` (15), `bias`.
-Entries carry `id`, `chart`, `version`, optional `repo`, `why`, `rank` and
-`deadline` (the same for all, `<n>s`). The hash is the sha256 of
-`jq -S -c 'del(.sha256)'` of the file.
+Entries carry `id`, `chart`, `version`, optional `repo`, `why`, `rank`,
+`publisher`, `qualified` (true) and `deadline` (the same for all, `<n>s`). The
+hash is the sha256 of `jq -S -c 'del(.sha256)'` of the file.
 
 A fix entry (an array in a file under `hack/compat-exp/fixes/`): the fields
 observe.sh reads (`id`, `chart`, `version`, `repo`, `values`, `patch`,
-`fixOf`) plus `cause` (a key of `causes.json`), and for certification
-`cellWorlds` (a list from W1, W3) and `ignore` (a file under
-`hack/compat-exp/ignore/`). Chart, version and repo must equal the base
-chart's. `values` may hold only `--set`, `--set-string` and `--set-json`
-pairs. `patch` must sit under `hack/compat-exp/patches/`.
+`fixOf`) plus `cause` (a key of `causes.json`, or a new key recorded in
+`ledger.json` with anchor, certified fix, reproduction and an admitting
+reviewer verdict), and for certification `cellWorlds` (a list from W1, W3) and
+`ignore` (a file under `hack/compat-exp/ignore/`). Chart, version and repo
+must equal the base chart's. `values` may hold only `--set`, `--set-string` and
+`--set-json` pairs. `patch` must sit under `hack/compat-exp/patches/`.
 
 ## Tests
 
 ```console
-hack/compat-exp/test/qualify_test.sh
+hack/compat-exp/test/qualify_test.sh    # qualify.sh and select.sh
 hack/compat-exp/test/guard_test.sh
 hack/compat-exp/test/workflow_test.sh
+hack/compat-exp/test/observe_test.sh
+hack/compat-exp/test/world_test.sh
+hack/compat-exp/test/static_test.sh
+hack/compat-exp/test/analyze_test.sh
+hack/compat-exp/test/e2e_test.sh        # the whole chain with stub helm, kubectl, istioctl and gh
+go test ./hack/...
 ```
 
-They need `bash`, `jq`, `yq` (mikefarah), `git` and `python3`. `actionlint` runs
-inside `workflow_test.sh` when installed.
+They need `bash`, `jq`, `yq` (mikefarah), `git`, `go` and `python3`. `actionlint` runs
+inside `workflow_test.sh` when installed. `e2e_test.sh` lists its hand-made
+intermediates in its header.
