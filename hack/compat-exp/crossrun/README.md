@@ -18,6 +18,7 @@ Output is deterministic: the same inputs give the same bytes.
 `inputs.json` (unknown fields rejected; paths relative to the file):
 
     {"runs": [{"id", "report", "records" (optional dir), "started", "ended"}, ...],
+     "reruns": [same shape as runs], optional,
      "certification": [{"id", "report", "istio" (optional)}, ...],
      "recheck": {"id", "report", "istio"},            optional
      "causes": "...", "ledger": "...", "frame": "...", "static": "..." (optional),
@@ -29,7 +30,8 @@ Output is deterministic: the same inputs give the same bytes.
 - `causes`: hack/compat-exp/causes.json, the real file: an object whose list is under `keys`, in rank order, each entry with `key`, `worlds` and `staticCheck` (a check id, or null for a key without a static check). No other shape is read.
 - `ledger`: hack/compat-exp/ledger.json; it must pass `ledger check`. See hack/compat-exp/ledger/README.md.
 - `frame`: the frozen chart list `charts-exp.json` that select.sh writes (`charts`, then `reserves`; each entry has `id`, `publisher` and `qualified`, which select.sh carries from candidates.json and the qualification records).
-- `replacements` (optional): `{"schema": 1, "replacements": [{"chart", "reserve", "reason", "run"}]}`, section 4 replacements. Every chart of the frame's primary list, with the replacements applied, must be in every given report with W0, W1 and W3, or the run stops with an error naming the chart and world. crossrun checks the reserves are taken in list order, the evidence run is a manifest run and shows the replaced chart's W0 not 3 of 3 (INTERPRETATIONS.md 17).
+- `reruns` (optional): the separately dispatched observe runs restricted to one chart that serve as the rerun of that chart's W0 job.
+- `replacements` (optional): `{"schema": 1, "reruns": [{"chart", "run", "rerun"}], "replacements": [{"chart", "reserve", "reason", "run", "rerun"}]}`, section 4 replacements. Every chart of the frame's primary list, with the replacements applied, must be in every given report with W0, W1 and W3, or the run stops with an error naming the chart and world. A chart is replaced if and only if its W0 is not 3 of 3 in a run and again in the rerun; crossrun derives that from the reports, errors on a chart that meets it and is not replaced, on a replaced chart that does not, and takes reserves in list order (INTERPRETATIONS.md 22).
 - `static` (optional, written by hack/compat-exp/static.sh): `[{"chart", "world", "check", "applicable", "flagged"}]`, one row per chart, world and check. Needed for S. `applicable` false means the check does not apply to that world.
 
 ## Output

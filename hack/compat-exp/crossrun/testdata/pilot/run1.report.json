@@ -202,7 +202,13 @@
           ]
         }
       ],
-      "environment": "trimmed fixture of the pilot 1 report"
+      "environment": "trimmed fixture of the pilot 1 report",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      }
     },
     {
       "chart": "cloudnative-pg",
@@ -351,7 +357,13 @@
           ]
         }
       ],
-      "environment": "trimmed fixture of the pilot 1 report"
+      "environment": "trimmed fixture of the pilot 1 report",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      }
     },
     {
       "chart": "grafana",
@@ -500,7 +512,13 @@
           ]
         }
       ],
-      "environment": "trimmed fixture of the pilot 1 report"
+      "environment": "trimmed fixture of the pilot 1 report",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      }
     },
     {
       "chart": "kube-prometheus-stack",
@@ -645,7 +663,13 @@
           ]
         }
       ],
-      "environment": "trimmed fixture of the pilot 1 report"
+      "environment": "trimmed fixture of the pilot 1 report",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      }
     },
     {
       "chart": "nats",
@@ -792,7 +816,13 @@
           ]
         }
       ],
-      "environment": "trimmed fixture of the pilot 1 report"
+      "environment": "trimmed fixture of the pilot 1 report",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      }
     },
     {
       "chart": "podinfo",
@@ -939,7 +969,13 @@
           ]
         }
       ],
-      "environment": "trimmed fixture of the pilot 1 report"
+      "environment": "trimmed fixture of the pilot 1 report",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      }
     },
     {
       "chart": "prometheus-pushgateway",
@@ -1084,7 +1120,13 @@
           ]
         }
       ],
-      "environment": "trimmed fixture of the pilot 1 report"
+      "environment": "trimmed fixture of the pilot 1 report",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      }
     },
     {
       "chart": "rabbitmq",
@@ -1281,7 +1323,13 @@
           ]
         }
       ],
-      "environment": "trimmed fixture of the pilot 1 report"
+      "environment": "trimmed fixture of the pilot 1 report",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      }
     },
     {
       "chart": "rabbitmq-np-15008",
@@ -1494,7 +1542,13 @@
         "ignored": [],
         "worldsNotCompared": []
       },
-      "environment": "trimmed fixture of the pilot 1 report"
+      "environment": "trimmed fixture of the pilot 1 report",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      }
     },
     {
       "chart": "redis",
@@ -1689,7 +1743,13 @@
           ]
         }
       ],
-      "environment": "trimmed fixture of the pilot 1 report"
+      "environment": "trimmed fixture of the pilot 1 report",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      }
     },
     {
       "chart": "redis-np-15008",
@@ -1900,7 +1960,13 @@
         "ignored": [],
         "worldsNotCompared": []
       },
-      "environment": "trimmed fixture of the pilot 1 report"
+      "environment": "trimmed fixture of the pilot 1 report",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      }
     },
     {
       "chart": "valkey",
@@ -1997,7 +2063,13 @@
           ]
         }
       ],
-      "environment": "trimmed fixture of the pilot 1 report"
+      "environment": "trimmed fixture of the pilot 1 report",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      }
     }
   ]
 }

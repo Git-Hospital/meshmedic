@@ -31,6 +31,18 @@ type ChartReport struct {
 	FixOf        string        `json:"fixOf"`
 	Worlds       []WorldReport `json:"worlds"`
 	Certificate  *CertReport   `json:"certificate"`
+	// OracleInstall is difftable's count of the oracle (W0) installs that
+	// worked (obs["helm:install"] == "ok"): half of the evidence for "W0 is
+	// 3 of 3" in the replacement rule (sample.go).
+	OracleInstall OracleInstall `json:"oracleInstall"`
+}
+
+// OracleInstall mirrors difftable's field of the same name.
+type OracleInstall struct {
+	Runs   int    `json:"runs"`
+	Ok     int    `json:"ok"`
+	Failed int    `json:"failed"`
+	Status string `json:"status"`
 }
 
 // WorldReport is one compared world of a chart.
@@ -144,7 +156,10 @@ type FrameChart struct {
 
 // Manifest names the input files. Paths are relative to the manifest.
 type Manifest struct {
-	Runs          []ManifestRun  `json:"runs"`
+	Runs []ManifestRun `json:"runs"`
+	// Reruns are the separately dispatched observe runs, each restricted to one
+	// chart, that serve as the rerun of that chart's W0 job (sample.go).
+	Reruns        []ManifestRun  `json:"reruns"`
 	Certification []ManifestCert `json:"certification"`
 	Recheck       *ManifestCert  `json:"recheck"`
 	Causes        string         `json:"causes"`
@@ -176,7 +191,7 @@ type ManifestCert struct {
 	Istio  string `json:"istio"`
 }
 
-// RunInput is a loaded sample run.
+// RunInput is a loaded sample run (or a rerun of one chart).
 type RunInput struct {
 	ID      string
 	Started time.Time
@@ -196,7 +211,9 @@ type CertInput struct {
 
 // Inputs is everything Analyze reads.
 type Inputs struct {
-	Runs          []RunInput
+	Runs []RunInput
+	// Reruns are the loaded reruns, in manifest order.
+	Reruns        []RunInput
 	Certification []CertInput
 	Recheck       *CertInput
 	Causes        *ledger.Causes
@@ -208,10 +225,12 @@ type Inputs struct {
 	// the other entries of FrameOrder.
 	Reserves     []string
 	Replacements []Replacement
-	Provenance   json.RawMessage
-	TestMode     bool
-	Static       []StaticResult
-	StaticGiven  bool
+	// RerunRefs are the rerun pairs of the replacements file's `reruns` list.
+	RerunRefs   []RerunRef
+	Provenance  json.RawMessage
+	TestMode    bool
+	Static      []StaticResult
+	StaticGiven bool
 }
 
 func strictDecode(data []byte, v any) error {
@@ -335,28 +354,42 @@ func LoadInputs(manifestPath string) (*Inputs, error) {
 	if len(m.Runs) < 1 || len(m.Runs) > 2 {
 		return nil, fmt.Errorf("%s: runs must hold run 1, and run 2 once it exists", manifestPath)
 	}
-	for i, mr := range m.Runs {
+	loadRun := func(what string, i int, mr ManifestRun) (RunInput, error) {
 		if mr.ID == "" || mr.Report == "" {
-			return nil, fmt.Errorf("%s: runs[%d] needs id and report", manifestPath, i)
+			return RunInput{}, fmt.Errorf("%s: %s[%d] needs id and report", manifestPath, what, i)
 		}
 		rep, err := loadReport(rel(mr.Report))
 		if err != nil {
-			return nil, err
+			return RunInput{}, err
 		}
 		ri := RunInput{ID: mr.ID, Report: rep}
-		if ri.Started, err = parseTime(manifestPath, fmt.Sprintf("runs[%d].started", i), mr.Started); err != nil {
-			return nil, err
+		if ri.Started, err = parseTime(manifestPath, fmt.Sprintf("%s[%d].started", what, i), mr.Started); err != nil {
+			return ri, err
 		}
-		if ri.Ended, err = parseTime(manifestPath, fmt.Sprintf("runs[%d].ended", i), mr.Ended); err != nil {
-			return nil, err
+		if ri.Ended, err = parseTime(manifestPath, fmt.Sprintf("%s[%d].ended", what, i), mr.Ended); err != nil {
+			return ri, err
 		}
 		if mr.Records != "" {
 			if ri.Records, err = loadRecords(rel(mr.Records), mr.ID); err != nil {
-				return nil, err
+				return ri, err
 			}
 			ri.HasRecords = true
 		}
+		return ri, nil
+	}
+	for i, mr := range m.Runs {
+		ri, err := loadRun("runs", i, mr)
+		if err != nil {
+			return nil, err
+		}
 		in.Runs = append(in.Runs, ri)
+	}
+	for i, mr := range m.Reruns {
+		ri, err := loadRun("reruns", i, mr)
+		if err != nil {
+			return nil, err
+		}
+		in.Reruns = append(in.Reruns, ri)
 	}
 	for i, mc := range m.Certification {
 		if mc.ID == "" || mc.Report == "" {
@@ -400,7 +433,7 @@ func LoadInputs(manifestPath string) (*Inputs, error) {
 	}
 	in.Provenance, in.TestMode = m.Provenance, m.TestMode
 	if m.Replacements != "" {
-		if in.Replacements, err = LoadReplacements(rel(m.Replacements)); err != nil {
+		if in.Replacements, in.RerunRefs, err = LoadReplacements(rel(m.Replacements)); err != nil {
 			return nil, err
 		}
 	}

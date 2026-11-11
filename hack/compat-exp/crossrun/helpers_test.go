@@ -98,7 +98,7 @@ func chart(name string, worlds ...WorldReport) ChartReport {
 			worlds = append(worlds, wr(req))
 		}
 	}
-	return ChartReport{Chart: name, ChartVersion: "1.0.0", Worlds: worlds}
+	return ChartReport{Chart: name, ChartVersion: "1.0.0", Worlds: worlds, OracleInstall: OracleInstall{Runs: 3, Ok: 3, Status: "ok"}}
 }
 
 func report(charts ...ChartReport) *Report {

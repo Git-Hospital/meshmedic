@@ -212,6 +212,10 @@ type Hypothetical struct {
 type SampleInfo struct {
 	Charts       []string      `json:"charts"`
 	Replacements []Replacement `json:"replacements"`
+	// Reruns are the reruns of a chart's W0 job that the rule read (section 4,
+	// INTERPRETATIONS.md 22): failedAgain false means the rerun's records
+	// stand in for the run's, true that the chart was replaced.
+	Reruns []RerunUse `json:"reruns"`
 }
 
 // Result is crossrun's whole output.
@@ -422,18 +426,22 @@ func Analyze(in *Inputs) (*Result, error) {
 	res.Final = len(in.Runs) == 2
 	res.GapOK = a.gapOK
 
-	sample, err := buildSample(in)
+	sample, runs, err := buildSample(in)
 	if err != nil {
 		return nil, err
 	}
+	// from here on the inputs are the effective ones: a rerun whose W0 was 3 of 3
+	// stands in for the run's report and records of that chart
+	ein := *in
+	ein.Runs = runs
+	in = &ein
+	a.in = in
 	a.sample = sample
-	res.Sample = SampleInfo{Charts: append([]string{}, sample.Active...), Replacements: append([]Replacement{}, in.Replacements...)}
+	res.Sample = SampleInfo{Charts: append([]string{}, sample.Active...), Replacements: append([]Replacement{}, in.Replacements...), Reruns: append([]RerunUse{}, sample.Reruns...)}
 	sort.Strings(res.Sample.Charts)
-	sampleWarnings, err := checkComplete(sample, in.Runs)
-	if err != nil {
+	if err := checkComplete(sample, runs); err != nil {
 		return nil, err
 	}
-	res.Warnings = append(res.Warnings, sampleWarnings...)
 
 	var uworlds []UndecidedWorld
 	for i, r := range in.Runs {

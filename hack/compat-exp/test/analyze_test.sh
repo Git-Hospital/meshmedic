@@ -320,6 +320,24 @@ setmeta 15 '.istio = "1.31.3"';              an "${A[@]}" --recheck 15; eq "a re
 setmeta 15 '.mode = "observe"';              an "${A[@]}" --recheck 15; eq "a recheck run dispatched as observe: refused" "$rc" 1; resetall
 setmeta 7001 '.mode = "observe"';            an "${A[@]}"; eq "a qualification run that was not dispatched as qualify: refused" "$rc" 1; resetall
 
+# a rerun of one chart's W0 job (the replacement rule, crossrun/INTERPRETATIONS.md 22): a separate observe run restricted to one chart
+rerun_meta() { # ID CHART_IDS [FIXES_FILE]
+  mkrun "$1" observe 1.31.3
+  gen_run_metadata "$repo/.github/workflows/compat-exp.yml" "$T/gen" "$T/fix/$1.meta-1/run-metadata.json" observe 1.31.3 "$tagsha" "$1" 1 "" "${3:-}" "$2" "" || { echo "metadata step failed"; exit 1; }
+}
+rerun_meta 16 ""
+an "${A[@]}" --rerun 16; eq "a rerun dispatched for all charts (no chart_ids): refused" "$rc" 1; says "  and says it is restricted to one chart" "restricted to one chart"
+rerun_meta 16 "app-1 app-2"
+an "${A[@]}" --rerun 16; eq "a rerun dispatched for two charts: refused" "$rc" 1; says "  and says so" "restricted to one chart"
+rerun_meta 16 "app-1" "hack/compat-exp/fixes/x.json"
+an "${A[@]}" --rerun 16; eq "a rerun with a fixes file: refused" "$rc" 1; says "  and says so" "restricted to one chart"
+rerun_meta 16 "app-1"
+setmeta 16 '.mode = "certify"'; an "${A[@]}" --rerun 16; eq "a rerun dispatched as certify: refused" "$rc" 1; says "  and names the role" "given as rerun"
+rerun_meta 16 "app-1"
+an "${A[@]}" --rerun 16; eq "a rerun of one chart whose report holds no chart: refused" "$rc" 1; says "  and says the report holds exactly one chart" "exactly one chart"
+an "${A[@]}" --rerun 11; eq "the same run as run 1 and rerun: refused" "$rc" 2
+resetall
+
 # the qualification: the list must reproduce from the run's records
 jq '.chart = "app-1"' "$T/fix/7001/qual/app-5.qualify.json" >/dev/null
 jq '.qualified = false | .firstFailure = {step: "install", install: 1, reason: "not-ready", detail: ""} | .installs = []' "$T/fix/7001/qual/app-3.qualify.json" >"$T/x" && mv "$T/x" "$T/fix/7001/qual/app-3.qualify.json"

@@ -7,8 +7,8 @@
 # write the result files. Nothing here runs on Actions.
 #
 # Usage:
-#   hack/compat-exp/analyze.sh --out DIR --run1 ID [--run2 ID] [--cert ID]... [--recheck ID]
-#                              [--repo OWNER/REPO] [--charts FILE] [--ledger FILE]
+#   hack/compat-exp/analyze.sh --out DIR --run1 ID [--run2 ID] [--rerun ID]... [--cert ID]...
+#                              [--recheck ID] [--repo OWNER/REPO] [--charts FILE] [--ledger FILE]
 #                              [--replacements FILE]
 #
 #   --out DIR     where everything goes; must not exist or be empty
@@ -16,6 +16,10 @@
 #                 after run 1 ended; crossrun stops with an error otherwise). With
 #                 --run1 only the result is for the futility check after run 1: cells
 #                 wait for run 2, no region is final, the output says "run 1 only"
+#   --rerun ID    the rerun of one chart's W0 job: a separately dispatched run in mode
+#                 observe whose chart_ids is that one chart (the replacement rule,
+#                 crossrun/INTERPRETATIONS.md 22); repeat for each; replacements.json
+#                 must name every one of them
 #   --cert ID     a certify run id; repeat for each (a fix needs two)
 #   --recheck ID  the recheck run id
 #   --repo        OWNER/REPO for gh (default: gh's own, from the git remote)
@@ -43,8 +47,8 @@
 #     against gh and its own metadata: its head commit (`headSha`) is the tag commit
 #     or a descendant whose frozen files equal the tag's, it ran the workflow
 #     compat-exp.yml on workflow_dispatch, it completed, its mode fits its role (run 1
-#     and run 2: observe; certification: certify; recheck: recheck; the qualification
-#     run named by the chart list: qualify) and its Istio version is the pinned one
+#     and run 2 and a rerun: observe; certification: certify; recheck: recheck; the
+#     qualification run named by the chart list: qualify; a rerun's chart_ids is one chart) and its Istio version is the pinned one
 #     for that role (ISTIO_PRIMARY of the tag's workflow, except recheck: the second
 #     option of the istio input, decided at the freeze).
 #     gh run view --json gives headSha, workflowName, event, status, attempt and the
@@ -104,6 +108,7 @@ die() { echo "analyze.sh: $*" >&2; exit "${2:-1}"; }
 usage() { sed -n '/^# Usage:/,/^# Run ids/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 out="" run1="" run2="" recheck="" repo=""
+reruns=()
 charts="$root/hack/compat-exp/charts-exp.json" ledger_file="$root/hack/compat-exp/ledger.json"
 replacements_file="$root/hack/compat-exp/replacements.json"
 certs=()
@@ -113,6 +118,7 @@ while [[ $# -gt 0 ]]; do
     --run1) run1="${2:-}"; shift 2 ;;
     --run2) run2="${2:-}"; shift 2 ;;
     --cert) certs+=("${2:-}"); shift 2 ;;
+    --rerun) reruns+=("${2:-}"); shift 2 ;;
     --recheck) recheck="${2:-}"; shift 2 ;;
     --repo) repo="${2:-}"; shift 2 ;;
     --charts) charts="${2:-}"; shift 2 ;;
@@ -125,7 +131,7 @@ done
 
 [[ -n "$out" && -n "$run1" ]] || usage
 isid() { [[ "$1" =~ ^[0-9]{1,20}$ ]]; }
-for v in "$run1" ${run2:+"$run2"} ${recheck:+"$recheck"} ${certs[@]+"${certs[@]}"}; do
+for v in "$run1" ${run2:+"$run2"} ${recheck:+"$recheck"} ${certs[@]+"${certs[@]}"} ${reruns[@]+"${reruns[@]}"}; do
   isid "$v" || die "run id '$v' is not digits only" 2
 done
 [[ -z "$repo" || "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "--repo must be OWNER/REPO" 2
@@ -140,6 +146,7 @@ for t in gh jq git; do command -v "$t" >/dev/null || die "$t is needed" 2; done
 ids=("$run1")
 [[ -z "$run2" ]] || ids+=("$run2")
 ids+=(${certs[@]+"${certs[@]}"})
+ids+=(${reruns[@]+"${reruns[@]}"})
 [[ -z "$recheck" ]] || ids+=("$recheck")
 [[ "$(printf '%s\n' "${ids[@]}" | sort | uniq -d | wc -l | tr -d ' ')" == 0 ]] || die "a run id is given twice" 2
 
@@ -328,6 +335,9 @@ check_records() {
   while IFS= read -r c; do
     grep -Eq "^exp-$id-$c-W[013]\$" "$tmp/recdirs" || die "run $id: the report holds chart $c but results/ holds no record of it"
   done < <(jq -r '.charts[].chart' "$3/report-$id.json")
+  if [[ "$role" == rerun ]]; then
+    [[ "$(jq -r '[.charts[].chart] | unique | length' "$3/report-$id.json")" == 1 ]] || die "run $id: a rerun's report holds exactly one chart"
+  fi
   if [[ "$role" == run1 || "$role" == run2 ]]; then
     while IFS= read -r c; do
       grep -Eq "^exp-$id-$c-W[013]\$" "$tmp/recdirs" || die "run $id: no record of the frozen chart $c (zero records for a chart of the list)"
@@ -403,6 +413,10 @@ fetch_run() {
   istio="$(jq -r .istio "$meta")"
   [[ "$mode" == "$want_mode" ]] || die "run $id was dispatched with mode '$mode', but it is given as $role, which needs mode $want_mode"
   [[ "$istio" == "$want_istio" ]] || die "run $id ran Istio $istio, but the pinned version for $role is $want_istio"
+  if [[ "$role" == rerun ]]; then
+    [[ "$(jq -r .chartIds "$meta")" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ && "$(jq -r .fixesFile "$meta")" == "" ]] ||
+      die "run $id is given as a rerun, but its chart_ids is '$(jq -r .chartIds "$meta")' and its fixes_file '$(jq -r .fixesFile "$meta")': a rerun of a W0 job is restricted to one chart (chart_ids), no fix entries"
+  fi
   if [[ "$role" != qualification ]]; then
     [[ "$(jq -r .chartsFile "$meta")" == "$charts_rel" ]] || die "run $id used the chart list '$(jq -r .chartsFile "$meta")', not $charts_rel"
     [[ "$(jq -r .chartsSha256 "$meta")" == "$charts_sha" ]] || die "run $id used a chart list with another sha256 than the one analysed ($charts_rel)"
@@ -445,6 +459,7 @@ cmp -s "$tmp/charts-reselected.json" "$charts" ||
 
 fetch_run run1 "$run1" "compat-exp-report-$run1" observe "$primary" || exit $?
 [[ -z "$run2" ]] || fetch_run run2 "$run2" "compat-exp-report-$run2" observe "$primary" || exit $?
+for id in ${reruns[@]+"${reruns[@]}"}; do fetch_run rerun "$id" "compat-exp-report-$id" observe "$primary" || exit $?; done
 for id in ${certs[@]+"${certs[@]}"}; do fetch_run certification "$id" "compat-exp-report-$id" certify "$primary" || exit $?; done
 [[ -z "$recheck" ]] || fetch_run recheck "$recheck" "compat-exp-report-$recheck" recheck "$recheck_version" || exit $?
 
@@ -479,6 +494,11 @@ for id in "$run1" ${run2:+"$run2"}; do
   runs="$(jq -c --arg id "$id" --arg s "$(tm "$id" started)" --arg e "$(tm "$id" ended)" --arg d "$out/run-$id" \
     '. + [{id: $id, report: ($d + "/report-" + $id + ".json"), records: ($d + "/results"), started: $s, ended: $e}]' <<<"$runs")"
 done
+rerun_json='[]'
+for id in ${reruns[@]+"${reruns[@]}"}; do
+  rerun_json="$(jq -c --arg id "$id" --arg s "$(tm "$id" started)" --arg e "$(tm "$id" ended)" --arg d "$out/run-$id" \
+    '. + [{id: $id, report: ($d + "/report-" + $id + ".json"), records: ($d + "/results"), started: $s, ended: $e}]' <<<"$rerun_json")"
+done
 istio_of() { jq -r --arg id "$1" '.[] | select(.id == $id) | .istio' <<<"$prov_runs"; }
 cert_json='[]'
 for id in ${certs[@]+"${certs[@]}"}; do
@@ -499,9 +519,9 @@ provenance="$(jq -c -n --arg tag "$tag" --arg tagsha "$tag_sha" --arg head "$hea
             causes: {path: "hack/compat-exp/causes.json", sha256: $causesSha}, replacements: {path: $repl, sha256: $replSha}}}
    + (if $test == 1 then {testMode: true} else {} end)')" || die "could not build the provenance"
 echo "$provenance" | jq . >"$out/provenance.json"
-jq -n --argjson runs "$runs" --argjson cert "$cert_json" --argjson recheck "$recheck_json" --argjson prov "$provenance" --argjson test "$test_mode" \
+jq -n --argjson runs "$runs" --argjson reruns "$rerun_json" --argjson cert "$cert_json" --argjson recheck "$recheck_json" --argjson prov "$provenance" --argjson test "$test_mode" \
   --arg causes "$root/hack/compat-exp/causes.json" --arg ledger "$ledger_file" --arg frame "$charts" --arg static "$out/static.json" --arg repl "$replacements_file" \
-  '{runs: $runs, certification: $cert, causes: $causes, ledger: $ledger, frame: $frame, static: $static, replacements: $repl, provenance: $prov}
+  '{runs: $runs, reruns: $reruns, certification: $cert, causes: $causes, ledger: $ledger, frame: $frame, static: $static, replacements: $repl, provenance: $prov}
    + (if $recheck == null then {} else {recheck: $recheck} end)
    + (if $test == 1 then {testMode: true} else {} end)' >"$out/inputs.json" || die "could not write the manifest"
 if [[ $test_mode -eq 1 ]]; then

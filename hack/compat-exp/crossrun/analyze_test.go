@@ -53,8 +53,13 @@ func TestW0ThreeOfThreeIsRequired(t *testing.T) {
 	c := chart("a", wr("W3", bad(wk)))
 	c.Worlds[0].OracleRunsUsed = []int{1, 2}
 	f := newFixture([]ChartReport{c}, []ChartReport{chart("a", wr("W3", bad(wk)))}, nil)
-	if msg := f.analyzeErr(t); !strings.Contains(msg, "agreeing oracle runs") {
+	// the replacement rule asks for the rerun of the W0 job first (sample.go) ...
+	if msg := f.analyzeErr(t); !strings.Contains(msg, "W0 was not 3 of 3 in run r1") {
 		t.Fatal(msg)
+	}
+	// ... and buildView still refuses a finding without 3 agreeing oracle runs
+	if _, _, err := buildView("1 (r1)", report(c), f.in, &Sample{Active: []string{"a"}, Replaced: map[string]bool{}}); err == nil || !strings.Contains(err.Error(), "agreeing oracle runs") {
+		t.Fatal(err)
 	}
 	c2 := chart("a", wr("W3", bad(wk)))
 	c2.Worlds[0].Keys[0].OracleValue = nil

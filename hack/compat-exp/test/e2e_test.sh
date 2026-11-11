@@ -189,6 +189,14 @@ mkpods() { # READY(true|false) NAME > file
     status: {phase: "Running", conditions: [{type: "Ready", status: (if $r then "True" else "False" end)}],
              containerStatuses: [{name: "app", image: "img:1", ready: $r, restartCount: 0, state: {running: {}}}]}}]}'
 }
+# A chart whose image cannot be pulled: the pod waits in ImagePullBackOff.
+mkpods_pull() { # NAME > file
+  jq -n --arg n "$1" '{items: [{
+    metadata: {name: ($n + "-abc"), labels: {}, ownerReferences: [{kind: "ReplicaSet", name: ($n + "-7d9f8")}]},
+    spec: {containers: [{name: "app"}]},
+    status: {phase: "Pending", conditions: [{type: "Ready", status: "False"}],
+             containerStatuses: [{name: "app", image: "docker.io/x/app:1", ready: false, restartCount: 0, state: {waiting: {reason: "ImagePullBackOff"}}}]}}]}'
+}
 # The observe job's steps "three runs" is run for real (the workflow's own text), once per chart and world, in a
 # workspace laid out like the runner's; what the job uploads (results/) becomes the artifact directory
 # exp-<run id>-<chart>-<world>, as the job names it. Hand-built: the world (state files, the stub cluster).
@@ -214,6 +222,8 @@ observe_set() {
       [[ "$id" == app-2-*-stuck && "$w" == W3 ]] && ready=false
       [[ "$id" == app-2-p* ]] && name=app-2
       mkpods "$ready" "$name" >"$S/pods.json"
+      # PULL_W0: charts whose W0 pods cannot pull their image (a registry refusal, as in the pilots)
+      [[ "$w" == W0 && " ${PULL_W0:-} " == *" $id "* ]] && mkpods_pull "$name" >"$S/pods.json"
       observe_job "$runid" "$dir" "$cf" "$id" "$w" "${TEST_POD:-auto}" || return 1
     done
   done
@@ -523,6 +533,65 @@ eq "rule 3: a ledger that credits the first key although another part alone clea
 grep -q 'rule 3 credits the cell to "ambient-l7"' "$T/parts-b.err" && ok "  and says rule 3 credits ambient-l7" || bad "  error text: $(head -3 "$T/parts-b.err")"
 parts_inputs "$T/parts-c" app-2-pc-stuck '["1010","1011"]' false app-2-pb-stuck '["1008","1009"]' protocol 1008 1009 1010 1011
 eq "rule 3: neither part alone clears the cells: the first key in the list, protocol, with the combined certificate" "$?:$(jq -c '[.cells[] | select(.chart == "app-2" and .status == "counted") | .credit]' "$T/parts-c.json")" '0:["protocol","protocol"]'
+
+# The replacement rule (crossrun/INTERPRETATIONS.md 22). Variant runs 1101 and 1102 are runs 1001 and 1002 with the
+# reserve app-51 added, and in run 1102 the W0 of app-6 and app-7 cannot pull its image (real observe jobs, the registry
+# refusal of the pilots). Each is rerun once in a separate observe run restricted to the chart (1012, 1013): app-6's W0
+# is fine on the rerun, app-7's fails again. So app-6 is NOT replaced (its rerun records stand in), app-7 is replaced by
+# app-51, the next reserve, and nothing else is a choice.
+variant() { # OLD NEW: res-OLD with the directories renamed exp-NEW-*, and the reserve app-51 copied from app-1
+  local old="$1" new="$2" d w f base
+  rm -rf "$T/res-$new"; mkdir -p "$T/res-$new"
+  for d in "$T/res-$old/exp-$old"-*; do base="${d##*/}"; base="${base#"exp-$old-"}"; cp -R "$d" "$T/res-$new/exp-$new-$base"; done
+  for w in W0 W1 W3; do
+    mkdir -p "$T/res-$new/exp-$new-app-51-$w"
+    for f in "$T/res-$new/exp-$new-app-1-$w"/*.json; do
+      jq '.chart = "app-51"' "$f" >"$T/res-$new/exp-$new-app-51-$w/app-51.${f##*/app-1.}"
+    done
+  done
+}
+variant 1001 1101; variant 1002 1102
+PULL_W0="app-6 app-7" observe_set 1102 "$T/res-1102-pull" "$T/plan-observe/charts.json" 1.31.3 app-6 app-7 && ok "observe job steps: W0 of app-6 and app-7 cannot pull in run 1102"
+for c in app-6 app-7; do for w in W0 W1 W3; do rm -rf "$T/res-1102/exp-1102-$c-$w"; cp -R "$T/res-1102-pull/exp-1102-$c-$w" "$T/res-1102/"; done; done
+observe_set 1012 "$T/res-1012" "$T/plan-observe/charts.json" 1.31.3 app-6 && ok "observe job steps: the rerun of app-6, restricted to the chart"
+PULL_W0="app-7" observe_set 1013 "$T/res-1013" "$T/plan-observe/charts.json" 1.31.3 app-7 && ok "observe job steps: the rerun of app-7, its W0 fails again"
+for r in 1101 1102 1012 1013; do report_job $r "$T/res-$r"; done
+eq "replacement rule: the pull failure leaves W0 of app-6 and app-7 with no usable run in run 1102, installs 'ok' in the stub" \
+  "$(jq -c '[.charts[] | select(.chart | IN("app-6","app-7")) | [.chart, (.worlds[0].oracleRunsUsed | length), (.worlds[0].oracleRunsLeftOut | length)]]' "$T/report-1102.json")" '[["app-6",0,3],["app-7",0,3]]'
+eq "replacement rule: the rerun reports hold one chart each; app-6's W0 is 3 of 3 there, app-7's is not" \
+  "$(for r in 1012 1013; do jq -c '[(.charts | length), .charts[0].chart, (.charts[0].worlds[0].oracleRunsUsed | length)]' "$T/report-$r.json"; done | tr '\n' ' ')" '[1,"app-6",3] [1,"app-7",0] '
+repl_inputs() { # NAME REPLACEMENTS-JSON
+  echo "$2" >"$T/$1.repl.json"
+  jq --arg r1 "$T/res-1101" --arg r2 "$T/res-1102" --arg p1 "$T/report-1101.json" --arg p2 "$T/report-1102.json" \
+     --arg a "$T/report-1012.json" --arg b "$T/report-1013.json" --arg ra "$T/res-1012" --arg rb "$T/res-1013" --arg repl "$T/$1.repl.json" '
+    .runs[0] += {id: "1101", report: $p1, records: $r1} | .runs[1] += {id: "1102", report: $p2, records: $r2}
+    | .reruns = [{id: "1012", report: $a, records: $ra, started: "2026-11-21T03:00:00Z", ended: "2026-11-21T03:40:00Z"},
+                 {id: "1013", report: $b, records: $rb, started: "2026-11-21T03:00:00Z", ended: "2026-11-21T03:40:00Z"}]
+    | .replacements = $repl' "$T/analysis/inputs.json" >"$T/$1.inputs.json"
+  # the ledger names the variant runs
+  jq '.rows |= map(if .runs then .runs.run1 = "1101" | .runs.run2 = "1102" else . end)' "$T/ledger.json" >"$T/$1.ledger.json"
+  jq --arg l "$T/$1.ledger.json" '.ledger = $l' "$T/$1.inputs.json" >"$T/x" && mv "$T/x" "$T/$1.inputs.json"
+  jq --arg f "$T/charts-exp.json" '.frame = $f' "$T/$1.inputs.json" >"$T/x" && mv "$T/x" "$T/$1.inputs.json"
+  # static results for the reserve (the chart app-51 is as same as app-1)
+  jq '. + [.[] | select(.chart == "app-1") | .chart = "app-51"]' "$T/analysis/static.json" >"$T/$1.static.json"
+  jq --arg st "$T/$1.static.json" '.static = $st' "$T/$1.inputs.json" >"$T/x" && mv "$T/x" "$T/$1.inputs.json"
+  "$B/crossrun" -inputs "$T/$1.inputs.json" -json "$T/$1.json" -md "$T/$1.md" >"$T/$1.out" 2>&1
+}
+GOOD='{"schema":1,"reruns":[{"chart":"app-6","run":"1102","rerun":"1012"}],"replacements":[{"chart":"app-7","reserve":"app-51","reason":"W0 image pull refused in run 1102 and in its rerun","run":"1102","rerun":"1013"}]}'
+repl_inputs repl-good "$GOOD" && rcg=0 || rcg=$?
+[[ -s "$T/repl-good.out" ]] && head -5 "$T/repl-good.out" >&2
+eq "replacement rule: app-7 is replaced by app-51 and app-6 is not (exit 0)" "$rcg:$(jq -c '[(.sample.replacements | map([.chart, .reserve])), (.sample.reruns | sort_by(.chart) | map([.chart, .rerun, .failedAgain]))]' "$T/repl-good.json")" \
+  '0:[[["app-7","app-51"]],[["app-6","1012",false],["app-7","1013",true]]]'
+eq "replacement rule: the sample holds app-51 and app-6, not app-7" "$(jq -c '[.sample.charts | (index("app-51") != null), (index("app-6") != null), (index("app-7") != null)]' "$T/repl-good.json")" '[true,true,false]'
+repl_inputs repl-choice '{"schema":1,"reruns":[{"chart":"app-7","run":"1102","rerun":"1013"}],"replacements":[{"chart":"app-6","reserve":"app-51","reason":"chosen","run":"1102","rerun":"1012"}]}'
+eq "replacement rule: replacing app-6 (W0 fine on its rerun) instead of app-7 is refused (exit 1)" "$?" 1
+grep -q "the rule does not replace it" "$T/repl-choice.out" && ok "  and says the rule does not replace app-6" || bad "  error text: $(head -3 "$T/repl-choice.out")"
+repl_inputs repl-none '{"schema":1,"reruns":[{"chart":"app-6","run":"1102","rerun":"1012"},{"chart":"app-7","run":"1102","rerun":"1013"}],"replacements":[]}'
+eq "replacement rule: app-7 failing again but not replaced is refused (exit 1)" "$?" 1
+grep -q "no such replacement is in the replacements file" "$T/repl-none.out" && ok "  and says the replacement is missing" || bad "  error text: $(head -3 "$T/repl-none.out")"
+repl_inputs repl-norerun '{"schema":1,"reruns":[],"replacements":[{"chart":"app-7","reserve":"app-51","reason":"x","run":"1102","rerun":"1013"}]}'
+eq "replacement rule: app-6 without a named rerun is refused (exit 1)" "$?" 1
+grep -q 'chart "app-6": W0 was not 3 of 3 in run 1102' "$T/repl-norerun.out" && ok "  and names the chart and the run" || bad "  error text: $(head -3 "$T/repl-norerun.out")"
 
 # test mode: the overrides work, and every output says so
 env PATH="$T/bin:$PATH" MMC_STATE="$T/state" MMC_ANALYZE_TEST=1 CROSSRUN="$B/crossrun" LEDGER="$B/ledger" STATICCHECK="$B/staticcheck" \

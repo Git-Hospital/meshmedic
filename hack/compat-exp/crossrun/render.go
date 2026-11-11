@@ -42,9 +42,14 @@ func RenderMarkdown(r *Result) []byte {
 
 	w("Sample: %d charts of the frozen list, %d replaced by reserves.\n\n", len(r.Sample.Charts), len(r.Sample.Replacements))
 	for _, x := range r.Sample.Replacements {
-		w("- replaced %s by %s (%s; evidence run %s)\n", x.Chart, x.Reserve, x.Reason, x.Run)
+		w("- replaced %s by %s (%s; W0 not 3 of 3 in run %s and again in rerun %s)\n", x.Chart, x.Reserve, x.Reason, x.Run, x.Rerun)
 	}
-	if len(r.Sample.Replacements) > 0 {
+	for _, u := range r.Sample.Reruns {
+		if !u.Failed {
+			w("- %s: W0 was not 3 of 3 in run %s but was in rerun %s, whose records stand in for the run's; not replaced\n", u.Chart, u.Run, u.Rerun)
+		}
+	}
+	if len(r.Sample.Replacements) > 0 || len(r.Sample.Reruns) > 0 {
 		w("\n")
 	}
 
