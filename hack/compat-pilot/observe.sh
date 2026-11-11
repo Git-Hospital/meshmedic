@@ -38,6 +38,7 @@ cluster="mmc-$(tr '[:upper:]' '[:lower:]' <<<"$world")"
 export KUBECONFIG="$state/$cluster.kubeconfig"
 ns=pilot
 settle="${MMC_SETTLE:-30}"
+late="${MMC_LATE:-120}"
 
 # Helm gets its own config and cache as well: a repository list left on the
 # operator's machine changes how `--repo` resolves, and has been seen to make
@@ -189,7 +190,8 @@ args=(install "$release" "$chart_src" --namespace "$ns" --version "$version"
 start="$(date +%s)"
 helm "${args[@]}" ${values[@]+"${values[@]}"} >"$tmp/helm.log" 2>&1
 helm_rc=$?
-duration=$(($(date +%s) - start))
+installed_at="$(date +%s)"
+duration=$((installed_at - start))
 
 # A chart that installed can still fall over a few seconds later (a liveness
 # probe that the proxy breaks, a restart once the sidecar is torn down), so
@@ -203,8 +205,8 @@ sleep "$settle"
 # owned by a ReplicaSet whose name ends in a template hash; that hash is
 # dropped. Job pods are left to the Job's own condition: a Job that retried
 # and then succeeded is a success, but its failed pod would say otherwise.
-kubectl -n "$ns" get pods -o json >"$tmp/pods.json" || undecided "could not list pods"
-jq '[.items[]
+# shellcheck disable=SC2016 # a jq program, not shell
+workloads_filter='[.items[]
   | select(.metadata.labels["mmc-client"] == null)
   | (.metadata.ownerReferences[0] // {}) as $o
   | select($o.kind != "Job")
@@ -230,7 +232,9 @@ jq '[.items[]
                       reason: (.state.waiting.reason // .state.terminated.reason // ""),
                       message: ((.state.waiting.message // .state.terminated.message // "") | .[0:300]),
                       lastExit: (.lastState.terminated | if . then {exitCode, reason} else null end)}]
-    }]' "$tmp/pods.json" >"$tmp/workloads.json" || undecided "could not read pods"
+    }]'
+kubectl -n "$ns" get pods -o json >"$tmp/pods.json" || undecided "could not list pods"
+jq "$workloads_filter" "$tmp/pods.json" >"$tmp/workloads.json" || undecided "could not read pods"
 
 # Every pod, Job pods included, whose image could not be pulled. Such a run
 # measured the registry, and difftable leaves it out; Job pods have to count
@@ -357,6 +361,64 @@ while IFS='|' read -r svc port pname approto headless; do
 done <"$tmp/ports.txt"
 jq -s . "$tmp/ports.jsonl" >"$tmp/ports.json"
 
+# --- E1: the API server as a caller ------------------------------------------
+
+# kube-apiserver calls webhooks and aggregated APIs and sits outside the mesh,
+# which no in-mesh probe sees (docs/compat-experiment.md, section 5). For each
+# Service in the release namespace that a ValidatingWebhookConfiguration, a
+# MutatingWebhookConfiguration or an APIService points to, one GET through the
+# API server's service proxy, recording only whether it was reachable, and for
+# each APIService its Available condition. Cluster-scoped objects carry no
+# release label that every chart sets, so "of the release" means "points to a
+# Service in the release namespace"; the world is a fresh cluster, so nothing
+# else does. The port defaults to 443, as the API server does.
+#
+# Reachable means the API server got an HTTP response from the backend,
+# whatever its status: a 401, 404 or 503 the backend sent is reachable. Not
+# reachable means the API server itself failed to get one: "error trying to
+# reach service" (dial or TLS failure, a connection reset by a proxy that
+# wants mTLS), "no endpoints available for service", a missing Service, or its
+# own timeout. kubectl prints a status the backend sent as "Error from server
+# (...)" with the reason of that status, so that text without one of the
+# API server's own phrases is a backend response. Output that is neither (the
+# API server could not be contacted at all) makes the run undecided.
+apiserver_reachable() {
+  local o
+  if o="$(kubectl get --raw "/api/v1/namespaces/$ns/services/https:$1:$2/proxy/" --request-timeout=20s 2>&1)"; then
+    echo true
+    return
+  fi
+  case "$o" in
+    *"error trying to reach service"* | *"no endpoints available for service"* | *"Timeout: request did not complete"* | \
+      *"context deadline exceeded"* | *"Client.Timeout"* | *'services "'*'" not found'*) echo false ;;
+    *"Error from server"*) echo true ;;
+    *) echo "undecided: $o" ;;
+  esac
+}
+
+for kind in validatingwebhookconfigurations mutatingwebhookconfigurations apiservices; do
+  kubectl get "$kind" -o json >"$tmp/$kind.json" || undecided "could not list $kind"
+done
+jq -rs --arg ns "$ns" '[.[] | .items[]?
+  | ((.webhooks[]? | .clientConfig.service), .spec.service)
+  | select(. != null and .namespace == $ns)
+  | "\(.name)|\(.port // 443)"] | unique[]' \
+  "$tmp/validatingwebhookconfigurations.json" "$tmp/mutatingwebhookconfigurations.json" "$tmp/apiservices.json" \
+  >"$tmp/apiserver-targets.txt" || undecided "could not read webhook configurations"
+jq '[.items[]? | select(.spec.service.namespace == $ns)
+  | {name: .metadata.name,
+     available: (((.status.conditions // [])[] | select(.type == "Available") | .status | ascii_downcase) // "unknown")}]' \
+  --arg ns "$ns" "$tmp/apiservices.json" >"$tmp/apiservices-available.json" || undecided "could not read APIServices"
+
+: >"$tmp/apiserver.jsonl"
+while IFS='|' read -r asvc aport; do
+  reach="$(apiserver_reachable "$asvc" "$aport")"
+  [[ "$reach" != undecided:* ]] || undecided "API server unreachable while probing $asvc:$aport via proxy: ${reach#undecided: }"
+  jq -nc --arg svc "$asvc" --arg port "$aport" --arg r "$reach" \
+    '{service: $svc, port: ($port | tonumber), reachable: ($r == "true")}' >>"$tmp/apiserver.jsonl"
+done <"$tmp/apiserver-targets.txt"
+jq -s . "$tmp/apiserver.jsonl" >"$tmp/apiserver.json"
+
 # --- istioctl analyze -------------------------------------------------------
 
 # Evidence, never the verdict: analyze runs on the live namespace so a later
@@ -367,6 +429,17 @@ if [[ "$world" != W0 ]]; then
     jq '[.[]? | {code: .code, level: .level, origin: .origin, message: .message}]' >"$tmp/analyze.json" ||
     echo '[]' >"$tmp/analyze.json"
 fi
+
+# --- E2: the workloads again, later -------------------------------------------
+
+# A second snapshot at install + MMC_LATE seconds (default 120), or right now if
+# the probes ran past that: it catches a liveness probe that fails late. Same
+# program as the first snapshot, recorded under new keys (late:...) and a new
+# field; the first snapshot is not touched.
+now="$(date +%s)"
+[[ $now -ge $((installed_at + late)) ]] || sleep $((installed_at + late - now))
+kubectl -n "$ns" get pods -o json >"$tmp/pods-late.json" || undecided "could not list pods"
+jq "$workloads_filter" "$tmp/pods-late.json" >"$tmp/late.json" || undecided "could not read pods"
 
 # --- record -----------------------------------------------------------------
 
@@ -383,6 +456,8 @@ jq -n \
   --slurpfile ports "$tmp/ports.json" --slurpfile analyze "$tmp/analyze.json" \
   --slurpfile events "$tmp/events.json" --slurpfile pulls "$tmp/pullfailures.json" \
   --slurpfile podmesh "$tmp/podmesh.json" --slurpfile capacity "$tmp/capacity.json" \
+  --slurpfile late "$tmp/late.json" --slurpfile apisvc "$tmp/apiserver.json" \
+  --slurpfile apiaps "$tmp/apiservices-available.json" \
   --arg fixof "$fixof" --arg patch_path "$patch_rel" --arg patch_sha "$patch_sha" \
   --argjson patch_lines "$patch_lines" --argjson patch_changed "$patch_changed" '
   ($workloads[0] | group_by(.workload)) as $groups
@@ -395,6 +470,8 @@ jq -n \
     pullFailures: $pulls[0],
     capacityPending: $capacity[0],
     podMesh: $podmesh[0],
+    lateWorkloads: $late[0],
+    apiserver: {services: $apisvc[0], apiServices: $apiaps[0]},
     patch: (if $patch_path == "" then null
             else {path: $patch_path, sha256: $patch_sha, lines: $patch_lines, changedLines: $patch_changed} end),
     obs: (
@@ -406,6 +483,12 @@ jq -n \
       + ([$jobs[0][] | {("job:" + .job + ":complete"): (.complete | tostring)}] | add // {})
       + ([$ports[0][] | {("port:" + .svc + ":" + (.port | tostring) + ":passive"): .passive,
                          ("port:" + .svc + ":" + (.port | tostring) + ":http"): .http}] | add // {})
+      + ([$apisvc[0][] | {("apiserver:svc:" + .service + ":" + (.port | tostring) + ":reachable"): (.reachable | tostring)}] | add // {})
+      + ([$apiaps[0][] | {("apiserver:apiservice:" + .name + ":available"): .available}] | add // {})
+      + ([($late[0] | group_by(.workload))[] | {("late:workload:" + .[0].workload + ":ready"):
+            (if all(.[]; .ready or .phase == "Succeeded") then "true" else "false" end)}] | add // {})
+      + ([($late[0] | group_by(.workload))[] | {("late:workload:" + .[0].workload + ":restarts"):
+            (if ([.[].restarts] | add) == 0 then "0" else ">0" end)}] | add // {})
     )
   }' >"$out/$id.$world.run$run.json" || undecided "could not write the record"
 

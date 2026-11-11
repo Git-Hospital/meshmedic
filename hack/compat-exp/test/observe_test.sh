@@ -106,7 +106,7 @@ run_observe() {
   world_files "$world"
   rec="$T/out/$id.$world.run$run.json"
   env PATH="$T/bin:$PATH" STUB_CONTEXT="kind-mmc-$(tr '[:upper:]' '[:lower:]' <<<"$world")" \
-    MMC_STATE="$T/state" MMC_SETTLE=0 MMC_LATE=0 ${cf:+CHARTS_FILE="$cf"} \
+    MMC_STATE="$T/state" MMC_SETTLE=0 MMC_LATE="${TEST_LATE:-0}" ${cf:+CHARTS_FILE="$cf"} \
     bash "${OBSERVE:-$T/repo/hack/compat-pilot/observe.sh}" "$world" "$id" "$run" "$T/out" \
     >"$T/stdout" 2>"$T/stderr"
   rc=$?
@@ -299,6 +299,123 @@ jqok "capacityPending entry names the pod and the scheduler message" "$rec" \
 jqok "capacityPending is at the top level like pullFailures, both arrays" "$rec" \
   '(.capacityPending | type) == "array" and (.pullFailures | type) == "array"'
 
+# --- item 5: E1 (the API server as a caller) and E2 (the late snapshot) ------------
+
+echo "# item 5"
+charts_one "$T/c5.json" '{"id":"app","chart":"oci://example/app","version":"1.0.0"}'
+
+# webhook_fixture KIND SERVICE [PORT]: a webhook configuration pointing to a
+# Service in the release namespace (no port field when PORT is empty).
+webhook_fixture() {
+  local file="$1" name="$2" ns="${4:-pilot}" port="${3:-}"
+  jq -nc --arg n "$name" --arg ns "$ns" --arg p "$port" \
+    '{items: [{metadata: {name: $n}, webhooks: [{clientConfig: {service: ({namespace: $ns, name: $n} + (if $p == "" then {} else {port: ($p | tonumber)} end))}}]}]}' \
+    >"$T/stub/$file"
+}
+# raw_reply SERVICE PORT RC TEXT: what the service proxy answers.
+raw_reply() { printf '%s\n%s\n' "$3" "$4" >"$T/stub/raw/https:$1:$2"; }
+e1_value() { jq -r --arg k "$1" '.obs[$k] // "ABSENT"' "$rec"; }
+only_default_pods() { pods_file "$T/stub/pods.json" "$(pod app-0 StatefulSet app)"; }
+
+# reachable: the backend answered, whatever the status.
+e1_case() { # NAME EXPECTED RC TEXT
+  reset; only_default_pods
+  webhook_fixture validating.json hook 9443
+  raw_reply hook 9443 "$3" "$4"
+  run_observe "$T/c5.json" W3 app 1
+  [[ $rc -eq 0 && "$(e1_value apiserver:svc:hook:9443:reachable)" == "$2" ]] && ok "$1" ||
+    bad "$1 (rc=$rc, value=$(e1_value apiserver:svc:hook:9443:reachable))"
+}
+e1_case "E1 reachable: 2xx" true 0 "ok"
+e1_case "E1 reachable: backend 404" true 1 'Error from server (NotFound): the server could not find the requested resource (get services https:hook:9443)'
+e1_case "E1 reachable: backend 403" true 1 'Error from server (Forbidden): services "https:hook:9443" is forbidden: User cannot get'
+e1_case "E1 reachable: backend 503 of its own" true 1 'Error from server (ServiceUnavailable): the server is currently unable to handle the request (get services https:hook:9443)'
+e1_case "E1 not reachable: error trying to reach service" false 1 'Error from server (ServiceUnavailable): error trying to reach service: read tcp 10.0.0.1:44444->10.0.0.2:9443: read: connection reset by peer'
+e1_case "E1 not reachable: no endpoints" false 1 'Error from server (ServiceUnavailable): no endpoints available for service "https:hook:9443"'
+e1_case "E1 not reachable: API server timeout" false 1 'Error from server (Timeout): Timeout: request did not complete within requested timeout - context deadline exceeded'
+e1_case "E1 not reachable: Service missing" false 1 'Error from server (NotFound): services "hook" not found'
+
+# a mutating webhook, the default port, and two webhooks sharing one Service port
+reset; only_default_pods
+webhook_fixture mutating.json mut ""
+raw_reply mut 443 0 ok
+run_observe "$T/c5.json" W3 app 1
+[[ "$(e1_value apiserver:svc:mut:443:reachable)" == true ]] && ok "E1 mutating webhook, port defaults to 443" || bad "E1 mutating webhook default port"
+reset; only_default_pods
+webhook_fixture validating.json hook 9443; webhook_fixture mutating.json hook 9443
+raw_reply hook 9443 0 ok
+run_observe "$T/c5.json" W0 app 1
+jqok "E1 one key per Service port, however many webhooks name it" "$rec" '[.obs | keys[] | select(startswith("apiserver:"))] == ["apiserver:svc:hook:9443:reachable"]'
+check "E1 the proxy URL is the documented service proxy path" grep -q -- "get --raw /api/v1/namespaces/pilot/services/https:hook:9443/proxy/" "$T/stub/kubectl.log"
+
+# a webhook pointing at a Service in another namespace is not the release's
+reset; only_default_pods
+webhook_fixture validating.json istio-sidecar-injector 443 istio-system
+run_observe "$T/c5.json" W1 app 1
+jqok "E1 webhook of another namespace is ignored: no apiserver: keys" "$rec" '[.obs | keys[] | select(startswith("apiserver:"))] == []'
+
+# APIService: reachability of its Service and its Available condition
+reset; only_default_pods
+cat >"$T/stub/apiservices.json" <<'JSON'
+{"items":[
+ {"metadata":{"name":"v1beta1.up.example.io"},"spec":{"service":{"namespace":"pilot","name":"up","port":8443}},
+  "status":{"conditions":[{"type":"Available","status":"True"}]}},
+ {"metadata":{"name":"v1beta1.down.example.io"},"spec":{"service":{"namespace":"pilot","name":"down"}},
+  "status":{"conditions":[{"type":"Available","status":"False","reason":"FailedDiscoveryCheck"}]}},
+ {"metadata":{"name":"v1beta1.nocond.example.io"},"spec":{"service":{"namespace":"pilot","name":"nocond"}}},
+ {"metadata":{"name":"v1.core"},"spec":{"service":null}},
+ {"metadata":{"name":"v1.elsewhere.example.io"},"spec":{"service":{"namespace":"other","name":"x"}}}]}
+JSON
+raw_reply up 8443 0 ok
+raw_reply down 443 1 'Error from server (ServiceUnavailable): no endpoints available for service "https:down:443"'
+raw_reply nocond 443 0 ok
+run_observe "$T/c5.json" W3 app 1
+[[ $rc -eq 0 ]] || bad "APIService run (rc=$rc: $(cat "$T/stderr"))"
+jqok "E1 APIService Available True" "$rec" '.obs["apiserver:apiservice:v1beta1.up.example.io:available"] == "true"'
+jqok "E1 APIService unavailable (False)" "$rec" '.obs["apiserver:apiservice:v1beta1.down.example.io:available"] == "false"'
+jqok "E1 APIService without an Available condition is unknown" "$rec" '.obs["apiserver:apiservice:v1beta1.nocond.example.io:available"] == "unknown"'
+jqok "E1 APIService Service reachability and its absence" "$rec" \
+  '.obs["apiserver:svc:up:8443:reachable"] == "true" and .obs["apiserver:svc:down:443:reachable"] == "false"'
+jqok "E1 APIServices of other namespaces and local ones are ignored" "$rec" \
+  '[.obs | keys[] | select(startswith("apiserver:"))] | length == 6'
+
+# a release with no webhooks and no APIServices has no apiserver: key at all
+reset; only_default_pods
+run_observe "$T/c5.json" W3 app 1
+jqok "E1 no webhooks: no apiserver: keys" "$rec" '[.obs | keys[] | select(startswith("apiserver:"))] == [] and .apiserver == {services: [], apiServices: []}'
+check "E1 no webhooks: no service proxy request was made" bash -c "! grep -q -- '--raw' '$STUB_DIR/kubectl.log'"
+
+# the API server itself being unreachable says nothing about the chart
+reset; only_default_pods
+webhook_fixture validating.json hook 9443
+raw_reply hook 9443 1 'Unable to connect to the server: dial tcp 127.0.0.1:6443: connect: connection refused'
+run_observe "$T/c5.json" W0 app 1
+[[ $rc -eq 3 && ! -f "$rec" ]] && ok "E1 API server not contactable: exit 3, no record" || bad "E1 API server not contactable (rc=$rc)"
+
+# E2: the second snapshot is a new set of keys and the first is untouched
+reset
+pods_file "$T/stub/pods.1.json" "$(pod web-7d9f-abc ReplicaSet web-7d9f)" "$(pod db-0 StatefulSet db)"
+pods_file "$T/stub/pods.2.json" "$(pod web-7d9f-abc ReplicaSet web-7d9f '.status.containerStatuses[0].restartCount = 2')" \
+  "$(pod db-0 StatefulSet db '.status.conditions = [{type: "Ready", status: "False"}]')"
+run_observe "$T/c5.json" W0 app 1
+[[ $rc -eq 0 ]] || bad "E2 run (rc=$rc: $(cat "$T/stderr"))"
+jqok "E2 first snapshot keeps its values" "$rec" \
+  '.obs["workload:Deployment/web:ready"] == "true" and .obs["workload:Deployment/web:restarts"] == "0" and .obs["workload:StatefulSet/db:ready"] == "true"'
+jqok "E2 late keys carry the second snapshot" "$rec" \
+  '.obs["late:workload:Deployment/web:restarts"] == ">0" and .obs["late:workload:StatefulSet/db:ready"] == "false" and .obs["late:workload:Deployment/web:ready"] == "true"'
+jqok "E2 late keys all start with late:workload: and mirror the first snapshot's keys" "$rec" \
+  '([.obs | keys[] | select(startswith("workload:"))] | map("late:" + .) | sort) == ([.obs | keys[] | select(startswith("late:"))] | sort)'
+jqok "E2 lateWorkloads holds the full second snapshot, workloads the first" "$rec" \
+  '.lateWorkloads[0].restarts == 2 and (.workloads | map(.restarts) | add) == 0'
+check "E2 pods listed twice" test "$(grep -c 'get pods -o json' "$T/stub/kubectl.log")" -eq 2
+
+# the wait: install + MMC_LATE, not shorter
+reset; only_default_pods
+t0=$(date +%s)
+TEST_LATE=2 run_observe "$T/c5.json" W0 app 1
+t1=$(date +%s)
+[[ $rc -eq 0 && $((t1 - t0)) -ge 2 ]] && ok "E2 waits until install + MMC_LATE" || bad "E2 wait (rc=$rc, took $((t1 - t0))s)"
+
 # --- the pilot's observe.sh and this one agree on everything that existed ----------
 
 echo "# compatibility with the pilot instrument"
@@ -310,7 +427,7 @@ echo "# compatibility with the pilot instrument"
 base="${COMPAT_BASE:-origin/main}"
 if git -C "$repo" show "$base:hack/compat-pilot/observe.sh" >"$T/observe.old.sh" 2>/dev/null &&
   ! grep -q CHARTS_FILE "$T/observe.old.sh"; then
-  norm='del(.helm.durationSeconds, .patch, .podMesh, .capacityPending, .lateWorkloads)
+  norm='del(.helm.durationSeconds, .patch, .podMesh, .capacityPending, .lateWorkloads, .apiserver)
         | .obs |= with_entries(select(.key | test("^(apiserver|late):") | not))'
   for world in W0 W1 W3; do
     reset
@@ -326,6 +443,8 @@ JSON
 {"items":[{"metadata":{"name":"init"},"status":{"conditions":[{"type":"Complete","status":"True"}]}}]}
 JSON
     echo "web-pre-hook" >"$T/stub/hooks.txt"
+    webhook_fixture validating.json hook 9443
+    raw_reply hook 9443 1 'Error from server (ServiceUnavailable): error trying to reach service: connection refused'
     charts_one "$T/c.json" '{"id":"app","chart":"oci://example/app","version":"1.0.0","values":["--set","a=b"]}'
     cp "$T/c.json" "$T/charts.json" # the old script reads the list next to itself
     OBSERVE="$T/observe.old.sh" run_observe "" "$world" app 1
