@@ -29,8 +29,24 @@ renamed or changes meaning; adding a field does not raise it.
 | `chartVersion` | string | version from the records |
 | `fixOf` | string | the base chart, only for a fix entry |
 | `environment` | string | the versions each world ran with, as the table prints them |
+| `oracleInstall` | OracleInstall | whether the oracle world's installs of this chart worked |
 | `worlds` | WorldReport[] | one per compared world |
 | `certificate` | CertReport | only for a fix entry |
+
+## OracleInstall
+
+Read from `obs["helm:install"]` (`ok` or `failed`) of every oracle record of the
+chart. It does not change any verdict: a chart whose oracle install failed in
+every run has the same failure in every world and compares as `same`, and this
+field is what shows it. The table prints it as the `W0 installs` column
+(`3/3 ok`, `0/3 ok (FAILED)`, `unknown`).
+
+| field | type | meaning |
+|---|---|---|
+| `runs` | int | oracle records of the chart |
+| `ok` | int | records with `helm:install` `ok` |
+| `failed` | int | records with `helm:install` `failed` |
+| `status` | string | `ok` (all ok), `failed` (all failed), `mixed`, or `unknown` (no oracle record, or none says) |
 
 ## WorldReport
 
@@ -78,6 +94,11 @@ Present on a fix entry (a chart whose records carry `fixOf`).
 | `cellWorlds` | string[] | the worlds the fix had to clear: `-cell-worlds`, else all of `worlds` |
 | `ignored` | IgnoreCell[] | every ignore-list entry for a key that the certificate did not count, sorted by world, key, chart |
 | `worldsNotCompared` | IgnoreCell[] | ignore entries with key `*`: whole worlds with no verdict that the certificate passed; never in `ignored` |
+| `ignoredChanged` | IgnoredChange[] | ignored cells whose value under the fix differs from the base's ("ignored cell changed under the fix"); any entry fails the certificate and is also in `problems` |
+
+IgnoredChange: `chart` (the base), `world`, `key`, `baseValues`, `fixValues`
+(the sorted distinct values the key took in the used runs of that world, for the
+base and for the fix).
 
 IgnoreCell: `chart`, `world`, `key`, `reason`, as in the ignore file.
 
@@ -93,13 +114,23 @@ By default a fix fails while any mesh world still differs from the oracle.
 - `-ignore FILE`: a JSON array of `{"chart", "world", "key", "reason"}`, all
   four required, no other fields. The cell is not counted as a remaining
   finding or flaky key, and it does not count as a cleared finding either. The
-  chart is the fix entry or its base. The key `"*"` stands for a world with no
-  verdict (too few runs); it is the only way past an undecided world, and it is
-  printed apart ("Worlds NOT COMPARED") and reported in `worldsNotCompared`. An entry
-  that matches no differing (or, for `"*"`, undecided) cell of any fix entry is
-  an error, as is an unknown world, the oracle world or a repeated entry; the
-  run exits with status 2 and prints nothing else. The table lists each
-  ignored cell under the certificates, and the JSON lists it in `ignored`.
+  chart is the fix entry or its base. The list may hold only cells of the BASE
+  chart (pre-registration section 2, rule 5): an entry is accepted only if the
+  base chart, without the fix, has that same cell in the same run as a finding,
+  a flaky key or an undecided key. An entry that matches only a difference of
+  the fixed chart is an error naming the entry. The key `"*"` stands for a
+  world with no verdict (too few runs); it is the only way past an undecided
+  world, it is accepted only if the base chart's world is itself undecided, and
+  it is printed apart ("Worlds NOT COMPARED") and reported in
+  `worldsNotCompared`. An entry that matches no cell of any fix entry (or, for
+  `"*"`, no undecided world) is an error, as is an unknown world, the oracle
+  world or a repeated entry; the run exits with status 2 and prints nothing
+  else. The table lists each ignored cell under the certificates, and the JSON
+  lists it in `ignored`.
+- An accepted key entry also freezes the cell: if the set of values the key
+  took under the fix differs from the base's (both worlds decided), the
+  certificate lists it as "ignored cell changed under the fix" (table and
+  `ignoredChanged`) and is not certified.
 
 ## Input
 

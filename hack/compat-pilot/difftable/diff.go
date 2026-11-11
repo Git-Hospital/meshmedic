@@ -420,6 +420,21 @@ type Certificate struct {
 	// NotCompared are the ignore entries (key "*") for a whole world that has
 	// no verdict, kept apart from Ignored so they cannot pass as ordinary cells.
 	NotCompared []IgnoreCell
+	// IgnoredChanged are ignored cells whose value under the fix differs from
+	// the base's: the fix changed what the list says it does not touch.
+	IgnoredChanged []IgnoredChange
+	// FixOnly are ignore entries that match a difference only the fix has.
+	FixOnly []IgnoreCell
+}
+
+// IgnoredChange is one ignored cell the fix changed. The values are the
+// distinct values the key took in the used runs of that world, sorted.
+type IgnoredChange struct {
+	Chart      string   `json:"chart"`
+	World      string   `json:"world"`
+	Key        string   `json:"key"`
+	BaseValues []string `json:"baseValues"`
+	FixValues  []string `json:"fixValues"`
 }
 
 // Certified needs at least one cleared world and nothing else wrong. A fix for
@@ -478,16 +493,33 @@ func CertifyWith(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0,
 			if e.World != w || (e.Chart != fix && e.Chart != base) {
 				continue
 			}
+			// The list may hold only cells of the base chart (pre-registration
+			// section 2, rule 5): a cell that already differs, or is undecided,
+			// without the fix. Whatever matches only the fix is refused.
 			if e.Key == wholeWorld {
-				if f.Undecided != "" || b.Undecided != "" {
+				switch {
+				case b.Undecided != "":
 					ignore[wholeWorld] = true
 					c.NotCompared = append(c.NotCompared, e)
+				case f.Undecided != "":
+					c.FixOnly = append(c.FixOnly, e)
 				}
 				continue
 			}
-			if hasKey(f.Findings, e.Key) || hasKey(f.Flaky, e.Key) || hasKey(b.Findings, e.Key) || hasKey(b.Flaky, e.Key) {
+			switch {
+			case hasKey(b.Findings, e.Key) || hasKey(b.Flaky, e.Key) || hasUndecidedKey(b, e.Key):
 				ignore[e.Key] = true
 				c.Ignored = append(c.Ignored, e)
+				if f.Undecided == "" && b.Undecided == "" {
+					bv, fv := seenValues(b, e.Key), seenValues(f, e.Key)
+					if !equalStrings(bv, fv) && !hasChange(c.IgnoredChanged, w, e.Key) {
+						c.IgnoredChanged = append(c.IgnoredChanged, IgnoredChange{Chart: base, World: w, Key: e.Key, BaseValues: bv, FixValues: fv})
+						c.Problems = append(c.Problems, fmt.Sprintf("ignored cell changed under the fix: %s %s (%s %s, %s %s)",
+							w, e.Key, base, strings.Join(bv, "|"), fix, strings.Join(fv, "|")))
+					}
+				}
+			case hasKey(f.Findings, e.Key) || hasKey(f.Flaky, e.Key):
+				c.FixOnly = append(c.FixOnly, e)
 			}
 		}
 		fFind, fFlaky, bFind := without(f.Findings, ignore), without(f.Flaky, ignore), without(b.Findings, ignore)
@@ -543,6 +575,59 @@ func CertifyWith(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0,
 	return c
 }
 
+// hasUndecidedKey reports whether the key is one the comparison could not decide.
+func hasUndecidedKey(c Comparison, key string) bool {
+	for _, k := range c.Keys {
+		if k.Key == key && k.Verdict == keyUndecided {
+			return true
+		}
+	}
+	return false
+}
+
+// seenValues is the sorted set of values a key took in the used runs of a
+// world; a key the comparison never saw is "absent".
+func seenValues(c Comparison, key string) []string {
+	set := map[string]bool{}
+	for _, k := range c.Keys {
+		if k.Key == key {
+			for _, v := range k.Seen {
+				set[v] = true
+			}
+		}
+	}
+	if len(set) == 0 {
+		return []string{absent}
+	}
+	out := make([]string, 0, len(set))
+	for v := range set {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func hasChange(cs []IgnoredChange, world, key string) bool {
+	for _, c := range cs {
+		if c.World == world && c.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
 func hasKey(ds []Difference, key string) bool {
 	for _, d := range ds {
 		if d.Key == key {
@@ -572,4 +657,51 @@ func keyList(ds []Difference) string {
 		ks[i] = d.Key
 	}
 	return strings.Join(ks, ", ")
+}
+
+// OracleInstall says whether the oracle world's installs of a chart worked,
+// read from each oracle record's obs["helm:install"] ("ok" or "failed"). The
+// verdict logic does not use it: a chart whose oracle install failed in every
+// run compares as "same" because the failure is identical in every world, and
+// this makes that visible.
+type OracleInstall struct {
+	Runs   int    `json:"runs"`   // oracle records seen
+	Ok     int    `json:"ok"`     // helm:install == ok
+	Failed int    `json:"failed"` // helm:install == failed
+	Status string `json:"status"` // ok, failed, mixed or unknown
+}
+
+// oracleInstall counts the install outcomes of the oracle records.
+func oracleInstall(w0 []Record) OracleInstall {
+	o := OracleInstall{Runs: len(w0)}
+	for _, r := range w0 {
+		switch r.Obs["helm:install"] {
+		case "ok":
+			o.Ok++
+		case "failed":
+			o.Failed++
+		}
+	}
+	switch {
+	case o.Ok == 0 && o.Failed == 0:
+		o.Status = "unknown"
+	case o.Failed == 0 && o.Ok == o.Runs:
+		o.Status = "ok"
+	case o.Ok == 0 && o.Failed == o.Runs:
+		o.Status = "failed"
+	default:
+		o.Status = "mixed"
+	}
+	return o
+}
+
+// cell is the table form: "3/3 ok", "0/3 ok (FAILED)".
+func (o OracleInstall) cell() string {
+	switch o.Status {
+	case "failed":
+		return fmt.Sprintf("0/%d ok (FAILED)", o.Runs)
+	case "unknown":
+		return "unknown"
+	}
+	return fmt.Sprintf("%d/%d ok", o.Ok, o.Runs)
 }

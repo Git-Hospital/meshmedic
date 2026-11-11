@@ -136,7 +136,7 @@ func TestIgnoredCellDoesNotCountAsCleared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Certified() || len(c.Cleared) != 0 || !strings.Contains(strings.Join(c.Problems, ";"), "has no finding for this fix to clear") {
+	if c.Certified() || len(c.Cleared) != 0 || !strings.Contains(strings.Join(c.Problems, ";"), "ignored cell changed under the fix") {
 		t.Fatalf("an ignored cause was counted as cleared: %+v", c)
 	}
 }
@@ -227,7 +227,7 @@ func TestUndecidedWorldOutsideTheCellNeedsAnEntry(t *testing.T) {
 	withMeshWorlds(t, "W0", "W1", "W2", "W3")
 	recs := certRecords(defaultBase(), defaultFix())
 	for i := range recs {
-		if recs[i].Chart == "redis-fix" && recs[i].World == "W2" {
+		if (recs[i].Chart == "redis-fix" || recs[i].Chart == "redis") && recs[i].World == "W2" {
 			recs[i].CapacityPending = append(recs[i].CapacityPending, struct {
 				Pod     string `json:"pod"`
 				Message string `json:"message"`
@@ -300,12 +300,13 @@ func TestFlakyKeyInTheCell(t *testing.T) {
 	recs := certRecords(defaultBase(), defaultFix())
 	var out []Record
 	for _, r := range recs {
-		if r.Chart == "redis-fix" && r.World == "W3" && r.Run == 1 {
-			r.Obs = o("true", "ok")
+		if r.World == "W3" && r.Run == 1 {
+			r.Obs = o(map[string]string{"redis": "false", "redis-fix": "true"}[r.Chart], "ok")
 		}
 		out = append(out, r)
 	}
-	// Run 1 of the fix in W3 now has the probe passing: the probe is flaky.
+	// Run 1 of both charts in W3 now has the probe passing: the probe is flaky
+	// for the base and for the fix alike.
 	base := []IgnoreCell{ic("W1", probe, "C-optout")}
 	cell := []string{"W3"}
 	c, err := certOf(t, out, CertifyOpts{CellWorlds: cell, Ignore: base})
@@ -324,7 +325,7 @@ func TestWorldNotComparedIsDistinct(t *testing.T) {
 	withMeshWorlds(t, "W0", "W1", "W2", "W3")
 	recs := certRecords(defaultBase(), defaultFix())
 	for i := range recs {
-		if recs[i].Chart == "redis-fix" && recs[i].World == "W2" {
+		if (recs[i].Chart == "redis-fix" || recs[i].Chart == "redis") && recs[i].World == "W2" {
 			recs[i].CapacityPending = append(recs[i].CapacityPending, struct {
 				Pod     string `json:"pod"`
 				Message string `json:"message"`
@@ -396,5 +397,136 @@ func TestRecordInRecordMdShape(t *testing.T) {
 	}
 	if got, dropped := usableRuns("W3", rs); len(got) != 0 || len(dropped) != 1 || dropped[0].Reason != "pull-failure" {
 		t.Fatalf("%v %+v", got, dropped)
+	}
+}
+
+// The audit's scenario: the fix breaks StatefulSet readiness in W3, the base
+// does not, and the ignore file lists that key. The list may hold only cells of
+// the base chart, so the entry is an error, not a certificate.
+func TestIgnoreOfAFixOnlyDifferenceIsAnError(t *testing.T) {
+	withMeshWorlds(t, "W0", "W1", "W2", "W3")
+	base := obsAt{"W0": o("true", "ok"), "W1": o("true", "failed"), "W2": o("true", "ok"), "W3": o("true", "failed")}
+	fix := obsAt{"W0": o("true", "ok"), "W1": o("true", "failed"), "W2": o("true", "ok"), "W3": o("false", "ok")}
+	// Base: a probe finding in W3 only. Fix: probe fixed, readiness broken.
+	_, err := certOf(t, certRecords(base, fix), CertifyOpts{CellWorlds: []string{"W3"},
+		Ignore: []IgnoreCell{ic("W1", probe, "C-optout"), ic("W3", cause, "flaky")}})
+	if err == nil || !strings.Contains(err.Error(), "only with the fix") || !strings.Contains(err.Error(), cause) ||
+		!strings.Contains(err.Error(), "redis W3") {
+		t.Fatalf("want an error naming the fix-only entry, got %v", err)
+	}
+}
+
+// An ignored base finding that the fix leaves as it is certifies; the same
+// cell changed by the fix fails the certificate.
+func TestIgnoredCellChangedUnderTheFix(t *testing.T) {
+	withMeshWorlds(t, "W0", "W1", "W2", "W3")
+	opts := CertifyOpts{CellWorlds: []string{"W3"}, Ignore: []IgnoreCell{
+		ic("W3", probe, "world-universal"), ic("W1", probe, "C-optout")}}
+	c, err := certOf(t, certRecords(defaultBase(), defaultFix()), opts)
+	if err != nil || !c.Certified() || len(c.IgnoredChanged) != 0 {
+		t.Fatalf("unchanged ignored cells must certify: %v %+v", err, c)
+	}
+	// The fix turns the W1 probe from failed to a different failure value.
+	fix := defaultFix()
+	fix["W1"] = o("true", "timeout")
+	c, err = certOf(t, certRecords(defaultBase(), fix), opts)
+	if err != nil || c.Certified() || len(c.IgnoredChanged) != 1 || c.IgnoredChanged[0].World != "W1" ||
+		c.IgnoredChanged[0].Key != probe || !strings.Contains(strings.Join(c.Problems, ";"), "ignored cell changed under the fix: W1 helm:test") {
+		t.Fatalf("a changed ignored cell must fail: %v %+v", err, c)
+	}
+	a, err := analyze(certRecords(defaultBase(), fix), 3, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var table, js bytes.Buffer
+	if err := a.table(&table); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(table.String(), "ignored cell changed under the fix") {
+		t.Fatalf("table lacks the changed cell:\n%s", table.String())
+	}
+	if err := a.writeJSON(&js); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(js.String(), `"ignoredChanged"`) || !strings.Contains(js.String(), `"fixValues"`) {
+		t.Fatalf("json lacks ignoredChanged:\n%s", js.String())
+	}
+}
+
+// A "*" entry is accepted only when the base chart's world is itself
+// undecided. On a world that is decided for the base it is an error, whether
+// or not the fix's world is decided.
+func TestWildcardOnABaseDecidedWorldIsAnError(t *testing.T) {
+	withMeshWorlds(t, "W0", "W1", "W2", "W3")
+	good := []IgnoreCell{ic("W3", probe, "world-universal"), ic("W1", probe, "C-optout")}
+	cell := []string{"W3"}
+	if _, err := certOf(t, certRecords(defaultBase(), defaultFix()),
+		CertifyOpts{CellWorlds: cell, Ignore: append(append([]IgnoreCell{}, good...), ic("W2", "*", "x"))}); err == nil {
+		t.Fatal("a wildcard on a decided world was accepted")
+	}
+	recs := certRecords(defaultBase(), defaultFix())
+	for i := range recs {
+		if recs[i].Chart == "redis-fix" && recs[i].World == "W2" {
+			recs[i].CapacityPending = append(recs[i].CapacityPending, struct {
+				Pod     string `json:"pod"`
+				Message string `json:"message"`
+			}{Pod: "x-0", Message: "Insufficient cpu"})
+		}
+	}
+	_, err := certOf(t, recs, CertifyOpts{CellWorlds: cell, Ignore: append(append([]IgnoreCell{}, good...), ic("W2", "*", "x"))})
+	if err == nil || !strings.Contains(err.Error(), "only with the fix") || !strings.Contains(err.Error(), "redis W2") {
+		t.Fatalf("want a fix-only error for a wildcard on a world only the fix lacks, got %v", err)
+	}
+}
+
+// A chart whose oracle install failed in every run compares as "same", because
+// the failure is identical in every world. The verdict is left alone; the
+// report and the table say that the oracle installs failed.
+func TestOracleInstallMakesAVacuousSameVisible(t *testing.T) {
+	withMeshWorlds(t, "W0", "W1", "W2", "W3")
+	failed := map[string]string{"helm:install": "failed"}
+	good := map[string]string{"helm:install": "ok", "workload:Deployment/v:ready": "true"}
+	var rs []Record
+	for _, w := range []string{"W0", "W1", "W2", "W3"} {
+		rs = append(rs, chartRecs("vacuous", "0.12.0", "", same(w, 3, failed))...)
+		rs = append(rs, chartRecs("healthy", "1.0.0", "", same(w, 3, good))...)
+	}
+	mixed := chartRecs("mixed", "1.0.0", "", runs("W0", good, failed, good))
+	for _, w := range []string{"W1", "W2", "W3"} {
+		mixed = append(mixed, chartRecs("mixed", "1.0.0", "", same(w, 3, good))...)
+	}
+	rs = append(rs, mixed...)
+	a, err := analyze(rs, 3, CertifyOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]ChartReport{}
+	for _, c := range a.report().Charts {
+		got[c.Chart] = c
+	}
+	if v := got["vacuous"]; v.OracleInstall != (OracleInstall{Runs: 3, Failed: 3, Status: "failed"}) {
+		t.Fatalf("vacuous: %+v", v.OracleInstall)
+	}
+	for _, w := range got["vacuous"].Worlds {
+		if w.Verdict != "same" {
+			t.Fatalf("the verdict logic must stay as it is: %s %s", w.World, w.Verdict)
+		}
+	}
+	if v := got["healthy"].OracleInstall; v.Status != "ok" || v.Ok != 3 {
+		t.Fatalf("healthy: %+v", v)
+	}
+	if v := got["mixed"].OracleInstall; v.Status != "mixed" || v.Ok != 2 || v.Failed != 1 {
+		t.Fatalf("mixed: %+v", v)
+	}
+	if v := oracleInstall(nil); v.Status != "unknown" {
+		t.Fatalf("no oracle records: %+v", v)
+	}
+	var table bytes.Buffer
+	if err := a.table(&table); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(table.String(), "| vacuous | 0.12.0 | 0/3 ok (FAILED) | same | same | same |") ||
+		!strings.Contains(table.String(), "| healthy | 1.0.0 | 3/3 ok | same |") {
+		t.Fatalf("table:\n%s", table.String())
 	}
 }

@@ -12,6 +12,12 @@
       "chart": "db",
       "chartVersion": "9.0.0",
       "environment": "W0 kubernetes 1.36.0, istio 1.31.3; W1 kubernetes 1.36.0, istio 1.31.3; W2 kubernetes 1.36.0, istio 1.31.3; W3 kubernetes 1.36.0, istio 1.31.3",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      },
       "worlds": [
         {
           "world": "W1",
@@ -189,6 +195,12 @@
       "chart": "redis",
       "chartVersion": "1.0.0",
       "environment": "W0 kubernetes 1.36.0, istio 1.31.3; W1 kubernetes 1.36.0, istio 1.31.3; W2 kubernetes 1.36.0, istio 1.31.3; W3 kubernetes 1.36.0, istio 1.31.3",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      },
       "worlds": [
         {
           "world": "W1",
@@ -368,6 +380,12 @@
       "chartVersion": "1.0.0",
       "fixOf": "redis",
       "environment": "W0 kubernetes 1.36.0, istio 1.31.3; W1 kubernetes 1.36.0, istio 1.31.3; W2 kubernetes 1.36.0, istio 1.31.3; W3 kubernetes 1.36.0, istio 1.31.3",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      },
       "worlds": [
         {
           "world": "W1",
@@ -555,13 +573,20 @@
           "W3"
         ],
         "ignored": [],
-        "worldsNotCompared": []
+        "worldsNotCompared": [],
+        "ignoredChanged": []
       }
     },
     {
       "chart": "web",
       "chartVersion": "2.3.1",
       "environment": "W0 kubernetes 1.36.0, istio 1.31.3; W1 kubernetes 1.36.0, istio 1.31.3; W2 kubernetes 1.36.0, istio 1.31.3; W3 kubernetes 1.36.0, istio 1.31.3",
+      "oracleInstall": {
+        "runs": 3,
+        "ok": 3,
+        "failed": 0,
+        "status": "ok"
+      },
       "worlds": [
         {
           "world": "W1",

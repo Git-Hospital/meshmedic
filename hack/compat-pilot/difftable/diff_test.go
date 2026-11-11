@@ -124,7 +124,7 @@ func TestRenderTable(t *testing.T) {
 	}
 	out := b.String()
 	for _, want := range []string{
-		"| c |  | differs (1) | undecided | same |",
+		"| c |  | unknown | differs (1) | undecided | same |",
 		"- `port:db:3306:passive`: W0 `bytes`, W1 `silent` (3/3)",
 		"W2 has 0 of 3 runs.",
 	} {
@@ -320,8 +320,8 @@ func TestRenderAgainstAnotherOracle(t *testing.T) {
 	}
 	out := b.String()
 	for _, want := range []string{
-		"| chart | version | W3 ambient | W4 ambient+waypoint |",
-		"| c |  | differs (1) | same |",
+		"| chart | version | W1 installs | W3 ambient | W4 ambient+waypoint |",
+		"| c |  | unknown | differs (1) | same |",
 		"- `traffic:canary`: W1 `at-weight`, W3 `zero` (3/3)",
 	} {
 		if !strings.Contains(out, want) {
