@@ -11,8 +11,11 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   no longer loads.** `validate`, `watch` and `check` reject an empty
   `description` or `rollback`, a `severity` other than `critical` or `warning`,
   and a negative `guardrails.maxAppliesPerHour`. The shipped catalog already
-  passes; a custom catalog (`--catalog`) with such an entry now fails at
-  startup and names the file and field. (closes #15)
+  passes. Breaking for custom catalogs: a catalog loaded through
+  `--catalog <dir>` or `$MESHMEDIC_CATALOG` goes through the same Validate, so
+  an entry that loaded before can now be refused at startup, with the file and
+  field named. A negative `maxAppliesPerHour` used to behave as no limit and is
+  now an error; omit it or set 0. (closes #15)
 
 - **Targets with unknown scenario IDs now fail startup.** `watch` and `check`
   name the target and unknown IDs before querying Prometheus. An empty scenario
