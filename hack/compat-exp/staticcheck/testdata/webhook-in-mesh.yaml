@@ -1,0 +1,41 @@
+# Trimmed from cloudnative-pg 0.29.1: the API server calls a webhook served
+# by the operator pod.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: op-validating
+webhooks:
+  - name: vcluster.example.io
+    clientConfig:
+      service:
+        name: op-webhook
+        namespace: pilot
+        path: /validate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: op-webhook
+  namespace: pilot
+spec:
+  selector:
+    app: op
+  ports:
+    - port: 443
+      targetPort: webhook
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: op
+spec:
+  template:
+    metadata:
+      labels:
+        app: op
+    spec:
+      containers:
+        - name: op
+          ports:
+            - name: webhook
+              containerPort: 9443

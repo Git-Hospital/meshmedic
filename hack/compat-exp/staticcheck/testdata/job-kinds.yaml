@@ -1,0 +1,45 @@
+# A Job, a CronJob, a test Pod and a Deployment with default annotations.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-connection
+  annotations:
+    helm.sh/hook: test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: wget
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      containers:
+        - name: web

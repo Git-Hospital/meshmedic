@@ -1,0 +1,19 @@
+# Opted out of native sidecars, with an init container that runs before the
+# classic sidecar exists.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operator
+spec:
+  template:
+    metadata:
+      labels:
+        app: operator
+      annotations:
+        sidecar.istio.io/nativeSidecar: "false"
+        proxy.istio.io/config: '{ "holdApplicationUntilProxyStarts": true }'
+    spec:
+      initContainers:
+        - name: fetch
+      containers:
+        - name: operator

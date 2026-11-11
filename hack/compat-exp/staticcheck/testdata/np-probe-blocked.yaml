@@ -1,0 +1,39 @@
+# 15008 is admitted, but the probe port only from pods: the kubelet's
+# 169.254.7.127 is not a pod, so the probe is dropped.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - ports:
+        - port: 15008
+    - from:
+        - podSelector:
+            matchLabels:
+              role: client
+      ports:
+        - port: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http

@@ -1,0 +1,30 @@
+# L4 attributes only, and an L7 policy attached with targetRefs.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ns
+spec:
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/pilot/sa/client"]
+      to:
+        - operation:
+            ports: ["8080"]
+      when:
+        - key: source.ip
+          values: ["10.0.0.0/8"]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: attached
+spec:
+  targetRefs:
+    - kind: Service
+      group: ""
+      name: web
+  rules:
+    - to:
+        - operation:
+            paths: ["/admin"]

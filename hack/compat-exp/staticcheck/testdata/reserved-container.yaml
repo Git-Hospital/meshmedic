@@ -1,0 +1,29 @@
+# Container port 15020 collides with the sidecar's merged metrics port; a
+# named Service targetPort resolves to it as well.
+apiVersion: v1
+kind: Service
+metadata:
+  name: exporter
+spec:
+  selector:
+    app: exporter
+  ports:
+    - name: http-metrics
+      port: 9100
+      targetPort: metrics
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: exporter
+spec:
+  template:
+    metadata:
+      labels:
+        app: exporter
+    spec:
+      containers:
+        - name: exporter
+          ports:
+            - name: metrics
+              containerPort: 15020

@@ -1,0 +1,25 @@
+# Service targetPort 15006, ztunnel's inbound listener in the pod in ambient.
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+spec:
+  selector:
+    app: app
+  ports:
+    - name: tcp
+      port: 80
+      targetPort: 15006
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      containers:
+        - name: app

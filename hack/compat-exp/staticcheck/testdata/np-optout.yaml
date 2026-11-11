@@ -1,0 +1,24 @@
+# The pod leaves ambient with istio.io/dataplane-mode none.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis
+spec:
+  podSelector: {}
+  ingress:
+    - ports:
+        - port: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        istio.io/dataplane-mode: none
+    spec:
+      containers:
+        - name: redis

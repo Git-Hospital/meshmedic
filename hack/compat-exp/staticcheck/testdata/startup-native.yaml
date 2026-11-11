@@ -1,0 +1,15 @@
+# Default: a native sidecar starts before init containers and the app.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operator
+spec:
+  template:
+    metadata:
+      labels:
+        app: operator
+    spec:
+      initContainers:
+        - name: fetch
+      containers:
+        - name: operator
