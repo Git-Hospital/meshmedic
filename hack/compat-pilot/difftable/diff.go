@@ -72,24 +72,52 @@ func pullFailure(r Record) string {
 	return ""
 }
 
-// usable drops the runs that measured something other than the chart, and
+// DroppedRun is one run left out of a comparison, and why.
+type DroppedRun struct {
+	World  string `json:"world"`
+	Run    int    `json:"run"`
+	Reason string `json:"reason"` // "pull-failure" or "capacity"
+	Detail string `json:"detail"`
+	text   string
+}
+
+// Why a run is left out, as the JSON report names it.
+const (
+	reasonPull     = "pull-failure"
+	reasonCapacity = "capacity"
+)
+
+// usableRuns drops the runs that measured something other than the chart, and
 // says why for each: a registry that refused a pull, or a runner without the
 // room to schedule a pod. A run that is both is left out as a pull failure.
-func usable(world string, rs []Record) ([]Record, []string) {
+func usableRuns(world string, rs []Record) ([]Record, []DroppedRun) {
 	var out []Record
-	var dropped []string
+	var dropped []DroppedRun
 	for _, r := range rs {
 		if img := pullFailure(r); img != "" {
-			dropped = append(dropped, fmt.Sprintf("%s run %d: image pull failed (%s)", world, r.Run, img))
+			dropped = append(dropped, DroppedRun{World: world, Run: r.Run, Reason: reasonPull, Detail: img,
+				text: fmt.Sprintf("%s run %d: image pull failed (%s)", world, r.Run, img)})
 			continue
 		}
 		if r.CapacityPending {
-			dropped = append(dropped, fmt.Sprintf("%s run %d: capacity Pending (a pod could not be scheduled)", world, r.Run))
+			dropped = append(dropped, DroppedRun{World: world, Run: r.Run, Reason: reasonCapacity,
+				Detail: "a pod could not be scheduled",
+				text:   fmt.Sprintf("%s run %d: capacity Pending (a pod could not be scheduled)", world, r.Run)})
 			continue
 		}
 		out = append(out, r)
 	}
 	return out, dropped
+}
+
+// usable is usableRuns with the reasons as the table words them.
+func usable(world string, rs []Record) ([]Record, []string) {
+	out, dropped := usableRuns(world, rs)
+	var text []string
+	for _, d := range dropped {
+		text = append(text, d.text)
+	}
+	return out, text
 }
 
 // absent is the value of a key a run did not produce. A hook Job that W0
@@ -121,6 +149,48 @@ type Comparison struct {
 	Analyze      []string // istioctl analyze codes seen in any run
 	Dropped      []string // runs left out, and why
 	Undecided    string   // why no verdict was possible, if none was
+
+	// What the JSON report adds to the table: every key with its verdict, the
+	// runs used and the runs left out, on both sides.
+	Keys           []KeyResult
+	RunsUsed       []int
+	OracleRunsUsed []int
+	DroppedRuns    []DroppedRun
+}
+
+// Verdicts of one observation key.
+const (
+	keySame      = "same"
+	keyDiffers   = "differs"
+	keyFlaky     = "flaky"
+	keyLeftOut   = "left out"
+	keyUndecided = "undecided"
+)
+
+// KeyResult is one observation key in one mesh world.
+type KeyResult struct {
+	Key     string
+	Class   string  // the part of the key before the first colon
+	Verdict string  // same, differs, flaky, left out or undecided
+	Reason  string  // why the key was left out or undecided
+	Oracle  *string // the value every oracle run agreed on, nil if none
+	Seen    []string
+	Misses  int
+}
+
+// keyClass is the observation class of a key: "helm" for "helm:test".
+func keyClass(key string) string {
+	class, _, _ := strings.Cut(key, ":")
+	return class
+}
+
+func runNumbers(rs []Record) []int {
+	out := make([]int, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, r.Run)
+	}
+	sort.Ints(out)
+	return out
 }
 
 // Verdict is the one-cell summary for the table.
@@ -159,13 +229,18 @@ type Oracle struct {
 // nothing. Only sidecars do this: ztunnel in W3 carries bytes and does not
 // parse HTTP, so there a greeting that stops arriving is still a difference.
 func ignored(key, oracle, world string, httpPorts map[string]bool) bool {
+	return ignoredReason(key, oracle, world, httpPorts) != ""
+}
+
+// ignoredReason is ignored with the reason, empty when the key counts.
+func ignoredReason(key, oracle, world string, httpPorts map[string]bool) string {
 	if strings.HasSuffix(key, ":http") && oracle == "none" {
-		return true
+		return "http probe of a port that " + oracleWorld + " did not answer over http"
 	}
 	if sidecarWorlds[world] && strings.HasSuffix(key, ":passive") && httpPorts[strings.TrimSuffix(key, ":passive")] {
-		return true
+		return "passive probe of an http-family port behind a sidecar"
 	}
-	return false
+	return ""
 }
 
 var sidecarWorlds = map[string]bool{"W1": true, "W2": true}
@@ -250,43 +325,70 @@ func Compare(chart, world string, w0, wn []Record, minRuns int) (Comparison, Ora
 		minRuns = 1
 	}
 	c := Comparison{Chart: chart, World: world}
-	w0, d0 := usable(oracleWorld, w0)
-	wn, dn := usable(world, wn)
-	c.Dropped = append(d0, dn...)
+	w0, d0 := usableRuns(oracleWorld, w0)
+	wn, dn := usableRuns(world, wn)
+	c.DroppedRuns = append(d0, dn...)
+	for _, d := range c.DroppedRuns {
+		c.Dropped = append(c.Dropped, d.text)
+	}
 	c.Runs = len(wn)
-	if len(w0) < minRuns {
-		c.Undecided = fmt.Sprintf("%s has %d of %d runs", oracleWorld, len(w0), minRuns)
-		return c, Oracle{}
-	}
-	if len(wn) < minRuns {
-		c.Undecided = fmt.Sprintf("%s has %d of %d runs", world, len(wn), minRuns)
-		return c, Oracle{}
-	}
+	c.RunsUsed, c.OracleRunsUsed = runNumbers(wn), runNumbers(w0)
 	sort.Slice(wn, func(i, j int) bool { return wn[i].Run < wn[j].Run })
-
 	universe := keys(w0, wn)
+	if len(w0) < minRuns || len(wn) < minRuns {
+		if len(w0) < minRuns {
+			c.Undecided = fmt.Sprintf("%s has %d of %d runs", oracleWorld, len(w0), minRuns)
+		} else {
+			c.Undecided = fmt.Sprintf("%s has %d of %d runs", world, len(wn), minRuns)
+		}
+		for _, k := range universe {
+			kr := KeyResult{Key: k, Class: keyClass(k), Verdict: keyUndecided, Reason: c.Undecided}
+			for _, r := range wn {
+				kr.Seen = append(kr.Seen, value(r, k))
+			}
+			c.Keys = append(c.Keys, kr)
+		}
+		return c, Oracle{}
+	}
+
 	oracle := BuildOracle(w0, universe)
 	skip := httpPorts(w0, wn)
 	for _, k := range universe {
+		kr := KeyResult{Key: k, Class: keyClass(k)}
+		for _, r := range wn {
+			kr.Seen = append(kr.Seen, value(r, k))
+		}
 		want, ok := oracle.Values[k]
-		if !ok || ignored(k, want, world, skip) {
+		if !ok {
+			kr.Verdict, kr.Reason = keyLeftOut, "unstable in "+oracleWorld
+			c.Keys = append(c.Keys, kr)
+			continue
+		}
+		kr.Oracle = &want
+		if why := ignoredReason(k, want, world, skip); why != "" {
+			kr.Verdict, kr.Reason = keyLeftOut, why
+			c.Keys = append(c.Keys, kr)
 			continue
 		}
 		d := Difference{Key: k, Oracle: want}
-		for _, r := range wn {
-			got := value(r, k)
+		for _, got := range kr.Seen {
 			d.Seen = append(d.Seen, got)
 			if got != want {
 				d.Misses++
 			}
 		}
+		kr.Misses = d.Misses
 		switch {
 		case d.Misses == 0:
+			kr.Verdict = keySame
 		case d.Consistent():
+			kr.Verdict = keyDiffers
 			c.Findings = append(c.Findings, d)
 		default:
+			kr.Verdict = keyFlaky
 			c.Flaky = append(c.Flaky, d)
 		}
+		c.Keys = append(c.Keys, kr)
 	}
 
 	codes := map[string]bool{}

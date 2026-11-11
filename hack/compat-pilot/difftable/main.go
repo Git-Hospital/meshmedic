@@ -8,11 +8,14 @@
 //
 // Usage:
 //
-//	go run ./hack/compat-pilot/difftable [-runs 3] [-oracle W0] [-worlds W1,W2,W3] RESULTS_DIR
+//	go run ./hack/compat-pilot/difftable [-runs 3] [-oracle W0] [-worlds W1,W2,W3] [-json] RESULTS_DIR
 //
 // The first pilot holds every mesh world against W0. The second tests Istio
 // features that do not exist without a mesh, so it holds the ambient worlds
 // against W1, sidecar mode, where those features are documented to work.
+//
+// With -json the table is replaced by a machine-readable report, documented in
+// hack/compat-exp/DIFFTABLE-JSON.md.
 package main
 
 import (
@@ -45,10 +48,11 @@ func main() {
 	minRuns := flag.Int("runs", 3, "runs per world needed for a verdict")
 	oracle := flag.String("oracle", "W0", "the world every other world is held against")
 	worlds := flag.String("worlds", "W1,W2,W3", "the worlds compared with the oracle, comma separated")
+	asJSON := flag.Bool("json", false, "write the machine-readable report instead of the table")
 	flag.Parse()
 	oracleWorld, meshWorlds = *oracle, strings.Split(*worlds, ",")
 	if flag.NArg() != 1 || *minRuns < 1 || !validWorlds(oracleWorld, meshWorlds) {
-		fmt.Fprintln(os.Stderr, "usage: difftable [-runs 3] [-oracle W0] [-worlds W1,W2,W3] RESULTS_DIR")
+		fmt.Fprintln(os.Stderr, "usage: difftable [-runs 3] [-oracle W0] [-worlds W1,W2,W3] [-json] RESULTS_DIR")
 		os.Exit(2)
 	}
 	records, err := load(flag.Arg(0))
@@ -60,7 +64,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "no records under", flag.Arg(0))
 		os.Exit(3)
 	}
-	if err := render(os.Stdout, records, *minRuns); err != nil {
+	out := render
+	if *asJSON {
+		out = renderJSON
+	}
+	if err := out(os.Stdout, records, *minRuns); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
@@ -105,7 +113,33 @@ func load(dir string) ([]Record, error) {
 	return out, err
 }
 
+// analysis is everything the table and the JSON report are made from.
+type analysis struct {
+	byChart map[string]map[string][]Record
+	charts  []string
+	results map[string][]Comparison
+	oracles map[string]Oracle
+	certs   []Certificate
+	minRuns int
+}
+
 func render(w io.Writer, records []Record, minRuns int) error {
+	a, err := analyze(records, minRuns)
+	if err != nil {
+		return err
+	}
+	return a.table(w)
+}
+
+func renderJSON(w io.Writer, records []Record, minRuns int) error {
+	a, err := analyze(records, minRuns)
+	if err != nil {
+		return err
+	}
+	return a.writeJSON(w)
+}
+
+func analyze(records []Record, minRuns int) (*analysis, error) {
 	byChart := map[string]map[string][]Record{}
 	for _, r := range records {
 		if byChart[r.Chart] == nil {
@@ -124,7 +158,7 @@ func render(w io.Writer, records []Record, minRuns int) error {
 				if first == nil {
 					first = &rs[i]
 				} else if rs[i].ChartVersion != first.ChartVersion || rs[i].FixOf != first.FixOf {
-					return fmt.Errorf("%s: records disagree on version or fixOf (%s %q, %s %q)",
+					return nil, fmt.Errorf("%s: records disagree on version or fixOf (%s %q, %s %q)",
 						c, first.ChartVersion, first.FixOf, rs[i].ChartVersion, rs[i].FixOf)
 				}
 			}
@@ -142,29 +176,6 @@ func render(w io.Writer, records []Record, minRuns int) error {
 				oracles[chart] = o
 			}
 		}
-	}
-
-	p := func(format string, a ...any) { fmt.Fprintf(w, format, a...) }
-	p("# Compat pilot\n\n")
-	p("A finding is an observation that held in every %s run and differed in every run of another world (%d runs each).\n\n", oracleWorld, minRuns)
-	p("| chart | version |")
-	for _, world := range meshWorlds {
-		p(" %s %s |", world, worldLabels[world])
-	}
-	p("\n|---|---|%s\n", strings.Repeat("---|", len(meshWorlds)))
-	for _, chart := range charts {
-		version := ""
-		for _, rs := range byChart[chart] {
-			if len(rs) > 0 {
-				version = rs[0].ChartVersion
-				break
-			}
-		}
-		cells := make([]string, 0, len(meshWorlds))
-		for _, c := range results[chart] {
-			cells = append(cells, c.Verdict())
-		}
-		p("| %s | %s | %s |\n", chart, version, strings.Join(cells, " | "))
 	}
 
 	var certs []Certificate
@@ -189,6 +200,34 @@ func render(w io.Writer, records []Record, minRuns int) error {
 		certs = append(certs, Certify(chart, base, byWorld(chart), byWorld(base),
 			byChart[chart][oracleWorld], byChart[base][oracleWorld], minRuns))
 	}
+	return &analysis{byChart: byChart, charts: charts, results: results, oracles: oracles, certs: certs, minRuns: minRuns}, nil
+}
+
+func (a *analysis) table(w io.Writer) error {
+	byChart, charts, results, oracles, certs, minRuns := a.byChart, a.charts, a.results, a.oracles, a.certs, a.minRuns
+	p := func(format string, a ...any) { fmt.Fprintf(w, format, a...) }
+	p("# Compat pilot\n\n")
+	p("A finding is an observation that held in every %s run and differed in every run of another world (%d runs each).\n\n", oracleWorld, minRuns)
+	p("| chart | version |")
+	for _, world := range meshWorlds {
+		p(" %s %s |", world, worldLabels[world])
+	}
+	p("\n|---|---|%s\n", strings.Repeat("---|", len(meshWorlds)))
+	for _, chart := range charts {
+		version := ""
+		for _, rs := range byChart[chart] {
+			if len(rs) > 0 {
+				version = rs[0].ChartVersion
+				break
+			}
+		}
+		cells := make([]string, 0, len(meshWorlds))
+		for _, c := range results[chart] {
+			cells = append(cells, c.Verdict())
+		}
+		p("| %s | %s | %s |\n", chart, version, strings.Join(cells, " | "))
+	}
+
 	if len(certs) > 0 {
 		p("\n## Certificates\n\n")
 		p("A fix is certified when every world behaves like its %[1]s, 3 of 3 with nothing flaky, and its %[1]s behaves like the base chart's %[1]s.\n\n", oracleWorld)

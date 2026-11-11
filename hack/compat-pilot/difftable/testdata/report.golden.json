@@ -1,0 +1,702 @@
+{
+  "schema": 1,
+  "oracle": "W0",
+  "worlds": [
+    "W1",
+    "W2",
+    "W3"
+  ],
+  "runsRequired": 3,
+  "charts": [
+    {
+      "chart": "db",
+      "chartVersion": "9.0.0",
+      "environment": "W0 kubernetes 1.36.0, istio 1.31.3; W1 kubernetes 1.36.0, istio 1.31.3; W2 kubernetes 1.36.0, istio 1.31.3; W3 kubernetes 1.36.0, istio 1.31.3",
+      "worlds": [
+        {
+          "world": "W1",
+          "verdict": "differs",
+          "findings": 1,
+          "flakyKeys": 0,
+          "runsUsed": [
+            1,
+            2,
+            3
+          ],
+          "runsLeftOut": [],
+          "oracleRunsUsed": [
+            1,
+            2,
+            3
+          ],
+          "oracleRunsLeftOut": [],
+          "analyzeCodes": [],
+          "keys": [
+            {
+              "key": "helm:install",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "port:db:3306:http",
+              "class": "port",
+              "verdict": "left out",
+              "reason": "http probe of a port that W0 did not answer over http",
+              "oracleValue": "none",
+              "worldValues": [
+                "502",
+                "502",
+                "502"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "port:db:3306:passive",
+              "class": "port",
+              "verdict": "differs",
+              "oracleValue": "bytes",
+              "worldValues": [
+                "silent",
+                "silent",
+                "silent"
+              ],
+              "misses": 3
+            }
+          ]
+        },
+        {
+          "world": "W2",
+          "verdict": "same",
+          "findings": 0,
+          "flakyKeys": 0,
+          "runsUsed": [
+            1,
+            2,
+            3
+          ],
+          "runsLeftOut": [],
+          "oracleRunsUsed": [
+            1,
+            2,
+            3
+          ],
+          "oracleRunsLeftOut": [],
+          "analyzeCodes": [],
+          "keys": [
+            {
+              "key": "helm:install",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "port:db:3306:http",
+              "class": "port",
+              "verdict": "left out",
+              "reason": "http probe of a port that W0 did not answer over http",
+              "oracleValue": "none",
+              "worldValues": [
+                "none",
+                "none",
+                "none"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "port:db:3306:passive",
+              "class": "port",
+              "verdict": "same",
+              "oracleValue": "bytes",
+              "worldValues": [
+                "bytes",
+                "bytes",
+                "bytes"
+              ],
+              "misses": 0
+            }
+          ]
+        },
+        {
+          "world": "W3",
+          "verdict": "undecided",
+          "undecidedReason": "W3 has 2 of 3 runs",
+          "findings": 0,
+          "flakyKeys": 0,
+          "runsUsed": [
+            1,
+            2
+          ],
+          "runsLeftOut": [],
+          "oracleRunsUsed": [
+            1,
+            2,
+            3
+          ],
+          "oracleRunsLeftOut": [],
+          "analyzeCodes": [],
+          "keys": [
+            {
+              "key": "helm:install",
+              "class": "helm",
+              "verdict": "undecided",
+              "reason": "W3 has 2 of 3 runs",
+              "worldValues": [
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "port:db:3306:http",
+              "class": "port",
+              "verdict": "undecided",
+              "reason": "W3 has 2 of 3 runs",
+              "worldValues": [
+                "none",
+                "none"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "port:db:3306:passive",
+              "class": "port",
+              "verdict": "undecided",
+              "reason": "W3 has 2 of 3 runs",
+              "worldValues": [
+                "bytes",
+                "bytes"
+              ],
+              "misses": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "chart": "redis",
+      "chartVersion": "1.0.0",
+      "environment": "W0 kubernetes 1.36.0, istio 1.31.3; W1 kubernetes 1.36.0, istio 1.31.3; W2 kubernetes 1.36.0, istio 1.31.3; W3 kubernetes 1.36.0, istio 1.31.3",
+      "worlds": [
+        {
+          "world": "W1",
+          "verdict": "same",
+          "findings": 0,
+          "flakyKeys": 0,
+          "runsUsed": [
+            1,
+            2,
+            3
+          ],
+          "runsLeftOut": [],
+          "oracleRunsUsed": [
+            1,
+            2,
+            3
+          ],
+          "oracleRunsLeftOut": [],
+          "analyzeCodes": [],
+          "keys": [
+            {
+              "key": "helm:install",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "helm:test",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "workload:StatefulSet/redis:ready",
+              "class": "workload",
+              "verdict": "same",
+              "oracleValue": "true",
+              "worldValues": [
+                "true",
+                "true",
+                "true"
+              ],
+              "misses": 0
+            }
+          ]
+        },
+        {
+          "world": "W2",
+          "verdict": "same",
+          "findings": 0,
+          "flakyKeys": 0,
+          "runsUsed": [
+            1,
+            2,
+            3
+          ],
+          "runsLeftOut": [],
+          "oracleRunsUsed": [
+            1,
+            2,
+            3
+          ],
+          "oracleRunsLeftOut": [],
+          "analyzeCodes": [],
+          "keys": [
+            {
+              "key": "helm:install",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "helm:test",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "workload:StatefulSet/redis:ready",
+              "class": "workload",
+              "verdict": "same",
+              "oracleValue": "true",
+              "worldValues": [
+                "true",
+                "true",
+                "true"
+              ],
+              "misses": 0
+            }
+          ]
+        },
+        {
+          "world": "W3",
+          "verdict": "differs",
+          "findings": 1,
+          "flakyKeys": 0,
+          "runsUsed": [
+            1,
+            2,
+            3
+          ],
+          "runsLeftOut": [],
+          "oracleRunsUsed": [
+            1,
+            2,
+            3
+          ],
+          "oracleRunsLeftOut": [],
+          "analyzeCodes": [],
+          "keys": [
+            {
+              "key": "helm:install",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "helm:test",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "workload:StatefulSet/redis:ready",
+              "class": "workload",
+              "verdict": "differs",
+              "oracleValue": "true",
+              "worldValues": [
+                "false",
+                "false",
+                "false"
+              ],
+              "misses": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "chart": "redis-fix",
+      "chartVersion": "1.0.0",
+      "fixOf": "redis",
+      "environment": "W0 kubernetes 1.36.0, istio 1.31.3; W1 kubernetes 1.36.0, istio 1.31.3; W2 kubernetes 1.36.0, istio 1.31.3; W3 kubernetes 1.36.0, istio 1.31.3",
+      "worlds": [
+        {
+          "world": "W1",
+          "verdict": "same",
+          "findings": 0,
+          "flakyKeys": 0,
+          "runsUsed": [
+            1,
+            2,
+            3
+          ],
+          "runsLeftOut": [],
+          "oracleRunsUsed": [
+            1,
+            2,
+            3
+          ],
+          "oracleRunsLeftOut": [],
+          "analyzeCodes": [],
+          "keys": [
+            {
+              "key": "helm:install",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "helm:test",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "workload:StatefulSet/redis:ready",
+              "class": "workload",
+              "verdict": "same",
+              "oracleValue": "true",
+              "worldValues": [
+                "true",
+                "true",
+                "true"
+              ],
+              "misses": 0
+            }
+          ]
+        },
+        {
+          "world": "W2",
+          "verdict": "same",
+          "findings": 0,
+          "flakyKeys": 0,
+          "runsUsed": [
+            1,
+            2,
+            3
+          ],
+          "runsLeftOut": [],
+          "oracleRunsUsed": [
+            1,
+            2,
+            3
+          ],
+          "oracleRunsLeftOut": [],
+          "analyzeCodes": [],
+          "keys": [
+            {
+              "key": "helm:install",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "helm:test",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "workload:StatefulSet/redis:ready",
+              "class": "workload",
+              "verdict": "same",
+              "oracleValue": "true",
+              "worldValues": [
+                "true",
+                "true",
+                "true"
+              ],
+              "misses": 0
+            }
+          ]
+        },
+        {
+          "world": "W3",
+          "verdict": "same",
+          "findings": 0,
+          "flakyKeys": 0,
+          "runsUsed": [
+            1,
+            2,
+            3
+          ],
+          "runsLeftOut": [],
+          "oracleRunsUsed": [
+            1,
+            2,
+            3
+          ],
+          "oracleRunsLeftOut": [],
+          "analyzeCodes": [],
+          "keys": [
+            {
+              "key": "helm:install",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "helm:test",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "workload:StatefulSet/redis:ready",
+              "class": "workload",
+              "verdict": "same",
+              "oracleValue": "true",
+              "worldValues": [
+                "true",
+                "true",
+                "true"
+              ],
+              "misses": 0
+            }
+          ]
+        }
+      ],
+      "certificate": {
+        "fix": "redis-fix",
+        "base": "redis",
+        "certified": true,
+        "cleared": [
+          "W3"
+        ],
+        "problems": []
+      }
+    },
+    {
+      "chart": "web",
+      "chartVersion": "2.3.1",
+      "environment": "W0 kubernetes 1.36.0, istio 1.31.3; W1 kubernetes 1.36.0, istio 1.31.3; W2 kubernetes 1.36.0, istio 1.31.3; W3 kubernetes 1.36.0, istio 1.31.3",
+      "worlds": [
+        {
+          "world": "W1",
+          "verdict": "flaky",
+          "findings": 0,
+          "flakyKeys": 1,
+          "runsUsed": [
+            1,
+            2,
+            3
+          ],
+          "runsLeftOut": [],
+          "oracleRunsUsed": [
+            1,
+            2,
+            3
+          ],
+          "oracleRunsLeftOut": [],
+          "analyzeCodes": [],
+          "keys": [
+            {
+              "key": "helm:install",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "workload:Deployment/web:ready",
+              "class": "workload",
+              "verdict": "flaky",
+              "oracleValue": "true",
+              "worldValues": [
+                "false",
+                "true",
+                "true"
+              ],
+              "misses": 1
+            }
+          ]
+        },
+        {
+          "world": "W2",
+          "verdict": "same",
+          "findings": 0,
+          "flakyKeys": 0,
+          "runsUsed": [
+            1,
+            2,
+            3
+          ],
+          "runsLeftOut": [],
+          "oracleRunsUsed": [
+            1,
+            2,
+            3
+          ],
+          "oracleRunsLeftOut": [],
+          "analyzeCodes": [],
+          "keys": [
+            {
+              "key": "helm:install",
+              "class": "helm",
+              "verdict": "same",
+              "oracleValue": "ok",
+              "worldValues": [
+                "ok",
+                "ok",
+                "ok"
+              ],
+              "misses": 0
+            },
+            {
+              "key": "workload:Deployment/web:ready",
+              "class": "workload",
+              "verdict": "same",
+              "oracleValue": "true",
+              "worldValues": [
+                "true",
+                "true",
+                "true"
+              ],
+              "misses": 0
+            }
+          ]
+        },
+        {
+          "world": "W3",
+          "verdict": "undecided",
+          "undecidedReason": "W3 has 0 of 3 runs",
+          "findings": 0,
+          "flakyKeys": 0,
+          "runsUsed": [],
+          "runsLeftOut": [
+            {
+              "run": 1,
+              "reason": "pull-failure",
+              "detail": "docker.io/web:1"
+            },
+            {
+              "run": 2,
+              "reason": "pull-failure",
+              "detail": "docker.io/web:1"
+            },
+            {
+              "run": 3,
+              "reason": "pull-failure",
+              "detail": "docker.io/web:1"
+            }
+          ],
+          "oracleRunsUsed": [
+            1,
+            2,
+            3
+          ],
+          "oracleRunsLeftOut": [],
+          "analyzeCodes": [],
+          "keys": [
+            {
+              "key": "helm:install",
+              "class": "helm",
+              "verdict": "undecided",
+              "reason": "W3 has 0 of 3 runs",
+              "worldValues": [],
+              "misses": 0
+            },
+            {
+              "key": "workload:Deployment/web:ready",
+              "class": "workload",
+              "verdict": "undecided",
+              "reason": "W3 has 0 of 3 runs",
+              "worldValues": [],
+              "misses": 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
