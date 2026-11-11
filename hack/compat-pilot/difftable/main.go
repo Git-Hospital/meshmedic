@@ -232,7 +232,7 @@ func analyze(records []Record, minRuns int, opts CertifyOpts) (*analysis, error)
 	// of date list could hide a cell the next time it appears.
 	used := map[IgnoreCell]bool{}
 	for _, c := range certs {
-		for _, e := range c.Ignored {
+		for _, e := range append(append([]IgnoreCell{}, c.Ignored...), c.NotCompared...) {
 			used[e] = true
 		}
 	}
@@ -284,6 +284,12 @@ func (a *analysis) table(w io.Writer) error {
 		if a.limited {
 			for _, c := range certs {
 				p("\n`%s`: cell worlds: %s; the other worlds are checked for differences `%s` does not have.\n", c.Fix, strings.Join(c.CellWorlds, ", "), c.Base)
+				if len(c.NotCompared) > 0 {
+					p("\nWorlds NOT COMPARED for `%s` (no verdict, listed in the ignore file), so nothing was certified there:\n\n", c.Fix)
+				}
+				for _, e := range c.NotCompared {
+					p("- `%s` did not compare %s (entries of %s): %s\n", c.Fix, e.World, e.Chart, e.Reason)
+				}
 				if len(c.Ignored) > 0 {
 					p("\nIgnored cells of `%s`, not counted as remaining findings:\n\n", c.Fix)
 				}

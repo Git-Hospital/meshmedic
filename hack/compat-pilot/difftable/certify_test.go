@@ -228,7 +228,10 @@ func TestUndecidedWorldOutsideTheCellNeedsAnEntry(t *testing.T) {
 	recs := certRecords(defaultBase(), defaultFix())
 	for i := range recs {
 		if recs[i].Chart == "redis-fix" && recs[i].World == "W2" {
-			recs[i].CapacityPending = true
+			recs[i].CapacityPending = append(recs[i].CapacityPending, struct {
+				Pod     string `json:"pod"`
+				Message string `json:"message"`
+			}{Pod: "x-0", Message: "Insufficient cpu"})
 		}
 	}
 	cell := []string{"W3"}
@@ -238,8 +241,8 @@ func TestUndecidedWorldOutsideTheCellNeedsAnEntry(t *testing.T) {
 		t.Fatalf("want a failure on the undecided W2, got %v %+v", err, c)
 	}
 	c, err = certOf(t, recs, CertifyOpts{CellWorlds: cell, Ignore: append(listed, ic("W2", "*", "capacity-Pending"))})
-	if err != nil || !c.Certified() {
-		t.Fatalf("want certified with the world listed, got %v %+v", err, c)
+	if err != nil || !c.Certified() || len(c.Ignored) != 1 || len(c.NotCompared) != 1 || c.NotCompared[0].World != "W2" {
+		t.Fatalf("want certified with the world listed apart, got %v %+v", err, c)
 	}
 }
 
@@ -312,5 +315,86 @@ func TestFlakyKeyInTheCell(t *testing.T) {
 	c, err = certOf(t, out, CertifyOpts{CellWorlds: cell, Ignore: append(base, ic("W3", probe, "flaky"))})
 	if err != nil || !c.Certified() || len(c.Ignored) != 2 {
 		t.Fatalf("want certified with the flaky cell listed, got %v %+v", err, c)
+	}
+}
+
+// A whole world passed with a "*" entry is printed and reported apart from
+// ordinary ignored cells.
+func TestWorldNotComparedIsDistinct(t *testing.T) {
+	withMeshWorlds(t, "W0", "W1", "W2", "W3")
+	recs := certRecords(defaultBase(), defaultFix())
+	for i := range recs {
+		if recs[i].Chart == "redis-fix" && recs[i].World == "W2" {
+			recs[i].CapacityPending = append(recs[i].CapacityPending, struct {
+				Pod     string `json:"pod"`
+				Message string `json:"message"`
+			}{Pod: "x-0", Message: "Insufficient cpu"})
+		}
+	}
+	a, err := analyze(recs, 3, CertifyOpts{CellWorlds: []string{"W3"},
+		Ignore: []IgnoreCell{ic("W3", probe, "world-universal"), ic("W2", "*", "capacity-Pending")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var table, js bytes.Buffer
+	if err := a.table(&table); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(table.String(), "NOT COMPARED") || !strings.Contains(table.String(), "did not compare W2") ||
+		strings.Contains(table.String(), "ignores W2") {
+		t.Fatalf("table:\n%s", table.String())
+	}
+	if err := a.writeJSON(&js); err != nil {
+		t.Fatal(err)
+	}
+	var rep Report
+	if err := json.Unmarshal(js.Bytes(), &rep); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range rep.Charts {
+		if c.Certificate != nil && (len(c.Certificate.WorldsNotCompared) != 1 || len(c.Certificate.Ignored) != 1 ||
+			c.Certificate.WorldsNotCompared[0].World != "W2") {
+			t.Fatalf("%+v", c.Certificate)
+		}
+	}
+}
+
+// A record in the shape of hack/compat-exp/RECORD.md decodes, whatever the
+// fields difftable does not read. load does not reject unknown fields.
+func TestRecordInRecordMdShape(t *testing.T) {
+	dir := t.TempDir()
+	rec := `{"world":"W3","chart":"redis","chartVersion":"1.0.0","run":1,"fixOf":"",
+	 "environment":{"istio":"1.31.3"},"helm":{"rc":0},"workloads":[],"jobs":[],"ports":[],"analyze":[],"events":[],
+	 "pullFailures":[{"owner":"Job/x","image":"redis:8"}],
+	 "capacityPending":[{"pod":"db-0","message":"0/3 nodes are available: 3 Insufficient cpu."}],
+	 "patch":{"path":"hack/compat-exp/patches/a.diff","sha256":"ab","lines":10,"changedLines":4},
+	 "podMesh":[{"pod":"a-0","client":false,"owner":"Deployment/a","meshMetadata":[{"kind":"label","key":"sidecar.istio.io/inject","value":"false"}],
+	   "istioProxy":{"container":true,"initContainer":false,"native":false},"ambientRedirection":""}],
+	 "lateWorkloads":[{"workload":"Deployment/a","pod":"a-0","phase":"Running","ready":true,"restarts":0,"reasons":[],"containers":[]}],
+	 "apiserver":{"services":[{"service":"hook","port":443,"reachable":true}],"apiServices":[{"name":"v1.x","available":true}]},
+	 "obs":{"helm:install":"ok","late:workload:Deployment/a:ready":"true","apiserver:svc:hook:443:reachable":"true",
+	  "apiserver:apiservice:v1.x:available":"unknown"}}`
+	if err := os.WriteFile(filepath.Join(dir, "redis.W3.run1.json"), []byte(rec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rs, err := load(dir)
+	if err != nil || len(rs) != 1 {
+		t.Fatalf("load: %v %d", err, len(rs))
+	}
+	if len(rs[0].CapacityPending) != 1 || len(rs[0].PullFailures) != 1 {
+		t.Fatalf("%+v", rs[0])
+	}
+	if got := map[string]bool{}; true {
+		for k := range rs[0].Obs {
+			got[keyClass(k)] = true
+		}
+		for _, want := range []string{"helm", "late", "apiserver"} {
+			if !got[want] {
+				t.Errorf("class %s missing from %v", want, got)
+			}
+		}
+	}
+	if got, dropped := usableRuns("W3", rs); len(got) != 0 || len(dropped) != 1 || dropped[0].Reason != "pull-failure" {
+		t.Fatalf("%v %+v", got, dropped)
 	}
 }

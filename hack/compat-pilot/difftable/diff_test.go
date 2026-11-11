@@ -355,7 +355,10 @@ func TestValidWorlds(t *testing.T) {
 
 func capacityPending(rs []Record) []Record {
 	for i := range rs {
-		rs[i].CapacityPending = true
+		rs[i].CapacityPending = append(rs[i].CapacityPending, struct {
+			Pod     string `json:"pod"`
+			Message string `json:"message"`
+		}{Pod: "db-0", Message: "0/3 nodes are available: 3 Insufficient cpu."})
 	}
 	return rs
 }
@@ -399,24 +402,21 @@ func TestPullFailureWinsOverCapacity(t *testing.T) {
 	}
 }
 
-// Records written before capacityPending existed carry no such field, and a
-// record with it set to false is a usable run.
-func TestRecordWithoutCapacityPendingIsUsable(t *testing.T) {
-	var old, with Record
-	if err := json.Unmarshal([]byte(`{"world":"W1","chart":"c","run":1}`), &old); err != nil {
-		t.Fatal(err)
+// Records written before capacityPending existed carry no such field; the
+// field is an array like pullFailures, and null or empty is false.
+func TestRecordCapacityPendingArray(t *testing.T) {
+	read := func(extra string) Record {
+		var r Record
+		if err := json.Unmarshal([]byte(`{"world":"W1","chart":"c","run":1`+extra+`}`), &r); err != nil {
+			t.Fatal(err)
+		}
+		return r
 	}
-	if err := json.Unmarshal([]byte(`{"world":"W1","chart":"c","run":1,"capacityPending":false}`), &with); err != nil {
-		t.Fatal(err)
-	}
-	if old.CapacityPending || with.CapacityPending {
-		t.Fatal("false expected")
-	}
-	var pending Record
-	if err := json.Unmarshal([]byte(`{"world":"W1","chart":"c","run":1,"capacityPending":true}`), &pending); err != nil || !pending.CapacityPending {
-		t.Fatalf("true expected, got %+v %v", pending, err)
-	}
-	if got, _ := usable("W1", []Record{old, with, pending}); len(got) != 2 {
-		t.Fatalf("want two usable runs, got %d", len(got))
+	pending := read(`,"capacityPending":[{"pod":"db-0","message":"0/3 nodes: Insufficient memory."}]`)
+	runs := []Record{read(``), read(`,"capacityPending":null`), read(`,"capacityPending":[]`), pending}
+	got, dropped := usableRuns("W1", runs)
+	if len(got) != 3 || len(dropped) != 1 || dropped[0].Reason != "capacity" ||
+		dropped[0].Detail != "db-0: 0/3 nodes: Insufficient memory." {
+		t.Fatalf("usable %d, dropped %+v", len(got), dropped)
 	}
 }

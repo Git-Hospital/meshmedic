@@ -82,6 +82,9 @@ type CertReport struct {
 	// list that the certificate did not count, with its reason.
 	CellWorlds []string     `json:"cellWorlds"`
 	Ignored    []IgnoreCell `json:"ignored"`
+	// WorldsNotCompared lists the worlds with no verdict that the ignore file
+	// let the certificate pass (key "*"); they are not in Ignored.
+	WorldsNotCompared []IgnoreCell `json:"worldsNotCompared"`
 }
 
 func verdictWord(c Comparison) string {
@@ -138,7 +141,7 @@ func (a *analysis) report() Report {
 		if c, ok := certs[chart]; ok {
 			cr.Certificate = &CertReport{Fix: c.Fix, Base: c.Base, Certified: c.Certified(),
 				Cleared: nonNil(c.Cleared), Problems: nonNil(c.Problems),
-				CellWorlds: nonNil(c.CellWorlds), Ignored: nonNil(c.Ignored)}
+				CellWorlds: nonNil(c.CellWorlds), Ignored: nonNil(c.Ignored), WorldsNotCompared: nonNil(c.NotCompared)}
 		}
 		r.Charts = append(r.Charts, cr)
 	}

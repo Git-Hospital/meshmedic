@@ -38,9 +38,13 @@ type Record struct {
 		Owner string `json:"owner"`
 		Image string `json:"image"`
 	} `json:"pullFailures"`
-	// CapacityPending marks a run in which a pod stayed Pending for lack of
-	// cpu or memory. Records from before the field existed read as false.
-	CapacityPending bool `json:"capacityPending"`
+	// CapacityPending lists the pods that stayed Pending for lack of cpu or
+	// memory, the way PullFailures lists pull failures. Non-empty leaves the
+	// run out; absent, null or empty is false, so old records still work.
+	CapacityPending []struct {
+		Pod     string `json:"pod"`
+		Message string `json:"message"`
+	} `json:"capacityPending"`
 }
 
 // pullFailure names the image a run could not pull, if any. Such a run
@@ -99,10 +103,10 @@ func usableRuns(world string, rs []Record) ([]Record, []DroppedRun) {
 				text: fmt.Sprintf("%s run %d: image pull failed (%s)", world, r.Run, img)})
 			continue
 		}
-		if r.CapacityPending {
-			dropped = append(dropped, DroppedRun{World: world, Run: r.Run, Reason: reasonCapacity,
-				Detail: "a pod could not be scheduled",
-				text:   fmt.Sprintf("%s run %d: capacity Pending (a pod could not be scheduled)", world, r.Run)})
+		if len(r.CapacityPending) > 0 {
+			detail := r.CapacityPending[0].Pod + ": " + r.CapacityPending[0].Message
+			dropped = append(dropped, DroppedRun{World: world, Run: r.Run, Reason: reasonCapacity, Detail: detail,
+				text: fmt.Sprintf("%s run %d: capacity Pending (%s)", world, r.Run, detail)})
 			continue
 		}
 		out = append(out, r)
@@ -413,6 +417,9 @@ type Certificate struct {
 	Problems   []string     // why it is not certified
 	CellWorlds []string     // the worlds the fix had to clear; all mesh worlds unless limited
 	Ignored    []IgnoreCell // every cell of the ignore list this certificate did not count
+	// NotCompared are the ignore entries (key "*") for a whole world that has
+	// no verdict, kept apart from Ignored so they cannot pass as ordinary cells.
+	NotCompared []IgnoreCell
 }
 
 // Certified needs at least one cleared world and nothing else wrong. A fix for
@@ -474,7 +481,7 @@ func CertifyWith(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0,
 			if e.Key == wholeWorld {
 				if f.Undecided != "" || b.Undecided != "" {
 					ignore[wholeWorld] = true
-					c.Ignored = append(c.Ignored, e)
+					c.NotCompared = append(c.NotCompared, e)
 				}
 				continue
 			}
@@ -509,16 +516,18 @@ func CertifyWith(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0,
 			c.Cleared = append(c.Cleared, w)
 		}
 	}
-	sort.Slice(c.Ignored, func(i, j int) bool {
-		a, b := c.Ignored[i], c.Ignored[j]
-		if a.World != b.World {
-			return a.World < b.World
-		}
-		if a.Key != b.Key {
-			return a.Key < b.Key
-		}
-		return a.Chart < b.Chart
-	})
+	for _, list := range [][]IgnoreCell{c.Ignored, c.NotCompared} {
+		sort.Slice(list, func(i, j int) bool {
+			a, b := list[i], list[j]
+			if a.World != b.World {
+				return a.World < b.World
+			}
+			if a.Key != b.Key {
+				return a.Key < b.Key
+			}
+			return a.Chart < b.Chart
+		})
+	}
 	w0, _ := Compare(fix, oracleWorld, baseW0, fixW0, minRuns)
 	switch {
 	case w0.Undecided != "":

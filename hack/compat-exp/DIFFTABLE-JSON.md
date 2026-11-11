@@ -49,7 +49,7 @@ renamed or changes meaning; adding a field does not raise it.
 | `keys` | KeyReport[] | every observation key seen in either side |
 
 RunLeftOut: `run` (int), `reason` (`pull-failure` or `capacity`), `detail`
-(the image for a pull failure). A run that is both is a `pull-failure`.
+(the image for a pull failure; the first pod and its message, `pod: message`, for capacity). A run that is both is a `pull-failure`.
 
 ## KeyReport
 
@@ -76,7 +76,8 @@ Present on a fix entry (a chart whose records carry `fixOf`).
 | `cleared` | string[] | cell worlds where the base differed and the fix does not |
 | `problems` | string[] | why it is not certified |
 | `cellWorlds` | string[] | the worlds the fix had to clear: `-cell-worlds`, else all of `worlds` |
-| `ignored` | IgnoreCell[] | every ignore-list entry the certificate did not count, sorted by world, key, chart |
+| `ignored` | IgnoreCell[] | every ignore-list entry for a key that the certificate did not count, sorted by world, key, chart |
+| `worldsNotCompared` | IgnoreCell[] | ignore entries with key `*`: whole worlds with no verdict that the certificate passed; never in `ignored` |
 
 IgnoreCell: `chart`, `world`, `key`, `reason`, as in the ignore file.
 
@@ -93,8 +94,17 @@ By default a fix fails while any mesh world still differs from the oracle.
   four required, no other fields. The cell is not counted as a remaining
   finding or flaky key, and it does not count as a cleared finding either. The
   chart is the fix entry or its base. The key `"*"` stands for a world with no
-  verdict (too few runs); it is the only way past an undecided world. An entry
+  verdict (too few runs); it is the only way past an undecided world, and it is
+  printed apart ("Worlds NOT COMPARED") and reported in `worldsNotCompared`. An entry
   that matches no differing (or, for `"*"`, undecided) cell of any fix entry is
   an error, as is an unknown world, the oracle world or a repeated entry; the
   run exits with status 2 and prints nothing else. The table lists each
   ignored cell under the certificates, and the JSON lists it in `ignored`.
+
+## Input
+
+The records are the ones in `hack/compat-exp/RECORD.md`. difftable reads
+`world`, `chart`, `chartVersion`, `run`, `fixOf`, `environment`, `obs`,
+`analyze`, `ports`, `workloads`, `pullFailures` and `capacityPending` (an array
+of `{pod, message}`; non-empty leaves the run out, absent, null or empty does
+not) and ignores every other field. Unknown fields are not rejected.
