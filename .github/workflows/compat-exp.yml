@@ -1,5 +1,13 @@
 name: compat-exp
 
+# GitHub evaluates run-name from THIS file at the run's commit and returns it as the
+# run's display_title, so analyze.sh learns the mode and the Istio version from GitHub
+# and not only from the uploaded metadata artifact. The format is fixed and parsed:
+#   compat-exp mode=<mode> istio=<istio> charts=<charts_file> fixes=<fixes_file> ids=<chart_ids> fix=<fix_id>
+# mode and istio are choices (no spaces); the four strings after them are the inputs as
+# given. Do not change it after the freeze (the workflow directory is frozen).
+run-name: compat-exp mode=${{ inputs.mode }} istio=${{ inputs.istio }} charts=${{ inputs.charts_file }} fixes=${{ inputs.fixes_file }} ids=${{ inputs.chart_ids }} fix=${{ inputs.fix_id }}
+
 # The compat experiment (docs/compat-experiment.md): install popular third-party
 # charts, unchanged, in throwaway kind worlds W0 (no mesh), W1 (sidecar) and W3
 # (ambient), three runs each, and table what differs. Modes:

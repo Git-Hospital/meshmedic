@@ -63,7 +63,11 @@ eq "checkout never persists credentials" "$(jq -c '[.jobs[].steps[]? | select((.
 inlined="$(jq -r '[.jobs | to_entries[] | .key as $job | .value.steps[]? | select(.run != null) | select(.run | test("\\$\\{\\{")) | $job + ": " + (.name // .id // "step")] | join("; ")' "$j")"
 eq "no \${{ }} expression inside any run block" "$inlined" ""
 eq "inputs. expressions appear only under an env: key" "$(jq -c '. as $r | [paths(scalars) | select(. as $p | ($r | getpath($p) | tostring | test("inputs\\.")))
-  | select(index("env") | not)] | length' "$j")" 0
+  | select(index("env") | not) | select(. != ["run-name"])] | length' "$j")" 0
+eq "run-name: the fixed, parsed format (analyze.sh reads it back as the display_title)" "$(q '."run-name"')" \
+  '"compat-exp mode=${{ inputs.mode }} istio=${{ inputs.istio }} charts=${{ inputs.charts_file }} fixes=${{ inputs.fixes_file }} ids=${{ inputs.chart_ids }} fix=${{ inputs.fix_id }}"'
+eq "run-name begins with mode and istio, the two choices, so a free string cannot forge them" "$(q '."run-name" | test("^compat-exp mode=[$][{][{] inputs.mode [}][}] istio=[$][{][{] inputs.istio [}][}] charts=")')" true
+eq "run-name is the only place inputs.* appear outside env" "$(grep -c '^run-name:' "$wf")" 1
 eq "guard steps get their inputs through env" "$(jq -c '[.jobs.guard.steps[] | select(.name == "guard") | .env | keys] | .[0]' "$j")" '["GUARD_CHARTS_FILE","GUARD_CHART_IDS","GUARD_FIXES_FILE","GUARD_FIX_ID","GUARD_ISTIO","GUARD_MODE"]'
 eq "matrix values reach scripts through env" "$(jq -c '[.jobs[].steps[]? | select(.run != null) | select(.run | test("matrix\\.")) ] | length' "$j")" 0
 

@@ -150,6 +150,28 @@ CMD=freeze g "$d" observe
 refuses "freeze: an untracked file among the frozen paths" "untracked files"
 rm "$d/hack/compat-exp/crossrun/extra.go"
 
+# R1: the workflow directory is frozen as a whole. A workflow file added after the tag that names itself
+# compat-exp (the auditor's scenario) touches no other frozen file and still fails the freeze.
+git -C "$d" reset -q --hard "$child"
+printf 'name: compat-exp\non: workflow_dispatch\njobs: {}\n' >"$d/.github/workflows/x.yml"
+CMD=freeze g "$d" observe
+refuses "freeze: an added workflow file (untracked)" "untracked files"
+commit "$d" "a second workflow named compat-exp"
+CMD=freeze g "$d" observe
+refuses "freeze: an added workflow file (committed)" "frozen instrument files differ"
+CMD=freeze OUT="$(git -C "$d" rev-parse HEAD)" g "$d" observe
+refuses "freeze of a commit that added a workflow file" "frozen instrument files at"
+git -C "$d" reset -q --hard "$child"
+echo "name: ci" >"$d/.github/workflows/ci.yml"
+commit "$d" "ci workflow"
+CMD=freeze g "$d" observe
+refuses "freeze: any other workflow file added after the tag, the directory is frozen as a whole" "frozen instrument files differ"
+git -C "$d" reset -q --hard "$child"
+echo "# edited" >>"$d/.github/workflows/compat-exp.yml"
+CMD=freeze g "$d" observe
+refuses "freeze: a changed compat-exp.yml" "frozen instrument files differ"
+git -C "$d" reset -q --hard "$child"
+
 # R7: the acceptance check and its expected verdicts are part of the frozen instrument
 for f in acceptance-check.sh acceptance-expected.json; do
   echo "edited after the tag" >>"$d/hack/compat-exp/$f"

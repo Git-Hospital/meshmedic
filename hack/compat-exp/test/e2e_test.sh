@@ -413,10 +413,34 @@ mkview 1002 2 2026-11-20T22:30:00Z 2026-11-20T23:20:00Z 2026-11-21T00:10:00Z 202
 for r in 1003 1004 1005; do mkview "$r" 1 2026-11-21T08:00:00Z 2026-11-21T08:30:00Z 2026-11-21T08:00:00Z 2026-11-21T08:30:00Z; done
 mkview 7001 1 2026-11-01T08:00:00Z 2026-11-01T09:00:00Z 2026-11-01T08:00:00Z 2026-11-01T09:00:00Z
 
+# The REST run objects (gh api repos/OWNER/REPO/actions/runs/ID): the workflow file, its id and the run-name GitHub
+# evaluated from the workflow at the run's commit, built from the metadata the workflow's own step wrote.
+for r in 1001 1002 1003 1004 1005 7001; do
+  jq -n --arg id "$r" --slurpfile m "$G/$r.meta-1/run-metadata.json" '$m[0] as $m | {id: ($id | tonumber), path: ".github/workflows/compat-exp.yml", workflow_id: 4242,
+    head_sha: $m.headSha, event: "workflow_dispatch", status: "completed", conclusion: "success", created_at: "2030-01-01T00:00:00Z",
+    display_title: "compat-exp mode=\($m.mode) istio=\($m.istio) charts=\($m.chartsFile) fixes=\($m.fixesFile) ids=\($m.chartIds) fix=\($m.fixId)"}' >"$G/$r.rest.json"
+done
+echo '{"id":4242}' >"$G/workflow.json"
+jq -n --slurpfile q "$G/7001.rest.json" '{total_count: 1, workflow_runs: $q}' >"$G/qruns.json"
+
 cat >"$T/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "gh $*" >>"$GH_LOG"
-[[ "$1 $2" == "run download" || "$1 $2" == "run view" ]] || { echo "gh stub: only run download and run view are allowed" >&2; exit 9; }
+if [[ "$1" == api ]]; then
+  jqf=""; apath=""
+  shift
+  while [[ $# -gt 0 ]]; do case "$1" in --paginate) shift ;; --jq) jqf="$2"; shift 2 ;; *) apath="$1"; shift ;; esac; done
+  case "$apath" in
+    repos/*/actions/runs/[0-9]*) f="$GH_FIX/${apath##*/}.rest.json" ;;
+    repos/*/actions/workflows/compat-exp.yml/runs\?*) f="$GH_FIX/qruns.json" ;;
+    repos/*/actions/workflows/compat-exp.yml) f="$GH_FIX/workflow.json" ;;
+    *) echo "gh stub: unknown api path $apath" >&2; exit 9 ;;
+  esac
+  [[ -f "$f" ]] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+  if [[ -n "$jqf" ]]; then jq -r "$jqf" "$f"; else cat "$f"; fi
+  exit 0
+fi
+[[ "$1 $2" == "run download" || "$1 $2" == "run view" ]] || { echo "gh stub: only run download, run view and api reads are allowed" >&2; exit 9; }
 id="$3"
 if [[ "$2" == download ]]; then
   while [[ $# -gt 0 ]]; do case "$1" in -D) dir="$2"; shift 2 ;; -n) name="$2"; shift 2 ;; *) shift ;; esac; done
@@ -448,7 +472,7 @@ analyze "$T/analysis" --run1 1001 --run2 1002 --cert 1003 --cert 1004 --recheck 
 arc=$?
 eq "analyze.sh exits 0 (tools built from the checked tree, no overrides)" "$arc" 0
 [[ $arc -eq 0 ]] || head -10 "$T/analyze.err"
-eq "gh was used for run download and run view only" "$(grep -cv '^gh run \(download\|view\) ' "$GH_LOG")" 0
+eq "gh was used for run download, run view and read-only api calls (GET paths under actions/) only" "$(grep -cv '^gh \(run \(download\|view\)\|api .*repos/[^ ]*/actions/\)' "$GH_LOG")" 0
 res="$T/analysis/result.json"
 eq "manifest: run 1 ends with its rerun (latest completion of any job in any attempt)" "$(jq -c '.runs[0] | {id, started, ended}' "$T/analysis/inputs.json")" \
   '{"id":"1001","started":"2026-11-20T08:00:00Z","ended":"2026-11-20T10:20:00Z"}'

@@ -9,7 +9,7 @@
 # Usage:
 #   hack/compat-exp/analyze.sh --out DIR --run1 ID [--run2 ID] [--rerun ID]... [--cert ID]...
 #                              [--recheck ID] [--repo OWNER/REPO] [--charts FILE] [--ledger FILE]
-#                              [--replacements FILE]
+#                              [--replacements FILE] [--void FILE]
 #
 #   --out DIR     where everything goes; must not exist or be empty
 #   --run1, --run2  workflow run ids of the two observe runs (run 2 at least 12 h
@@ -29,8 +29,10 @@
 #                 is refused
 #   --ledger      default hack/compat-exp/ledger.json (tracked, committed)
 #   --replacements  default hack/compat-exp/replacements.json (tracked, committed)
+#   --void FILE   qualify runs declared void, default hack/compat-exp/void-runs.json (tracked, committed;
+#                 see the check of the qualification run below)
 #
-# Run ids are digits only. gh is used for `gh run view` and `gh run download` only.
+# Run ids are digits only. gh is used for `gh run view`, `gh run download` and read-only `gh api` only.
 #
 # What the analysis is bound to (every check stops the script; nothing is skipped):
 #  1. The tag compat-exp-freeze exists locally, HEAD is the tag or a descendant, every
@@ -51,6 +53,15 @@
 #     qualification run named by the chart list: qualify; a rerun's chart_ids is one chart) and its Istio version is the pinned one
 #     for that role (ISTIO_PRIMARY of the tag's workflow, except recheck: the second
 #     option of the istio input, decided at the freeze).
+#     The workflow is pinned by its file: the REST run object (gh api actions/runs/ID) must have
+#     path .github/workflows/compat-exp.yml and the workflow_id of that file, and no workflow
+#     file at the run's commit may differ from the tag's (a second file that only names itself
+#     compat-exp is refused). Its display_title is the workflow's run-name, which GitHub
+#     evaluates from the file at the run's commit (compat-exp mode=M istio=I charts=C fixes=F
+#     ids=D fix=X); mode and istio must equal the metadata artifact and the role.
+#     The qualification run named by the chart list must be the FIRST completed qualify run of
+#     the workflow after the tag (gh api, by display_title); an earlier one is refused unless
+#     void-runs.json lists it with a reason and its own conclusion is not success.
 #     gh run view --json gives headSha, workflowName, event, status, attempt and the
 #     times; it does not give the dispatch inputs. Mode and Istio version therefore
 #     come from the run metadata, which the workflow's guard job (the only writer; it
@@ -111,6 +122,7 @@ out="" run1="" run2="" recheck="" repo=""
 reruns=()
 charts="$root/hack/compat-exp/charts-exp.json" ledger_file="$root/hack/compat-exp/ledger.json"
 replacements_file="$root/hack/compat-exp/replacements.json"
+void_file="$root/hack/compat-exp/void-runs.json"
 certs=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -124,6 +136,7 @@ while [[ $# -gt 0 ]]; do
     --charts) charts="${2:-}"; shift 2 ;;
     --ledger) ledger_file="${2:-}"; shift 2 ;;
     --replacements) replacements_file="${2:-}"; shift 2 ;;
+    --void) void_file="${2:-}"; shift 2 ;;
     -h | --help) usage ;;
     *) echo "analyze.sh: unknown argument '$1'" >&2; usage ;;
   esac
@@ -138,6 +151,7 @@ done
 [[ -f "$charts" ]] || die "no chart list $charts" 2
 [[ -f "$ledger_file" ]] || die "no ledger $ledger_file" 2
 [[ -f "$replacements_file" ]] || die "no replacements file $replacements_file (commit one, {\"schema\":1,\"replacements\":[]} when nothing was replaced)" 2
+[[ -f "$void_file" ]] || die "no void-runs file $void_file (commit one, {\"schema\":1,\"void\":[]} when no qualify run is void)" 2
 if [[ -e "$out" ]]; then
   [[ -d "$out" && -z "$(ls -A "$out")" ]] || die "$out exists and is not an empty directory" 2
 fi
@@ -170,6 +184,14 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 git_() { git -C "$root" "$@"; }
 gh_() { if [[ -n "$repo" ]]; then gh "$@" -R "$repo"; else gh "$@"; fi; }
+# gh_api PATH [gh api args...]: a REST read under repos/OWNER/REPO/ (gh fills {owner}/{repo} from the
+# repository at $root when --repo is not given).
+gh_api() {
+  local p="$1"
+  shift
+  if [[ -n "$repo" ]]; then gh api "$@" "repos/$repo/$p"; else (cd "$root" && gh api "$@" "repos/{owner}/{repo}/$p"); fi
+}
+wf_path=.github/workflows/compat-exp.yml
 
 # --- 1. the freeze, and the data files -------------------------------------------------
 
@@ -196,10 +218,11 @@ relpath() { # PATH: the path inside the repository, or die
 charts_rel="$(relpath "$charts")" || exit $?
 ledger_rel="$(relpath "$ledger_file")" || exit $?
 repl_rel="$(relpath "$replacements_file")" || exit $?
-for f in "$charts_rel" "$ledger_rel" "$repl_rel"; do
+void_rel="$(relpath "$void_file")" || exit $?
+for f in "$charts_rel" "$ledger_rel" "$repl_rel" "$void_rel"; do
   git_ ls-files --error-unmatch -- "$f" >/dev/null 2>&1 || die "$f is not a tracked file; commit it before the analysis"
 done
-dirty="$(git_ status --porcelain --untracked-files=all -- "$charts_rel" "$ledger_rel" "$repl_rel" \
+dirty="$(git_ status --porcelain --untracked-files=all -- "$charts_rel" "$ledger_rel" "$repl_rel" "$void_rel" \
   hack/compat-exp/fixes hack/compat-exp/ignore hack/compat-exp/patches hack/compat-exp/causes.json | head -5 | tr '\n' ' ')"
 [[ -z "$dirty" ]] || die "uncommitted changes to files the analysis reads: $dirty"
 
@@ -208,6 +231,7 @@ charts_sha="$(sha "$charts")"
 ledger_sha="$(sha "$ledger_file")"
 causes_sha="$(sha "$root/hack/compat-exp/causes.json")"
 repl_sha="$(sha "$replacements_file")"
+void_sha="$(sha "$void_file")"
 
 # --- the chart list is a frozen experiment list ------------------------------------------
 
@@ -348,12 +372,13 @@ check_records() {
 # --- 3. every run id --------------------------------------------------------------------------------------
 
 rfc3339z='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+wf_id=              # the id of the workflow file, learned once
 prov_runs='[]'      # for provenance.json
 times_of=()          # "id started ended" lines
 
 # fetch_run ROLE ID ARTIFACT WANT_MODE WANT_ISTIO: checks, downloads into $out/run-ID
 fetch_run() {
-  local role="$1" id="$2" artifact="$3" want_mode="$4" want_istio="$5" view head attempt n j d
+  local role="$1" id="$2" artifact="$3" want_mode="$4" want_istio="$5" view rest head attempt n j d
   d="$out/run-$id"
   mkdir -p "$d"
   view="$(gh_ run view "$id" --json attempt,conclusion,databaseId,event,headSha,startedAt,status,updatedAt,workflowName 2>"$tmp/view.log")" ||
@@ -366,6 +391,25 @@ fetch_run() {
   head="$(jq -r .headSha <<<"$view")"
   [[ "$head" =~ ^[0-9a-f]{40}$ ]] || die "run $id: headSha '$head' is not a commit sha"
   freeze_check "$head" || exit $?
+  # The workflow is pinned by its path, not by its display name: another workflow file may name itself
+  # compat-exp. The REST run object has the file the run came from (path) and the workflow's id.
+  rest="$(gh_api "actions/runs/$id" 2>"$tmp/view.log")" || die "gh api actions/runs/$id failed: $(tail -2 "$tmp/view.log" | tr '\n' ' ')"
+  jq -e 'type == "object" and (.path | type == "string") and (.display_title | type == "string") and (.workflow_id | type == "number")' >/dev/null 2>&1 <<<"$rest" ||
+    die "run $id: the REST run object has no path, display_title and workflow_id"
+  [[ "$(jq -r '.id | tostring' <<<"$rest")" == "$id" ]] || die "run $id: the REST run object is another run"
+  [[ "$(jq -r .path <<<"$rest")" == "$wf_path" ]] ||
+    die "run $id came from the workflow file '$(jq -r .path <<<"$rest")', not $wf_path: a workflow that only calls itself compat-exp is not the experiment"
+  [[ "$(jq -r .head_sha <<<"$rest")" == "$head" && "$(jq -r .event <<<"$rest")" == workflow_dispatch ]] ||
+    die "run $id: the REST run object says another head commit or event than gh run view"
+  if [[ -z "$wf_id" ]]; then
+    wf_id="$(gh_api "actions/workflows/compat-exp.yml" --jq '.id' 2>"$tmp/view.log")" || die "gh api actions/workflows/compat-exp.yml failed: $(tail -2 "$tmp/view.log" | tr '\n' ' ')"
+  fi
+  [[ "$(jq -r '.workflow_id | tostring' <<<"$rest")" == "$wf_id" ]] || die "run $id: its workflow_id is not the id of $wf_path ($wf_id)"
+  # no workflow file may exist at the run's commit that the tag does not have, or differ from it
+  # (the tag's guard.sh compares the directory too; this check does not depend on that)
+  if ! git_ diff --quiet "$tag_sha" "$head" -- .github/workflows; then
+    die "run $id: the workflow files at its commit differ from tag $tag ($(git_ diff --name-only "$tag_sha" "$head" -- .github/workflows | head -5 | tr '\n' ' ')): a workflow file added or changed after the freeze is refused"
+  fi
   attempt="$(jq -r '.attempt // 1' <<<"$view")"
   [[ "$attempt" =~ ^[0-9]{1,3}$ ]] || die "run $id: attempt '$attempt' is not a number"
 
@@ -375,7 +419,7 @@ fetch_run() {
   check_toplevel "$role" "$id" "$d"
 
   # the run metadata: one artifact per attempt, written by the guard job only
-  local meta mode istio recs_istio m ref first="" nm=0 mw
+  local meta mode istio recs_istio m ref first="" nm=0 mw title t_mode t_istio t_tail tail_given tail_empty
   mw='.schema == 1 and (.runId | type == "number") and (.runAttempt | type == "number")
       and (.headSha | type == "string") and (.eventName | type == "string")
       and (.workflowRef | type == "string") and (.freezeTagSha | type == "string")
@@ -413,6 +457,23 @@ fetch_run() {
   istio="$(jq -r .istio "$meta")"
   [[ "$mode" == "$want_mode" ]] || die "run $id was dispatched with mode '$mode', but it is given as $role, which needs mode $want_mode"
   [[ "$istio" == "$want_istio" ]] || die "run $id ran Istio $istio, but the pinned version for $role is $want_istio"
+  # GitHub's own statement of the dispatch: the run-name of the workflow file at the run's commit
+  # (display_title), format "compat-exp mode=M istio=I charts=C fixes=F ids=D fix=X". mode and istio come
+  # from choices, so the free strings after them cannot forge them; the rest must equal the metadata.
+  title="$(jq -r .display_title <<<"$rest")"
+  if [[ ! "$title" =~ ^compat-exp\ mode=([a-z]+)\ istio=([0-9a-z.-]+)\ (charts=.*)$ ]]; then
+    die "run $id: its display title '$title' is not the workflow's run-name (compat-exp mode=<mode> istio=<istio> charts=<file> fixes=<file> ids=<ids> fix=<id>)"
+  fi
+  t_mode="${BASH_REMATCH[1]}"
+  t_istio="${BASH_REMATCH[2]}"
+  t_tail="${BASH_REMATCH[3]}"
+  [[ "$t_mode" == "$mode" && "$t_istio" == "$istio" ]] ||
+    die "run $id: GitHub's display title says mode $t_mode, Istio $t_istio, but its metadata artifact says mode $mode, Istio $istio"
+  [[ "$t_mode" == "$want_mode" ]] || die "run $id: GitHub's display title says mode $t_mode, but it is given as $role, which needs mode $want_mode"
+  tail_given="charts=$(jq -r .chartsFile "$meta") fixes=$(jq -r .fixesFile "$meta") ids=$(jq -r .chartIds "$meta") fix=$(jq -r .fixId "$meta")"
+  tail_empty="charts= fixes=$(jq -r .fixesFile "$meta") ids=$(jq -r .chartIds "$meta") fix=$(jq -r .fixId "$meta")"
+  [[ "$t_tail" == "$tail_given" || "$t_tail" == "$tail_empty" ]] ||
+    die "run $id: GitHub's display title ('$t_tail') disagrees with its metadata artifact (charts, fixes, ids and fix as '$tail_given')"
   if [[ "$role" == rerun ]]; then
     [[ "$(jq -r .chartIds "$meta")" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ && "$(jq -r .fixesFile "$meta")" == "" ]] ||
       die "run $id is given as a rerun, but its chart_ids is '$(jq -r .chartIds "$meta")' and its fixes_file '$(jq -r .fixesFile "$meta")': a rerun of a W0 job is restricted to one chart (chart_ids), no fix entries"
@@ -451,6 +512,31 @@ fetch_run() {
 
 # the qualification run first: the sample is chosen from its records
 fetch_run qualification "$qual_run" "charts-exp-$qual_run" qualify "$primary" || exit $?
+
+# The qualification run is the first completed qualify-mode run of the workflow after the tag. Nothing
+# else stops qualify from being run twice and the list that suits being committed.
+jq -e '.schema == 1 and (.void | type == "array") and all(.void[]; (.run | type == "string" and test("^[0-9]{1,20}$")) and (.reason | type == "string" and length >= 10))' "$void_file" >/dev/null 2>&1 ||
+  die "$void_rel is not {schema 1, void: [{run: <digits>, reason: <at least 10 characters>}]}" 2
+tag_epoch="$(git_ log -1 --format=%ct "$tag_sha")"
+gh_api "actions/workflows/compat-exp.yml/runs?event=workflow_dispatch&status=completed&per_page=100" --paginate >"$tmp/qruns.json" 2>"$tmp/view.log" ||
+  die "gh api actions/workflows/compat-exp.yml/runs failed: $(tail -2 "$tmp/view.log" | tr '\n' ' ')"
+earlier="$(jq -s -r --arg q "$qual_run" --argjson t "$tag_epoch" --arg p "$wf_path" '
+  [.[].workflow_runs[]? | select(.path == $p and .event == "workflow_dispatch" and .status == "completed"
+      and ((.created_at | fromdateiso8601) >= $t)
+      and ((.display_title // "") | test("^compat-exp mode=qualify ")))]
+  | sort_by(.created_at, .id) as $all
+  | ([$all[] | .id | tostring] | index($q)) as $i
+  | if $i == null then "NOTFOUND" else $all[:$i][] | "\(.id) \(.conclusion)" end' "$tmp/qruns.json")" || die "could not read the list of qualify runs"
+[[ "$earlier" != NOTFOUND ]] || die "the qualification run $qual_run is not among the completed qualify runs of the workflow after tag $tag"
+while read -r qid qconc; do
+  [[ -n "$qid" ]] || continue
+  if [[ "$qconc" == success ]]; then
+    die "qualify run $qid finished successfully before the qualification run $qual_run: the qualification run must be the first completed qualify run after the tag, and a successful one cannot be voided"
+  fi
+  jq -e --arg id "$qid" 'any(.void[]; .run == $id)' "$void_file" >/dev/null ||
+    die "qualify run $qid (conclusion $qconc) completed before the qualification run $qual_run and is not listed in $void_rel with a reason: the qualification run must be the first completed qualify run after the tag"
+done <<<"$earlier"
+
 [[ -d "$out/run-$qual_run/qual" ]] || die "run $qual_run: no qual/ (qualification records) in its artifact charts-exp-$qual_run"
 bash "$here/select.sh" "$root/hack/compat-exp/candidates.json" "$out/run-$qual_run/qual" "$tmp/charts-reselected.json" "$qual_run" >"$tmp/select.log" 2>&1 ||
   die "select.sh on the qualification run's records failed: $(tail -2 "$tmp/select.log" | tr '\n' ' ')"
@@ -513,10 +599,11 @@ fi
 static_meta="$(jq -c '{helmVersion, helmPinned, helmMatchesPinned}' "$out/static.json.meta.json")" || die "static.json.meta.json is unreadable"
 provenance="$(jq -c -n --arg tag "$tag" --arg tagsha "$tag_sha" --arg head "$head_sha" --argjson runs "$prov_runs" --argjson static "$static_meta" \
   --arg charts "$charts_rel" --arg chartsSha "$charts_sha" --arg ledger "$ledger_rel" --arg ledgerSha "$ledger_sha" \
-  --arg causesSha "$causes_sha" --arg repl "$repl_rel" --arg replSha "$repl_sha" --argjson test "$test_mode" \
+  --arg causesSha "$causes_sha" --arg repl "$repl_rel" --arg replSha "$repl_sha" --arg void "$void_rel" --arg voidSha "$void_sha" --argjson test "$test_mode" \
   '{freezeTag: $tag, freezeCommit: $tagsha, head: $head, runs: $runs, static: $static,
     files: {chartList: {path: $charts, sha256: $chartsSha}, ledger: {path: $ledger, sha256: $ledgerSha},
-            causes: {path: "hack/compat-exp/causes.json", sha256: $causesSha}, replacements: {path: $repl, sha256: $replSha}}}
+            causes: {path: "hack/compat-exp/causes.json", sha256: $causesSha}, replacements: {path: $repl, sha256: $replSha},
+            voidRuns: {path: $void, sha256: $voidSha}}}
    + (if $test == 1 then {testMode: true} else {} end)')" || die "could not build the provenance"
 echo "$provenance" | jq . >"$out/provenance.json"
 jq -n --argjson runs "$runs" --argjson reruns "$rerun_json" --argjson cert "$cert_json" --argjson recheck "$recheck_json" --argjson prov "$provenance" --argjson test "$test_mode" \

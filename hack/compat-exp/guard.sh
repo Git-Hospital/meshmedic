@@ -110,6 +110,8 @@ safe_path() { # path prefix suffix-regex label
 # Paths whose bytes must equal the tag's: the whole instrument (docs/compat-experiment.md
 # section 5). Data stays outside it: ledger.json, patches/, fix entries (fixes/, ignore/) and
 # the frozen chart list, which has its own rule below (one commit since the tag).
+# .github/workflows is frozen as a whole: a workflow file added or changed after the tag
+# (one that names itself compat-exp and uploads its own metadata) fails the freeze.
 frozen=(
   hack/compat-exp/frame
   hack/compat-exp/frame/exclusions.json
@@ -131,6 +133,7 @@ frozen=(
   hack/compat-pilot/render-args.sh
   hack/compat-pilot/world.sh
   hack/compat-pilot/difftable
+  .github/workflows
   .github/workflows/compat-exp.yml
   docs/compat-experiment.md
   go.mod

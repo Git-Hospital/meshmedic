@@ -64,6 +64,21 @@ git clone -q "$R" "$T/gen" || { echo "clone failed"; exit 1; }
 cat >"$T/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "gh $*" >>"$GH_LOG"
+if [[ "$1" == api ]]; then
+  # gh api [--paginate] [--jq F] repos/OWNER/REPO/PATH: the REST objects of the fixtures
+  jqf=""; apath=""
+  shift
+  while [[ $# -gt 0 ]]; do case "$1" in --paginate) shift ;; --jq) jqf="$2"; shift 2 ;; *) apath="$1"; shift ;; esac; done
+  case "$apath" in
+    repos/*/actions/runs/[0-9]*) f="$GH_FIX/${apath##*/}.rest.json" ;;
+    repos/*/actions/workflows/compat-exp.yml/runs\?*) f="$GH_FIX/qruns.json" ;;
+    repos/*/actions/workflows/compat-exp.yml) f="$GH_FIX/workflow.json" ;;
+    *) echo "stub gh api: unknown path $apath" >&2; exit 9 ;;
+  esac
+  [[ -f "$f" ]] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+  if [[ -n "$jqf" ]]; then jq -r "$jqf" "$f"; else cat "$f"; fi
+  exit 0
+fi
 [[ "$1 $2" == "run download" || "$1 $2" == "run view" ]] || exit 9
 id="$3"
 if [[ "$2" == download ]]; then
@@ -116,6 +131,24 @@ mkrun() {
   jq -n --arg id "$id" --arg sha "$head" '{attempt: 1, conclusion: "success", databaseId: ($id | tonumber), event: "workflow_dispatch", headSha: $sha,
     startedAt: "2026-11-20T08:00:00Z", status: "completed", updatedAt: "2026-11-20T09:00:00Z", workflowName: "compat-exp",
     jobs: [{name: "observe", startedAt: "2026-11-20T08:01:00Z", completedAt: "2026-11-20T08:50:00Z"}]}' >"$T/fix/$id.view.json"
+  mkrest "$id"
+}
+# mkrest ID: the REST run object GitHub returns for the run: the file it came from, its workflow id and its
+# run-name as display_title, which GitHub evaluates from the workflow file (here: built from the metadata the
+# guard job wrote, in the format of the run-name in compat-exp.yml)
+mkrest() {
+  local id="$1" meta="$T/fix/$1.meta-1/run-metadata.json"
+  jq -n --arg id "$id" --slurpfile m "$meta" '$m[0] as $m | {id: ($id | tonumber), path: ".github/workflows/compat-exp.yml", workflow_id: 4242,
+    head_sha: $m.headSha, event: "workflow_dispatch", status: "completed", conclusion: "success", created_at: "2030-02-01T00:00:00Z",
+    display_title: "compat-exp mode=\($m.mode) istio=\($m.istio) charts=\($m.chartsFile) fixes=\($m.fixesFile) ids=\($m.chartIds) fix=\($m.fixId)"}' >"$T/fix/$id.rest.json"
+}
+setrest() { jq "$2" "$T/fix/$1.rest.json" >"$T/x" && mv "$T/x" "$T/fix/$1.rest.json"; }
+echo '{"id":4242}' >"$T/fix/workflow.json"
+# qruns: the completed runs of the workflow, as the list endpoint returns them; lines "ID MODE CONCLUSION CREATED"
+mkqruns() {
+  jq -R -s 'split("\n") | map(select(length > 0) | split(" ")) | {total_count: length, workflow_runs: map({id: (.[0] | tonumber), path: ".github/workflows/compat-exp.yml",
+    event: "workflow_dispatch", status: "completed", conclusion: .[2], created_at: .[3],
+    display_title: "compat-exp mode=\(.[1]) istio=1.31.3 charts= fixes= ids= fix="})}' "$T/qlist" >"$T/fix/qruns.json"
 }
 setview() { # ID JQ-FILTER: edit the stored run view
   jq "$2" "$T/fix/$1.view.json" >"$T/x" && mv "$T/x" "$T/fix/$1.view.json"
@@ -135,6 +168,13 @@ resetall() {
   mkrun 13 certify 1.31.3
   mkrun 14 certify 1.31.3
   mkrun 15 recheck "$recheck_v"
+  echo "7001 qualify success 2030-01-01T00:00:00Z" >"$T/qlist"; mkqruns
+  setvoid '{"schema":1,"void":[]}'
+}
+# setvoid JSON: the committed void-runs file of the throwaway repository
+setvoid() {
+  echo "$1" >"$R/hack/compat-exp/void-runs.json"
+  git -C "$R" add hack/compat-exp/void-runs.json && { git -C "$R" diff --cached --quiet || git -C "$R" commit -q -m "void runs"; }
 }
 resetall
 
@@ -253,7 +293,7 @@ says "  and says it is not a frozen experiment list" "not a frozen experiment li
 an "${A[@]}" --repo Git-Hospital/meshmedic
 eq "(setup) the good fixtures reach the ledger check" "$rc" 1
 grep -q -- "-R Git-Hospital/meshmedic" "$GH_LOG" && ok "--repo is passed to gh as -R" || bad "--repo is passed to gh as -R"
-eq "gh was only asked to download and view" "$(grep -cv '^gh run \(download\|view\) ' "$GH_LOG")" 0
+eq "gh was only asked to download, view and read (gh api)" "$(grep -cv '^gh \(run \(download\|view\)\|api\) ' "$GH_LOG")" 0
 says "  (the stub reports are empty, so it stops at the static checks)" "reports hold no charts"
 
 
@@ -296,6 +336,51 @@ setmeta 12 '.runAttempt = 2';                an "${A[@]}"; eq "run metadata of a
 setmeta 12 '.workflowRef = "o/r/.github/workflows/other.yml@refs/heads/main"'; an "${A[@]}"; eq "run metadata from another workflow file: refused" "$rc" 1; says "  and says so" "names the workflow"; resetall
 setmeta 12 '.freezeTagSha = "'"$(printf 'e%.0s' $(seq 1 40))"'"'; an "${A[@]}"; eq "run metadata with another freeze tag commit: refused" "$rc" 1; says "  and says so" "freeze tag was at"; resetall
 setmeta 12 '.chartsSha256 = "'"$(printf 'a%.0s' $(seq 1 64))"'"'; an "${A[@]}"; eq "run metadata with another chart list hash: refused" "$rc" 1; says "  and says so" "another sha256"; resetall
+# R1: the workflow is pinned by its file, and GitHub's run-name (display_title) is checked against the metadata
+setrest 12 '.path = ".github/workflows/x.yml"';      an "${A[@]}"; eq "R1 a run of another workflow file that names itself compat-exp (REST path): refused" "$rc" 1; says "  and names the file" "workflow file '.github/workflows/x.yml'"; resetall
+setrest 12 '.workflow_id = 99';                      an "${A[@]}"; eq "R1 a run whose workflow_id is not the compat-exp file's: refused" "$rc" 1; says "  and says so" "workflow_id"; resetall
+setrest 12 '.display_title = "Update the readme"';   an "${A[@]}"; eq "R1 a display title that is not the run-name: refused" "$rc" 1; says "  and says so" "is not the workflow's run-name"; resetall
+setrest 12 '.display_title |= sub("istio=1.31.3"; "istio=1.32.0")'; an "${A[@]}"; eq "R1 display title with another Istio version than the metadata: refused" "$rc" 1; says "  and says so" "display title says mode observe, Istio 1.32.0"; resetall
+setrest 12 '.display_title |= sub("mode=observe"; "mode=certify")'; an "${A[@]}"; eq "R1 display title with another mode than the metadata: refused" "$rc" 1; says "  and says so" "display title says mode certify"; resetall
+setrest 12 '.display_title |= sub("fix="; "fix=x")';  an "${A[@]}"; eq "R1 display title with another fix id than the metadata: refused" "$rc" 1; says "  and says so" "disagrees with its metadata"; resetall
+# the metadata artifact lies about the mode (the uploaded file is the attacker's), GitHub's title does not
+setmeta 12 '.mode = "certify"';                      an "${A[@]}"; eq "R1 metadata that says another mode than GitHub's title: refused" "$rc" 1; resetall
+setrest 12 '.head_sha = "'"$(printf 'f%.0s' $(seq 1 40))"'"'; an "${A[@]}"; eq "R1 a REST head commit that is not the one gh run view reports: refused" "$rc" 1; resetall
+# the auditor's scenario: a later commit adds .github/workflows/x.yml (name: compat-exp), touches no other frozen file,
+# and its run uploads its own metadata, report and records
+git -C "$R" checkout -q -b rogue "$tagsha"
+printf 'name: compat-exp\non: workflow_dispatch\njobs: {}\n' >"$R/.github/workflows/x.yml"
+git -C "$R" add .github/workflows/x.yml && git -C "$R" commit -q -m "a second workflow"
+xsha="$(git -C "$R" rev-parse HEAD)"
+git -C "$R" checkout -q main
+setview 12 '.headSha = "'"$xsha"'"'; setmeta 12 '.headSha = "'"$xsha"'"'; setrest 12 '.head_sha = "'"$xsha"'" | .path = ".github/workflows/x.yml"'
+an "${A[@]}"; eq "R1 the auditor's scenario (x.yml named compat-exp, no frozen file touched, own metadata): refused" "$rc" 1
+says "  and says the workflow files differ from the tag" "frozen instrument files at"
+resetall
+# a run of compat-exp.yml itself at a commit that adds another workflow file is refused as well
+setview 12 '.headSha = "'"$xsha"'"'; setmeta 12 '.headSha = "'"$xsha"'"'; setrest 12 '.head_sha = "'"$xsha"'"'
+an "${A[@]}"; eq "R1 a compat-exp.yml run at a commit that adds a workflow file: refused" "$rc" 1; says "  and says so" "frozen instrument files at"
+resetall
+
+# R6: the qualification run is the first completed qualify run after the tag
+printf '%s\n' "7000 qualify failure 2030-01-01T00:00:00Z" "7001 qualify success 2030-02-01T00:00:00Z" >"$T/qlist"; mkqruns
+an "${A[@]}"; eq "R6 an earlier completed qualify run that failed and is not void: refused" "$rc" 1; says "  and names it" "qualify run 7000"; says "  and says it is not listed" "not listed in hack/compat-exp/void-runs.json"
+setvoid '{"schema":1,"void":[{"run":"7000","reason":"the runner lost its network during the W0 installs"}]}'
+an "${A[@]}"; eq "R6 the same run listed as void with a reason and not successful: not an error of this check" "$(grep -c 'qualify run 7000\|first completed' "$T/err")" 0
+printf '%s\n' "7000 qualify success 2030-01-01T00:00:00Z" "7001 qualify success 2030-02-01T00:00:00Z" >"$T/qlist"; mkqruns
+an "${A[@]}"; eq "R6 an earlier qualify run that succeeded cannot be voided, even when listed" "$rc" 1; says "  and says so" "cannot be voided"
+setvoid '{"schema":1,"void":[]}'
+an "${A[@]}"; eq "R6 an earlier successful qualify run, not listed: refused" "$rc" 1; says "  and names it" "qualify run 7000"
+printf '%s\n' "7000 qualify cancelled 2030-01-01T00:00:00Z" "7001 qualify success 2030-02-01T00:00:00Z" >"$T/qlist"; mkqruns
+an "${A[@]}"; eq "R6 a cancelled earlier qualify run, not listed: refused" "$rc" 1; says "  and names it" "qualify run 7000"
+printf '%s\n' "7000 qualify failure 2020-01-01T00:00:00Z" "7002 observe success 2030-01-15T00:00:00Z" "7001 qualify success 2030-02-01T00:00:00Z" >"$T/qlist"; mkqruns
+an "${A[@]}"; eq "R6 a qualify run from before the tag and a run of another mode do not count" "$(grep -c 'qualify run\|first completed' "$T/err")" 0
+printf '%s\n' "7003 qualify success 2030-03-01T00:00:00Z" >"$T/qlist"; mkqruns
+an "${A[@]}"; eq "R6 a qualification run that is not among the qualify runs after the tag: refused" "$rc" 1; says "  and says so" "is not among the completed qualify runs"
+setvoid '{"schema":1,"void":[{"run":"7000","reason":"short"}]}'
+an "${A[@]}"; eq "R6 a void file entry without a real reason: refused" "$rc" 2; says "  and says the format" "void-runs.json is not"
+resetall
+
 # several attempts: every attempt's guard job wrote its own artifact, and they agree on everything but runAttempt
 addattempt 12 observe 1.31.3
 an "${A[@]}"; eq "two attempts with equal metadata: accepted (stops later at the empty reports)" "$rc" 1; says "  and gets as far as the static checks" "reports hold no charts"
@@ -324,6 +409,7 @@ setmeta 7001 '.mode = "observe"';            an "${A[@]}"; eq "a qualification r
 rerun_meta() { # ID CHART_IDS [FIXES_FILE]
   mkrun "$1" observe 1.31.3
   gen_run_metadata "$repo/.github/workflows/compat-exp.yml" "$T/gen" "$T/fix/$1.meta-1/run-metadata.json" observe 1.31.3 "$tagsha" "$1" 1 "" "${3:-}" "$2" "" || { echo "metadata step failed"; exit 1; }
+  mkrest "$1"
 }
 rerun_meta 16 ""
 an "${A[@]}" --rerun 16; eq "a rerun dispatched for all charts (no chart_ids): refused" "$rc" 1; says "  and says it is restricted to one chart" "restricted to one chart"
