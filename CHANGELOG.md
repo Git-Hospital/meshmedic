@@ -7,6 +7,13 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Released binaries are now built with Go 1.26.** The release and archive
+  workflows took their toolchain from `go.mod`, so binaries were compiled with
+  a 1.21 standard library that no longer receives security fixes. They now use
+  the current stable Go, as the image already did. `go.mod` still says
+  `go 1.21`, so `go install` keeps working on older toolchains, and a new CI
+  job builds and tests on 1.21 to keep that true.
+
 - **Targets with unknown scenario IDs now fail startup.** `watch` and `check`
   name the target and unknown IDs before querying Prometheus. An empty scenario
   list still selects the whole catalog. (#27, closes #14)

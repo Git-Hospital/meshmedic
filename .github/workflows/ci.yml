@@ -12,7 +12,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # Current stable Go, matching the Dockerfile. The minimum in go.mod is
+          # tested by test-min-go below. This job keeps the name `test` because
+          # the repository ruleset requires that exact check name.
+          go-version: '1.26.x'
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
@@ -21,6 +24,21 @@ jobs:
       # an approved entry that was edited without re-approval must not reach
       # main pretending to be reviewed.
       - run: go run ./cmd/meshmedic validate --no-drift
+
+  # go.mod promises `go 1.21` so that `go install` works on older toolchains.
+  # That promise is only true while something builds and tests on 1.21. A
+  # separate job rather than a matrix on `test`: a matrix renames the checks to
+  # `test (1.21.x)`, and the required check is named exactly `test`. Build and
+  # test only: vet and the catalog checks do not depend on the toolchain.
+  test-min-go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21.x'
+      - run: go build ./...
+      - run: go test ./...
 
   # The image build was never exercised until a tag tried to publish it, and it
   # failed there: narrowing a COPY to keep the fault-injection binary out of the
@@ -57,7 +75,8 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # The archives are what we ship: current stable Go, matching the Dockerfile.
+          go-version: '1.26.x'
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
