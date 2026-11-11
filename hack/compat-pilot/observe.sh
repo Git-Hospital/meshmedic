@@ -13,9 +13,18 @@
 # Usage:
 #   hack/compat-pilot/observe.sh WORLD CHART_ID RUN OUTDIR
 #
+# Environment:
+#   CHARTS_FILE  the chart list to read; default hack/compat-pilot/charts.json.
+#                An entry with fixOf may carry "patch": a path under
+#                hack/compat-exp/patches/ to a unified diff of at most 40
+#                changed lines, applied with `patch -p1` to the pulled chart.
+#   MMC_STATE    where world.sh keeps its kubeconfigs (default ./.mmc-state).
+#   MMC_SETTLE   seconds to wait after install before looking (default 30).
+#   MMC_LATE     seconds after install of the late snapshot, E2 (default 120).
+#
 # Exit codes: 0 recorded (whatever the chart did), 2 usage, 3 could not
 # decide (the world or its cleanup failed, so the run says nothing about the
-# chart).
+# chart, or a patch did not apply or lint).
 set -uo pipefail
 
 world="${1:?usage: observe.sh WORLD CHART_ID RUN OUTDIR}"
@@ -61,8 +70,9 @@ contexts="$(kubectl config get-contexts -o name)"
 # would be observed as if the chart had rendered them.
 [[ "$world" != W4 ]] || { echo "observe.sh runs W0 to W3; W4 is canary.sh's" >&2; exit 2; }
 
-spec="$(jq -ce --arg id "$id" '.[] | select(.id == $id)' "$here/charts.json")" ||
-  { echo "no chart '$id' in charts.json" >&2; exit 2; }
+charts_file="${CHARTS_FILE:-$here/charts.json}"
+spec="$(jq -ce --arg id "$id" '.[] | select(.id == $id)' "$charts_file")" ||
+  { echo "no chart '$id' in $charts_file" >&2; exit 2; }
 chart="$(jq -r .chart <<<"$spec")"
 version="$(jq -r .version <<<"$spec")"
 repo="$(jq -r '.repo // empty' <<<"$spec")"
@@ -79,6 +89,62 @@ while IFS= read -r v; do values+=("$v"); done < <(jq -r '.values[]?' <<<"$spec")
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$out"
+
+# --- patch fix ----------------------------------------------------------------
+
+# A fix may be a diff against the pinned chart (docs/compat-experiment.md,
+# section 2, rule 2). Everything here happens before the namespace exists, so
+# a refused or failing patch leaves nothing to clean up.
+patch_rel="$(jq -r '.patch // empty' <<<"$spec")"
+patch_sha=
+patch_lines=0
+patch_changed=0
+chart_src="$chart"
+if [[ -n "$patch_rel" ]]; then
+  root="$(cd "$here/../.." && pwd)"
+  patch_prefix="hack/compat-exp/patches/"
+  case "$patch_rel" in
+    /* | *..* | *//* ) echo "patch path '$patch_rel' is not a plain path under $patch_prefix" >&2; exit 2 ;;
+    "$patch_prefix"?*) ;;
+    *) echo "patch path '$patch_rel' is outside $patch_prefix" >&2; exit 2 ;;
+  esac
+  patch_file="$root/$patch_rel"
+  [[ -f "$patch_file" && ! -L "$patch_file" ]] || { echo "patch file $patch_rel not found" >&2; exit 2; }
+  # Changed lines are counted hunk by hunk from the @@ headers, so a removed
+  # line that starts with "--" is not mistaken for a file header.
+  patch_changed="$(awk '
+    /^@@ / { split($2, o, ","); split($3, n, ",")
+             old = (o[2] == "" ? 1 : o[2]) + 0; nw = (n[2] == "" ? 1 : n[2]) + 0; inh = 1; next }
+    inh && old <= 0 && nw <= 0 { inh = 0 }
+    inh && /^-/ { c++; old--; next }
+    inh && /^\+/ { c++; nw--; next }
+    inh && /^ / { old--; nw--; next }
+    inh && /^\\/ { next }
+    END { print c + 0 }' "$patch_file")"
+  if [[ "$patch_changed" -gt 40 ]]; then
+    echo "patch $patch_rel changes $patch_changed lines; the limit is 40" >&2
+    exit 2
+  fi
+  patch_lines="$(wc -l <"$patch_file" | tr -d ' ')"
+  if command -v sha256sum >/dev/null 2>&1; then
+    patch_sha="$(sha256sum "$patch_file" | cut -d' ' -f1)"
+  else
+    patch_sha="$(shasum -a 256 "$patch_file" | cut -d' ' -f1)"
+  fi
+
+  pull_args=(pull "$chart" --version "$version" --untar --untardir "$tmp/pulled")
+  [[ -n "$repo" ]] && pull_args+=(--repo "$repo")
+  mkdir -p "$tmp/pulled"
+  helm "${pull_args[@]}" >"$tmp/pull.log" 2>&1 || undecided "helm pull of $chart $version failed: $(tail -3 "$tmp/pull.log")"
+  chart_src="$(find "$tmp/pulled" -mindepth 1 -maxdepth 1 -type d | head -1)"
+  [[ -n "$chart_src" ]] || undecided "helm pull of $chart $version left no chart directory"
+  # Fuzz 0 and no reversed-patch guessing: the diff applies exactly or the
+  # run is void.
+  (cd "$chart_src" && patch -p1 -F0 -N -i "$patch_file") >"$tmp/patch.log" 2>&1 ||
+    undecided "patch $patch_rel does not apply cleanly: $(tail -5 "$tmp/patch.log")"
+  helm lint "$chart_src" >"$tmp/lint.log" 2>&1 ||
+    undecided "helm lint failed on the patched chart: $(tail -5 "$tmp/lint.log")"
+fi
 
 # --- namespace and client ---------------------------------------------------
 
@@ -114,9 +180,12 @@ kubectl -n "$ns" wait pod/mmc-client --for=condition=Ready --timeout=180s >/dev/
 
 # --- install ----------------------------------------------------------------
 
-args=(install "$release" "$chart" --namespace "$ns" --version "$version"
+args=(install "$release" "$chart_src" --namespace "$ns" --version "$version"
   --wait --wait-for-jobs --timeout "$deadline")
 [[ -n "$repo" ]] && args+=(--repo "$repo")
+# A local directory carries its own version, and --repo makes no sense for it.
+[[ -n "$patch_rel" ]] && args=(install "$release" "$chart_src" --namespace "$ns"
+  --wait --wait-for-jobs --timeout "$deadline")
 start="$(date +%s)"
 helm "${args[@]}" ${values[@]+"${values[@]}"} >"$tmp/helm.log" 2>&1
 helm_rc=$?
@@ -277,7 +346,8 @@ jq -n \
   --slurpfile workloads "$tmp/workloads.json" --slurpfile jobs "$tmp/jobs.json" \
   --slurpfile ports "$tmp/ports.json" --slurpfile analyze "$tmp/analyze.json" \
   --slurpfile events "$tmp/events.json" --slurpfile pulls "$tmp/pullfailures.json" \
-  --arg fixof "$fixof" '
+  --arg fixof "$fixof" --arg patch_path "$patch_rel" --arg patch_sha "$patch_sha" \
+  --argjson patch_lines "$patch_lines" --argjson patch_changed "$patch_changed" '
   ($workloads[0] | group_by(.workload)) as $groups
   | {
     world: $world, chart: $chart, chartVersion: $version, run: $run, fixOf: $fixof,
@@ -286,6 +356,8 @@ jq -n \
            testLogTail: ($test_log | split("\n") | .[-40:] | join("\n"))},
     workloads: $workloads[0], jobs: $jobs[0], ports: $ports[0], analyze: $analyze[0], events: $events[0],
     pullFailures: $pulls[0],
+    patch: (if $patch_path == "" then null
+            else {path: $patch_path, sha256: $patch_sha, lines: $patch_lines, changedLines: $patch_changed} end),
     obs: (
       {"helm:install": (if $helm_rc == 0 then "ok" else "failed" end), "helm:test": $test}
       + ([$groups[] | {("workload:" + .[0].workload + ":ready"):
