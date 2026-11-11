@@ -137,19 +137,25 @@ jobs:
           fi
 
       # The record of what this run was, for the analysis to decide whether it
-      # is admissible. Written here from workflow context and the checked-out
-      # commit only: nothing in it comes from a chart, a record or a cluster.
-      # chartsFile is the file the guard resolved (the mode's default when the
-      # input is empty), chartsSha256 its hash at headSha, freezeTagSha the
-      # commit the freeze tag points to ("" before the tag exists), fixId ""
-      # outside certify.
+      # is admissible (hack/compat-exp/analyze.sh downloads it and cross-checks
+      # it against `gh run view`). Written here, in the guard job, and nowhere
+      # else: this job never runs a chart. Everything in it comes from workflow
+      # context and the checked-out commit: nothing from a chart, a record or a
+      # cluster. chartsFile is the file the guard resolved (the mode's default
+      # when the input is empty), chartsSha256 its hash at headSha, freezeTagSha
+      # the commit the freeze tag points to ("" before the tag exists), fixId ""
+      # outside certify; fixesFile and chartIds are the dispatch inputs as given.
       - name: run metadata
         env:
           MD_MODE: ${{ inputs.mode }}
           MD_ISTIO: ${{ inputs.istio }}
           MD_CHARTS_FILE: ${{ inputs.charts_file }}
+          MD_FIXES_FILE: ${{ inputs.fixes_file }}
+          MD_CHART_IDS: ${{ inputs.chart_ids }}
           MD_FIX_ID: ${{ inputs.fix_id }}
           MD_HEAD_SHA: ${{ github.sha }}
+          MD_WORKFLOW_REF: ${{ github.workflow_ref }}
+          MD_EVENT_NAME: ${{ github.event_name }}
           MD_RUN_ID: ${{ github.run_id }}
           MD_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
@@ -164,10 +170,14 @@ jobs:
           mkdir -p run-metadata
           jq -n \
             --arg mode "$MD_MODE" --arg istio "$MD_ISTIO" --arg chartsFile "$charts_file" \
-            --arg chartsSha256 "$charts_sha" --arg fixId "$MD_FIX_ID" --arg headSha "$MD_HEAD_SHA" \
-            --arg freezeTagSha "$freeze_sha" --argjson runId "$MD_RUN_ID" --argjson runAttempt "$MD_RUN_ATTEMPT" \
-            '{mode: $mode, istio: $istio, chartsFile: $chartsFile, chartsSha256: $chartsSha256, fixId: $fixId,
-              headSha: $headSha, freezeTagSha: $freezeTagSha, runId: $runId, runAttempt: $runAttempt}' \
+            --arg chartsSha256 "$charts_sha" --arg fixesFile "$MD_FIXES_FILE" --arg chartIds "$MD_CHART_IDS" \
+            --arg fixId "$MD_FIX_ID" --arg headSha "$MD_HEAD_SHA" --arg freezeTagSha "$freeze_sha" \
+            --arg workflowRef "$MD_WORKFLOW_REF" --arg eventName "$MD_EVENT_NAME" \
+            --argjson runId "$MD_RUN_ID" --argjson runAttempt "$MD_RUN_ATTEMPT" \
+            '{schema: 1, mode: $mode, istio: $istio, chartsFile: $chartsFile, chartsSha256: $chartsSha256,
+              fixesFile: $fixesFile, chartIds: $chartIds, fixId: $fixId, headSha: $headSha,
+              freezeTagSha: $freezeTagSha, workflowRef: $workflowRef, eventName: $eventName,
+              runId: $runId, runAttempt: $runAttempt}' \
             >run-metadata/run-metadata.json
           cat run-metadata/run-metadata.json
       # actions/upload-artifact v4

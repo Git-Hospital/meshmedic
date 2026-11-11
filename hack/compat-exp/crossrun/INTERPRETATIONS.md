@@ -142,7 +142,7 @@ where the maintainer may want the other reading before the freeze.
 - Gap: crossrun reads whatever files the manifest names, so it could be run on other runs, other tools or another sample.
 - Reading: analyze.sh is the only supported way to produce a result, and it refuses unless: the tag exists, HEAD descends from it, frozen files equal the tag's (working tree included), and the data files are committed; every run id was a `compat-exp` `workflow_dispatch` run on a head commit that descends from the tag with equal frozen files, of the mode and Istio version its role needs; the chart list reproduces from the qualification run's records and the frozen `candidates.json`; the tools are built from the tree. The result records the tag commit, HEAD, every run (headSha, mode, Istio, times) and the sha256 of the chart list, ledger, causes and replacements. crossrun itself checks none of this: run by hand it gives a result without provenance, which is not a result of the experiment.
 - Times: run end is the latest job `completedAt` in any attempt, run start the earliest job `startedAt` in any attempt (`gh run view --attempt N --json jobs`).
-- Needs from the workflow: `run-meta-<id>.json` (README.md, step 13), because `gh run view` does not return the dispatch inputs.
+- Needs from the workflow: the guard job's `run-metadata-<id>-<attempt>` artifact (README.md, step 13), because `gh run view` does not return the dispatch inputs.
 - Test mode (`MMC_ANALYZE_TEST=1`) allows the tool and file overrides and marks every output not valid.
 - Alternative: trust the manifest.
 

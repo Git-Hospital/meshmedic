@@ -20,6 +20,9 @@ bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 eq() { if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1: got '$2', want '$3'"; fi; }
 says() { if grep -q -- "$2" "$T/err"; then ok "$1"; else bad "$1: stderr lacks '$2': $(head -3 "$T/err" | tr '\n' ' ')"; fi; }
 
+# shellcheck source=lib-runmeta.sh
+source "$here/lib-runmeta.sh"
+
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.test GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.test
 
 # --- the qualification: 60 candidates, all qualified, selected by select.sh -------------
@@ -53,6 +56,8 @@ R="$T/repo"
 mkrepo "$R"
 tagsha="$(git -C "$R" rev-parse compat-exp-freeze)"
 recheck_v=1.32.0
+# where the workflow's metadata step runs: a clone of the instrument with the tag
+git clone -q "$R" "$T/gen" || { echo "clone failed"; exit 1; }
 
 # --- the gh stub ---------------------------------------------------------------------------------------------
 
@@ -63,6 +68,11 @@ echo "gh $*" >>"$GH_LOG"
 id="$3"
 if [[ "$2" == download ]]; then
   while [[ $# -gt 0 ]]; do case "$1" in -D) dir="$2"; shift 2 ;; -n) name="$2"; shift 2 ;; *) shift ;; esac; done
+  if [[ "$name" =~ ^run-metadata-$id-([0-9]+)$ ]]; then
+    [[ -d "$GH_FIX/$id.meta-${BASH_REMATCH[1]}" ]] || { echo "no such artifact $name" >&2; exit 1; }
+    cp -R "$GH_FIX/$id.meta-${BASH_REMATCH[1]}/." "$dir/"
+    exit 0
+  fi
   [[ -d "$GH_FIX/$id" && "$name" == "$(cat "$GH_FIX/$id.artifact")" ]] || { echo "no such artifact $name" >&2; exit 1; }
   cp -R "$GH_FIX/$id/." "$dir/"
 else
@@ -89,9 +99,9 @@ mkrun() {
     echo '{"schema":1,"oracle":"W0","worlds":["W1","W3"],"runsRequired":3,"charts":[]}' >"$d/report-$id.json"
   fi
   echo "$art" >"$T/fix/$id.artifact"
-  jq -n --arg id "$id" --arg sha "$head" --arg mode "$mode" --arg istio "$istio" \
-    '{schema: 1, runId: $id, runAttempt: 1, sha: $sha, workflowRef: "Git-Hospital/meshmedic/.github/workflows/compat-exp.yml@refs/heads/main",
-      eventName: "workflow_dispatch", mode: $mode, istio: $istio, chartsFile: "", fixesFile: "", chartIds: "", fixId: ""}' >"$d/run-meta-$id.json"
+  # the run metadata is what the workflow's guard job writes (lib-runmeta.sh runs that step), one artifact per attempt
+  rm -rf "$T/fix/$id".meta-* "$T/fix/$id".attempt-*
+  gen_run_metadata "$repo/.github/workflows/compat-exp.yml" "$T/gen" "$T/fix/$id.meta-1/run-metadata.json" "$mode" "$istio" "$head" "$id" 1 || { echo "metadata step failed"; exit 1; }
   jq -n --arg id "$id" --arg sha "$head" '{attempt: 1, conclusion: "success", databaseId: ($id | tonumber), event: "workflow_dispatch", headSha: $sha,
     startedAt: "2026-11-20T08:00:00Z", status: "completed", updatedAt: "2026-11-20T09:00:00Z", workflowName: "compat-exp",
     jobs: [{name: "observe", startedAt: "2026-11-20T08:01:00Z", completedAt: "2026-11-20T08:50:00Z"}]}' >"$T/fix/$id.view.json"
@@ -99,7 +109,14 @@ mkrun() {
 setview() { # ID JQ-FILTER: edit the stored run view
   jq "$2" "$T/fix/$1.view.json" >"$T/x" && mv "$T/x" "$T/fix/$1.view.json"
 }
-setmeta() { jq "$2" "$T/fix/$1/run-meta-$1.json" >"$T/x" && mv "$T/x" "$T/fix/$1/run-meta-$1.json"; }
+setmeta() { jq "$2" "$T/fix/$1.meta-${3:-1}/run-metadata.json" >"$T/x" && mv "$T/x" "$T/fix/$1.meta-${3:-1}/run-metadata.json"; }
+# a second attempt of run ID: its view says attempt 2, its guard job ran again (a metadata artifact of its own)
+addattempt() {
+  setview "$1" '.attempt = 2'
+  cp "$T/fix/$1.view.json" "$T/fix/$1.attempt-2.json"
+  jq '.attempt = 1' "$T/fix/$1.view.json" >"$T/fix/$1.attempt-1.json"
+  gen_run_metadata "$repo/.github/workflows/compat-exp.yml" "$T/gen" "$T/fix/$1.meta-2/run-metadata.json" "$2" "$3" "$tagsha" "$1" 2 || { echo "metadata step failed"; exit 1; }
+}
 resetall() {
   mkrun 7001 qualify 1.31.3
   mkrun 11 observe 1.31.3
@@ -230,7 +247,7 @@ says "  (the stub reports are empty, so it stops at the static checks)" "reports
 
 
 an "${A[@]}"; eq "a run on a descendant of the tag with unchanged frozen files is fine" "$(grep -c 'headSha\|refused' "$T/err")" 0
-setview 12 '.headSha = "'"$(printf 'c%.0s' $(seq 1 40))"'"'; setmeta 12 '.sha = "'"$(printf 'c%.0s' $(seq 1 40))"'"'
+setview 12 '.headSha = "'"$(printf 'c%.0s' $(seq 1 40))"'"'; setmeta 12 '.headSha = "'"$(printf 'c%.0s' $(seq 1 40))"'"'
 an "${A[@]}"; eq "run 2 on a commit that is not here: refused" "$rc" 1; says "  and says to fetch it" "not in this repository"
 resetall
 # a commit that changed a frozen file
@@ -240,7 +257,7 @@ echo "// other" >>"$N/hack/compat-exp/analyze.sh"
 git -C "$N" commit -qam "other branch edits analyze.sh"
 bsha="$(git -C "$N" rev-parse HEAD)"
 git -C "$N" checkout -q main
-setview 12 '.headSha = "'"$bsha"'"'; setmeta 12 '.sha = "'"$bsha"'"'
+setview 12 '.headSha = "'"$bsha"'"'; setmeta 12 '.headSha = "'"$bsha"'"'
 an "${A[@]}"; eq "run 2 on a commit with a changed frozen file: refused" "$rc" 1; says "  and names the file" "frozen instrument files at"
 resetall
 git -C "$N" checkout -q -b before compat-exp-freeze~1 2>/dev/null
@@ -250,7 +267,7 @@ git -C "$N" checkout -q --orphan loose
 git -C "$N" rm -rfq . >/dev/null 2>&1; echo x >"$N/loose.txt"; git -C "$N" add loose.txt; git -C "$N" commit -qm loose
 lsha="$(git -C "$N" rev-parse HEAD)"
 git -C "$N" checkout -qf main
-setview 11 '.headSha = "'"$lsha"'"'; setmeta 11 '.sha = "'"$lsha"'"'
+setview 11 '.headSha = "'"$lsha"'"'; setmeta 11 '.headSha = "'"$lsha"'"'
 an "${A[@]}"; eq "run 1 on a commit that does not descend from the tag: refused" "$rc" 1; says "  and says so" "not tag compat-exp-freeze or a descendant"
 resetall
 
@@ -258,10 +275,27 @@ setview 12 '.workflowName = "other"';        an "${A[@]}"; eq "a run of another 
 setview 12 '.event = "push"';                an "${A[@]}"; eq "a run not dispatched by hand: refused" "$rc" 1; says "  and says so" "not workflow_dispatch"; resetall
 setview 12 '.status = "in_progress"';        an "${A[@]}"; eq "a run that has not completed: refused" "$rc" 1; says "  and says so" "not completed"; resetall
 setview 12 '.databaseId = 99';               an "${A[@]}"; eq "gh returning another run: refused" "$rc" 1; resetall
-rm "$T/fix/12/run-meta-12.json";             an "${A[@]}"; eq "a run without run-meta: refused" "$rc" 1; says "  and names the fields" "run-meta-12.json"; resetall
-setmeta 12 '.sha = "'"$(printf 'd%.0s' $(seq 1 40))"'"'; an "${A[@]}"; eq "run-meta from another commit: refused" "$rc" 1; resetall
-setmeta 12 '.runId = "99"';                  an "${A[@]}"; eq "run-meta of another run: refused" "$rc" 1; resetall
-setmeta 12 '.workflowRef = "o/r/.github/workflows/other.yml@refs/heads/main"'; an "${A[@]}"; eq "run-meta from another workflow file: refused" "$rc" 1; resetall
+rm -rf "$T/fix/12.meta-1";                   an "${A[@]}"; eq "a run without its run-metadata artifact: refused" "$rc" 1; says "  and names the artifact" "run-metadata-12-1"; resetall
+setmeta 12 'del(.headSha) | . + {sha: "x"}'; an "${A[@]}"; eq "run metadata in the old analyze.sh shape (sha, no headSha): refused" "$rc" 1; says "  and says the fields are wrong" "fields and types"; resetall
+setmeta 12 '. + {extra: 1}';                 an "${A[@]}"; eq "run metadata with a field the guard job does not write: refused" "$rc" 1; says "  and says the fields are wrong" "fields and types"; resetall
+setmeta 12 '.headSha = "'"$(printf 'd%.0s' $(seq 1 40))"'"'; an "${A[@]}"; eq "run metadata of another commit than gh reports: refused" "$rc" 1; says "  and says so" "does not describe this run"; resetall
+setmeta 12 '.runId = 99';                    an "${A[@]}"; eq "run metadata of another run: refused" "$rc" 1; says "  and says so" "does not describe this run"; resetall
+setmeta 12 '.eventName = "push"';            an "${A[@]}"; eq "run metadata of another event than gh reports: refused" "$rc" 1; says "  and says so" "does not describe this run"; resetall
+setmeta 12 '.runAttempt = 2';                an "${A[@]}"; eq "run metadata of another attempt than its artifact name: refused" "$rc" 1; says "  and says so" "does not describe this run"; resetall
+setmeta 12 '.workflowRef = "o/r/.github/workflows/other.yml@refs/heads/main"'; an "${A[@]}"; eq "run metadata from another workflow file: refused" "$rc" 1; says "  and says so" "names the workflow"; resetall
+setmeta 12 '.freezeTagSha = "'"$(printf 'e%.0s' $(seq 1 40))"'"'; an "${A[@]}"; eq "run metadata with another freeze tag commit: refused" "$rc" 1; says "  and says so" "freeze tag was at"; resetall
+setmeta 12 '.chartsSha256 = "'"$(printf 'a%.0s' $(seq 1 64))"'"'; an "${A[@]}"; eq "run metadata with another chart list hash: refused" "$rc" 1; says "  and says so" "another sha256"; resetall
+# several attempts: every attempt's guard job wrote its own artifact, and they agree on everything but runAttempt
+addattempt 12 observe 1.31.3
+an "${A[@]}"; eq "two attempts with equal metadata: accepted (stops later at the empty reports)" "$rc" 1; says "  and gets as far as the static checks" "reports hold no charts"
+eq "  and both artifacts were downloaded" "$(grep -c 'run download 12 -n run-metadata-12-' "$GH_LOG")" 2
+setmeta 12 '.fixId = "fix-a"' 2;             an "${A[@]}"; eq "attempts that differ in the fix id: refused" "$rc" 1; says "  and says so" "differs from attempt 1"; resetall
+addattempt 12 observe 1.31.3; setmeta 12 '.istio = "1.32.0"' 2; an "${A[@]}"; eq "attempts that differ in the Istio version: refused" "$rc" 1; says "  and says so" "differs from attempt 1"; resetall
+addattempt 12 observe 1.31.3; setmeta 12 '.chartIds = "app-1"' 2; an "${A[@]}"; eq "attempts that differ in the chart ids: refused" "$rc" 1; says "  and says so" "differs from attempt 1"; resetall
+addattempt 12 observe 1.31.3; rm -rf "$T/fix/12.meta-2"
+an "${A[@]}"; eq "a later attempt without a metadata artifact (the guard job was not rerun): accepted" "$rc" 1; says "  and gets as far as the static checks" "reports hold no charts"; resetall
+addattempt 12 observe 1.31.3; rm -rf "$T/fix/12.meta-1"
+an "${A[@]}"; eq "attempt 1 without its metadata artifact: refused" "$rc" 1; says "  and says so" "run-metadata-12-1"; resetall
 setmeta 12 '.mode = "certify"';              an "${A[@]}"; eq "run 2 dispatched as certify: refused" "$rc" 1; says "  and names the role" "run2"; resetall
 setmeta 11 '.mode = "recheck"';              an "${A[@]}"; eq "run 1 dispatched as recheck: refused" "$rc" 1; resetall
 setmeta 12 '.istio = "1.32.0"';              an "${A[@]}"; eq "run 2 on another Istio version: refused" "$rc" 1; says "  and says the pinned one" "pinned version for run2 is 1.31.3"; resetall

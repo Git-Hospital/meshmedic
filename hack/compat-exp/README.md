@@ -72,8 +72,8 @@ Commands run from the repository root.
    refused unless `MMC_ANALYZE_TEST=1`, which marks every output as not valid.
    For every run id (the qualification run named by the chart list, run 1, run 2,
    certification, recheck) it checks `gh run view` (head commit, workflow
-   `compat-exp`, `workflow_dispatch`, completed) and `run-meta-<id>.json` from the
-   run's artifact (mode and Istio version for the role: run 1 and 2 observe, certify,
+   `compat-exp`, `workflow_dispatch`, completed) and the run metadata artifact
+   `run-metadata-<id>-<attempt>` of every attempt (mode and Istio version for the role: run 1 and 2 observe, certify,
    recheck on the version decided at the freeze, the qualification run qualify on the
    primary version). It downloads the qualification run's records, runs `select.sh`
    on them and `candidates.json`, and stops unless the chart list is
@@ -91,14 +91,20 @@ Commands run from the repository root.
    The two steps by hand: `hack/compat-exp/static.sh hack/compat-exp/charts-exp.json static.json`
    and `go run ./hack/compat-exp/crossrun -inputs inputs.json -json result.json -md result.md`.
 
-   What the workflow must upload for this (the analysis side is done, the workflow
-   side is not in this directory): `run-meta-<run id>.json` at the root of the
-   artifacts `compat-exp-report-<run id>` and `charts-exp-<run id>`, with `schema`
-   (1), `runId`, `runAttempt`, `sha` (github.sha), `workflowRef` (github.workflow_ref),
-   `eventName`, `mode`, `istio`, `chartsFile`, `fixesFile`, `chartIds`, `fixId`
-   (the dispatch inputs), because `gh run view --json` does not return the inputs.
-   The select job must also keep `qual/` in the `charts-exp-<run id>` artifact (it
-   does) and call `select.sh` with `GITHUB_RUN_ID` set (it is, on Actions).
+   The run metadata: the workflow's guard job (the only writer; it never runs a
+   chart) uploads the artifact `run-metadata-<run id>-<run attempt>` holding
+   `run-metadata.json`, written from workflow context only, with `schema` (1), `mode`,
+   `istio`, `chartsFile`, `chartsSha256`, `fixesFile`, `chartIds`, `fixId` (the dispatch
+   inputs; chartsFile is the resolved default when the input is empty), `headSha`,
+   `freezeTagSha`, `workflowRef`, `eventName`, `runId`, `runAttempt`, because
+   `gh run view --json` does not return the inputs. The file is still only an artifact,
+   so analyze.sh downloads it for every attempt (attempt 1 must exist; a rerun of failed
+   jobs does not run the guard job again, so a later attempt may have none), checks it
+   against `gh run view` (run id, head sha, event, workflow name against `workflowRef`),
+   the freeze tag and the chart list analysed, and stops unless the attempts agree on
+   everything but `runAttempt`. `test/lib-runmeta.sh` runs the workflow's own step for the
+   tests of both sides. The select job must also keep `qual/` in the `charts-exp-<run id>`
+   artifact (it does) and call `select.sh` with `GITHUB_RUN_ID` set (it is, on Actions).
 
 The order differs from the first draft of this list in one place: the tag comes
 before qualification, because sections 4 and 5 freeze the whole instrument

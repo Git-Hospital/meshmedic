@@ -134,8 +134,10 @@ if run_check; then ok "check records: results/*/debug is dropped, not parsed"; e
 
 # C2 (c): the run metadata, written by the guard job from workflow context only
 meta_run="$(step_run guard "run metadata")"
-eq "the metadata step takes everything through env" "$(jq -c '.jobs.guard.steps[] | select(.name == "run metadata") | .env | keys' "$j")" '["MD_CHARTS_FILE","MD_FIX_ID","MD_HEAD_SHA","MD_ISTIO","MD_MODE","MD_RUN_ATTEMPT","MD_RUN_ID"]'
+eq "the metadata step takes everything through env" "$(jq -c '.jobs.guard.steps[] | select(.name == "run metadata") | .env | keys' "$j")" '["MD_CHARTS_FILE","MD_CHART_IDS","MD_EVENT_NAME","MD_FIXES_FILE","MD_FIX_ID","MD_HEAD_SHA","MD_ISTIO","MD_MODE","MD_RUN_ATTEMPT","MD_RUN_ID","MD_WORKFLOW_REF"]'
 eq "the metadata artifact is named by run id and attempt" "$(jq -r '.jobs.guard.steps[] | select((.uses // "") | startswith("actions/upload-artifact")) | [.with.name, .with.path, .with["if-no-files-found"]] | join(" ")' "$j")" 'run-metadata-${{ github.run_id }}-${{ github.run_attempt }} run-metadata/run-metadata.json error'
+eq "only the guard job writes run metadata (no other job has such a step or artifact)" "$(jq -c '[.jobs | to_entries[] | select(.value.steps | map((.name // "") == "run metadata" or ((.with.name // "") | startswith("run-metadata"))) | any) | .key]' "$j")" '["guard"]'
+eq "no job that runs a chart needs or uploads run metadata" "$(jq -c '[.jobs.observe, .jobs.qualify, .jobs.report, .jobs.select | [.steps[] | (.with.name // "") | select(startswith("run-metadata"))] | length] | add' "$j")" 0
 eq "the metadata step reads no result, record or plan file" "$(grep -c 'results\|plan/\|charts\.json"' <<<"$meta_run" || true)" 0
 fresh
 (
@@ -145,13 +147,14 @@ fresh
   git add . && git commit -q -m c && git tag compat-exp-freeze
 ) >/dev/null 2>&1
 meta() { # mode charts_file fix_id
-  (cd "$work/c" && MD_MODE="$1" MD_ISTIO=1.31.3 MD_CHARTS_FILE="$2" MD_FIX_ID="$3" MD_HEAD_SHA=abc123 MD_RUN_ID=77 MD_RUN_ATTEMPT=2 bash -c "$meta_run" >/dev/null 2>&1 && cat run-metadata/run-metadata.json)
+  (cd "$work/c" && MD_MODE="$1" MD_ISTIO=1.31.3 MD_CHARTS_FILE="$2" MD_FIX_ID="$3" MD_FIXES_FILE=hack/compat-exp/fixes/f.json MD_CHART_IDS="a b" MD_HEAD_SHA=abc123 \
+    MD_WORKFLOW_REF=o/r/.github/workflows/compat-exp.yml@refs/heads/main MD_EVENT_NAME=workflow_dispatch MD_RUN_ID=77 MD_RUN_ATTEMPT=2 bash -c "$meta_run" >/dev/null 2>&1 && cat run-metadata/run-metadata.json)
 }
 head_tag="$(git -C "$work/c" rev-parse HEAD)"
 want_sha="$(sha256sum "$work/c/hack/compat-exp/acceptance-charts.json" | cut -d' ' -f1)"
-eq "metadata, acceptance: exact fields" "$(meta acceptance "" "" | jq -c --arg sha "$want_sha" --arg tag "$head_tag" '. == {mode:"acceptance", istio:"1.31.3", chartsFile:"hack/compat-exp/acceptance-charts.json", chartsSha256:$sha, fixId:"", headSha:"abc123", freezeTagSha:$tag, runId:77, runAttempt:2}')" true
+eq "metadata, acceptance: exact fields" "$(meta acceptance "" "" | jq -c --arg sha "$want_sha" --arg tag "$head_tag" '. == {schema:1, mode:"acceptance", istio:"1.31.3", chartsFile:"hack/compat-exp/acceptance-charts.json", chartsSha256:$sha, fixesFile:"hack/compat-exp/fixes/f.json", chartIds:"a b", fixId:"", headSha:"abc123", freezeTagSha:$tag, workflowRef:"o/r/.github/workflows/compat-exp.yml@refs/heads/main", eventName:"workflow_dispatch", runId:77, runAttempt:2}')" true
 eq "metadata, certify: default charts file and the fix id" "$(meta certify "" fix-a | jq -c '[.chartsFile, .fixId, .mode]')" '["hack/compat-exp/charts-exp.json","fix-a","certify"]'
-eq "metadata has exactly the nine fields" "$(meta observe "" "" | jq -c 'keys')" '["chartsFile","chartsSha256","fixId","freezeTagSha","headSha","istio","mode","runAttempt","runId"]'
+eq "metadata has exactly the fourteen fields analyze.sh reads" "$(meta observe "" "" | jq -c 'keys')" '["chartIds","chartsFile","chartsSha256","eventName","fixId","fixesFile","freezeTagSha","headSha","istio","mode","runAttempt","runId","schema","workflowRef"]'
 git -C "$work/c" tag -d compat-exp-freeze >/dev/null
 eq "metadata: freezeTagSha is empty before the tag exists" "$(meta acceptance "" "" | jq -r '.freezeTagSha')" ""
 

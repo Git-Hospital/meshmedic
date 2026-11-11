@@ -20,7 +20,8 @@
 #      covered by qualify_test.sh.
 #   3. the ledger row and fix entry and ignore list: judgment data a person writes.
 #   4. the stub cluster's pod JSON (what the "chart" does), the rendered manifests
-#      helm template returns, and gh's run metadata (start and end times).
+#      helm template returns, and gh's run view (start and end times). The run metadata
+#      file is not hand-made: the workflow's own "run metadata" step writes it.
 #   5. the second workflow run's records are a copy of the first's (the stub is
 #      deterministic), and so are the second certification run's.
 #
@@ -29,6 +30,8 @@ set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../../.." && pwd)"
+# shellcheck source=lib-runmeta.sh
+source "$here/lib-runmeta.sh"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 
@@ -240,6 +243,7 @@ headsha="$(git -C "$R" rev-parse HEAD)"
 
 G="$T/gh"
 mkdir -p "$G"
+git clone -q "$R" "$T/gen" || { echo "clone failed"; exit 1; }
 # artifact of a workflow run: the report, its records, and the run metadata the workflow uploads
 mkartifact() { # ID MODE ISTIO
   local r="$1" mode="$2" istio="$3"
@@ -248,9 +252,8 @@ mkartifact() { # ID MODE ISTIO
   "$B/difftable" -worlds W1,W3 "$T/res-$r" >"$G/$r/table.md" 2>/dev/null
   cp -R "$T/res-$r" "$G/$r/results"
   echo "compat-exp-report-$r" >"$G/$r.artifact"
-  jq -n --arg id "$r" --arg sha "$headsha" --arg mode "$mode" --arg istio "$istio" \
-    '{schema: 1, runId: $id, runAttempt: 1, sha: $sha, workflowRef: "Git-Hospital/meshmedic/.github/workflows/compat-exp.yml@refs/heads/main",
-      eventName: "workflow_dispatch", mode: $mode, istio: $istio, chartsFile: "", fixesFile: "", chartIds: "", fixId: ""}' >"$G/$r/run-meta-$r.json"
+  # the guard job's run-metadata-<id>-<attempt> artifact: the workflow's own step, run on a clone of the instrument
+  gen_run_metadata "$R/.github/workflows/compat-exp.yml" "$T/gen" "$G/$r.meta-1/run-metadata.json" "$mode" "$istio" "$headsha" "$r" 1 || bad "run metadata step for $r"
 }
 mkartifact 1001 observe 1.31.3
 mkartifact 1002 observe 1.31.3
@@ -262,8 +265,7 @@ mkdir -p "$G/7001/qual" "$G/7001/out"
 cp "$T/qual"/*.qualify.json "$G/7001/qual/"
 cp "$T/charts-exp.json" "$G/7001/out/"
 echo "charts-exp-7001" >"$G/7001.artifact"
-jq -n --arg sha "$headsha" '{schema: 1, runId: "7001", runAttempt: 1, sha: $sha, workflowRef: "Git-Hospital/meshmedic/.github/workflows/compat-exp.yml@refs/heads/main",
-  eventName: "workflow_dispatch", mode: "qualify", istio: "1.31.3", chartsFile: "", fixesFile: "", chartIds: "", fixId: ""}' >"$G/7001/run-meta-7001.json"
+gen_run_metadata "$R/.github/workflows/compat-exp.yml" "$T/gen" "$G/7001.meta-1/run-metadata.json" qualify 1.31.3 "$headsha" 7001 1 || bad "run metadata step for 7001"
 
 # gh run view JSON: latest attempt's view, and the jobs of every attempt (the times come from the jobs)
 mkview() { # ID ATTEMPTS FIRST_JOB_START FIRST_JOB_END LAST_JOB_START LAST_JOB_END
@@ -293,6 +295,11 @@ echo "gh $*" >>"$GH_LOG"
 id="$3"
 if [[ "$2" == download ]]; then
   while [[ $# -gt 0 ]]; do case "$1" in -D) dir="$2"; shift 2 ;; -n) name="$2"; shift 2 ;; *) shift ;; esac; done
+  if [[ "$name" =~ ^run-metadata-$id-([0-9]+)$ ]]; then
+    [[ -d "$GH_FIX/$id.meta-${BASH_REMATCH[1]}" ]] || { echo "no artifact $name" >&2; exit 1; }
+    cp -R "$GH_FIX/$id.meta-${BASH_REMATCH[1]}/." "$dir/"
+    exit 0
+  fi
   [[ -d "$GH_FIX/$id" && "$name" == "$(cat "$GH_FIX/$id.artifact")" ]] || { echo "no artifact $name" >&2; exit 1; }
   cp -R "$GH_FIX/$id/." "$dir/"
 else

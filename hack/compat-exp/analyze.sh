@@ -49,12 +49,17 @@
 #     option of the istio input, decided at the freeze).
 #     gh run view --json gives headSha, workflowName, event, status, attempt and the
 #     times; it does not give the dispatch inputs. Mode and Istio version therefore
-#     come from run-meta-ID.json, which the workflow must upload at the root of the
-#     run's artifact (compat-exp-report-ID, and charts-exp-ID for qualify). Fields:
-#     schema (1), runId, runAttempt, sha (github.sha), workflowRef (github.workflow_ref),
-#     eventName, mode, istio, chartsFile, fixesFile, chartIds, fixId (the dispatch
-#     inputs). The script cross-checks sha and runId against gh, and istio against the
-#     records' environment.
+#     come from the run metadata, which the workflow's guard job (the only writer; it
+#     never runs a chart) uploads as its own artifact run-metadata-ID-ATTEMPT, one file
+#     run-metadata.json: schema (1), mode, istio, chartsFile, chartsSha256, fixesFile,
+#     chartIds, fixId, headSha, freezeTagSha, workflowRef, eventName, runId, runAttempt.
+#     The file is only an artifact, so the script downloads the artifact of every
+#     attempt (attempt 1 must exist; a rerun of failed jobs does not run the guard job
+#     again, so a later attempt may have none), cross-checks each file against `gh run
+#     view` (run id, headSha, workflow name against the workflow ref, event), and stops
+#     unless all files agree on everything but runAttempt. It also checks freezeTagSha
+#     against the tag and, for the observe-type roles, chartsFile and chartsSha256
+#     against the chart list analysed, and istio against the records' environment.
 #  4. The sample is not choosable after data exists: the qualification run's records
 #     (artifact charts-exp-ID, qual/) are downloaded, select.sh is run on them and on the
 #     committed candidates.json, and the result must be byte-identical to the chart list.
@@ -259,20 +264,47 @@ fetch_run() {
   gh_ run download "$id" -n "$artifact" -D "$d" >"$tmp/dl.log" 2>&1 ||
     die "gh run download $id failed: $(tail -2 "$tmp/dl.log" | tr '\n' ' ')"
 
-  local meta="$d/run-meta-$id.json" mode istio recs_istio
-  [[ -f "$meta" ]] || die "run $id: its artifact $artifact has no run-meta-$id.json; the workflow must upload it at the artifact root (fields: schema 1, runId, runAttempt, sha, workflowRef, eventName, mode, istio, chartsFile, fixesFile, chartIds, fixId)"
-  jq -e --arg id "$id" --arg sha "$head" '.schema == 1 and ((.runId | tostring) == $id) and .sha == $sha and .eventName == "workflow_dispatch"
-      and (.workflowRef | type == "string" and contains("/.github/workflows/compat-exp.yml@"))
-      and (.mode | type == "string") and (.istio | type == "string")' "$meta" >/dev/null 2>&1 ||
-    die "run $id: run-meta-$id.json does not describe this run (runId, sha = headSha, eventName workflow_dispatch, workflowRef .github/workflows/compat-exp.yml)"
+  # the run metadata: one artifact per attempt, written by the guard job only
+  local meta mode istio recs_istio m ref first="" nm=0 mw
+  mw='.schema == 1 and (.runId | type == "number") and (.runAttempt | type == "number")
+      and (.headSha | type == "string") and (.eventName | type == "string")
+      and (.workflowRef | type == "string") and (.freezeTagSha | type == "string")
+      and (.chartsSha256 | type == "string" and test("^[0-9a-f]{64}$"))
+      and all(.mode, .istio, .chartsFile, .fixesFile, .chartIds, .fixId; type == "string")
+      and (keys == ["chartIds","chartsFile","chartsSha256","eventName","fixId","fixesFile","freezeTagSha","headSha","istio","mode","runAttempt","runId","schema","workflowRef"])'
+  for ((n = 1; n <= attempt; n++)); do
+    m="$d/run-metadata-$n"
+    mkdir -p "$m"
+    if ! gh_ run download "$id" -n "run-metadata-$id-$n" -D "$m" >"$tmp/dl.log" 2>&1; then
+      [[ $n -gt 1 ]] || die "run $id: no run-metadata-$id-1 artifact (the guard job uploads it; fields: schema 1, mode, istio, chartsFile, chartsSha256, fixesFile, chartIds, fixId, headSha, freezeTagSha, workflowRef, eventName, runId, runAttempt): $(tail -2 "$tmp/dl.log" | tr '\n' ' ')"
+      rm -rf "$m"
+      continue
+    fi
+    meta="$m/run-metadata.json"
+    [[ -f "$meta" && ! -L "$meta" && -z "$(find "$m" -mindepth 1 ! -name run-metadata.json -print -quit)" ]] ||
+      die "run $id: run-metadata-$id-$n must hold the one file run-metadata.json"
+    jq -e "$mw" "$meta" >/dev/null 2>&1 || die "run $id: run-metadata-$id-$n/run-metadata.json does not have the fields and types of the guard job's file"
+    jq -e --arg id "$id" --argjson n "$n" --arg head "$head" --arg ev "$(jq -r .event <<<"$view")" \
+      '(.runId | tostring) == $id and .runAttempt == $n and .headSha == $head and .eventName == $ev and .eventName == "workflow_dispatch"' "$meta" >/dev/null ||
+      die "run $id: run-metadata-$id-$n does not describe this run (runId, runAttempt, headSha and eventName must equal what gh run view reports; the event must be workflow_dispatch)"
+    ref="$(jq -r .workflowRef "$meta")"
+    [[ "$ref" == */.github/workflows/"$(jq -r .workflowName <<<"$view")".yml@* ]] ||
+      die "run $id: run-metadata-$id-$n names the workflow '$ref', but gh run view reports the workflow '$(jq -r .workflowName <<<"$view")'"
+    jq -e --arg tag "$tag_sha" '.freezeTagSha == $tag' "$meta" >/dev/null ||
+      die "run $id: run-metadata-$id-$n says the freeze tag was at '$(jq -r .freezeTagSha "$meta")', not at $tag_sha"
+    if [[ -z "$first" ]]; then first="$meta"; elif ! cmp -s <(jq -S -c 'del(.runAttempt)' "$first") <(jq -S -c 'del(.runAttempt)' "$meta"); then
+      die "run $id: the run metadata of attempt $n differs from attempt 1 in more than runAttempt"
+    fi
+    nm=$((nm + 1))
+  done
+  meta="$first"
   mode="$(jq -r .mode "$meta")"
   istio="$(jq -r .istio "$meta")"
   [[ "$mode" == "$want_mode" ]] || die "run $id was dispatched with mode '$mode', but it is given as $role, which needs mode $want_mode"
   [[ "$istio" == "$want_istio" ]] || die "run $id ran Istio $istio, but the pinned version for $role is $want_istio"
   if [[ "$role" != qualification ]]; then
-    local cf
-    cf="$(jq -r '.chartsFile // ""' "$meta")"
-    [[ -z "$cf" || "$cf" == "$charts_rel" ]] || die "run $id used the chart list '$cf', not $charts_rel"
+    [[ "$(jq -r .chartsFile "$meta")" == "$charts_rel" ]] || die "run $id used the chart list '$(jq -r .chartsFile "$meta")', not $charts_rel"
+    [[ "$(jq -r .chartsSha256 "$meta")" == "$charts_sha" ]] || die "run $id used a chart list with another sha256 than the one analysed ($charts_rel)"
     jq -e '.schema == 1 and (.charts | type == "array")' "$d/report-$id.json" >/dev/null 2>&1 || die "run $id: no usable report-$id.json in its artifact"
     [[ -d "$d/results" ]] || die "run $id: no results/ (observation records) in its artifact"
     recs_istio="$(find "$d/results" -maxdepth 1 -name '*.json' -exec jq -r '.environment.istio // empty' {} + | sort -u | tr '\n' ' ')"
