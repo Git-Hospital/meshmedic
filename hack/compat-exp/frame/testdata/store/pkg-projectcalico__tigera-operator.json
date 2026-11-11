@@ -1,0 +1,32 @@
+{
+ "package_id": "bbbbdf45-b7af-4ce2-9e84-08cf7b3a13eb",
+ "name": "tigera-operator",
+ "normalized_name": "tigera-operator",
+ "keywords": null,
+ "links": [
+  {
+   "url": "https://github.com/projectcalico/calico/tree/master/charts/tigera-operator",
+   "name": "source"
+  },
+  {
+   "url": "https://github.com/tigera/operator",
+   "name": "source"
+  },
+  {
+   "url": "https://github.com/projectcalico/calico",
+   "name": "source"
+  }
+ ],
+ "version": "3.33.0",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://github.com/projectcalico/calico/releases/download/v3.33.0/tigera-operator-v3.33.0.tgz",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "projectcalico",
+  "url": "https://docs.projectcalico.org/charts/",
+  "kind": 0
+ }
+}

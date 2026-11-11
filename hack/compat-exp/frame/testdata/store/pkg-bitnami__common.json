@@ -1,0 +1,30 @@
+{
+ "package_id": "c2ed8aee-a276-4a6c-b56e-4c441f05c77d",
+ "name": "common",
+ "normalized_name": "common",
+ "keywords": [
+  "common",
+  "helper",
+  "template",
+  "function",
+  "bitnami"
+ ],
+ "links": [
+  {
+   "url": "https://github.com/bitnami/charts/tree/main/bitnami/common",
+   "name": "source"
+  }
+ ],
+ "version": "2.41.0",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "oci://registry-1.docker.io/bitnamicharts/common:2.41.0",
+ "data": {
+  "type": "library"
+ },
+ "repository": {
+  "name": "bitnami",
+  "url": "https://charts.bitnami.com/bitnami",
+  "kind": 0
+ }
+}

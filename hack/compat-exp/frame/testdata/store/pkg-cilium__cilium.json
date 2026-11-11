@@ -1,0 +1,32 @@
+{
+ "package_id": "9ea94cbd-0496-45f2-a7de-5cca1a614f31",
+ "name": "cilium",
+ "normalized_name": "cilium",
+ "keywords": [
+  "BPF",
+  "eBPF",
+  "Kubernetes",
+  "Networking",
+  "Security",
+  "Observability",
+  "Troubleshooting"
+ ],
+ "links": [
+  {
+   "url": "https://github.com/cilium/cilium",
+   "name": "source"
+  }
+ ],
+ "version": "1.21.0-pre.4",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://helm.cilium.io/cilium-1.21.0-pre.4.tgz",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "cilium",
+  "url": "https://helm.cilium.io/",
+  "kind": 0
+ }
+}

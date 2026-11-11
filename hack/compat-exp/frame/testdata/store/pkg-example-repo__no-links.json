@@ -1,0 +1,19 @@
+{
+ "package_id": "00000000-0000-4000-8000-444506952403",
+ "name": "no-links",
+ "normalized_name": "no-links",
+ "keywords": null,
+ "links": null,
+ "version": "1.0.0",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://charts.example.test/no-links-1.0.0.tgz",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "example-repo",
+  "url": "https://charts.example.test",
+  "kind": 0
+ }
+}

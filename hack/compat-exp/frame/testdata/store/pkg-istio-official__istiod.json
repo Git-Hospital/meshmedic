@@ -1,0 +1,28 @@
+{
+ "package_id": "cc720a54-333c-4b12-a191-c971ab4435fa",
+ "name": "istiod",
+ "normalized_name": "istiod",
+ "keywords": [
+  "istio",
+  "istiod",
+  "istio-discovery"
+ ],
+ "links": [
+  {
+   "url": "https://github.com/istio/istio",
+   "name": "source"
+  }
+ ],
+ "version": "1.31.0-rc.0",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://istio-release.storage.googleapis.com/charts/istiod-1.31.0-rc.0.tgz",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "istio-official",
+  "url": "https://istio-release.storage.googleapis.com/charts",
+  "kind": 0
+ }
+}

@@ -1,0 +1,31 @@
+{
+ "package_id": "c617753b-3376-40a1-81a1-3ab00e2868ac",
+ "name": "postgresql",
+ "normalized_name": "postgresql",
+ "keywords": [
+  "postgresql",
+  "postgres",
+  "database",
+  "sql",
+  "replication",
+  "cluster"
+ ],
+ "links": [
+  {
+   "url": "https://github.com/bitnami/charts/tree/main/bitnami/postgresql",
+   "name": "source"
+  }
+ ],
+ "version": "18.12.19",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "oci://registry-1.docker.io/bitnamicharts/postgresql:18.12.19",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "bitnami",
+  "url": "https://charts.bitnami.com/bitnami",
+  "kind": 0
+ }
+}

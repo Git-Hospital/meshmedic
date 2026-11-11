@@ -1,0 +1,32 @@
+{
+ "package_id": "523fac59-94c4-4166-890e-68b138136d70",
+ "name": "consul",
+ "normalized_name": "consul",
+ "keywords": null,
+ "links": [
+  {
+   "url": "https://github.com/hashicorp/consul",
+   "name": "hashicorp/consul"
+  },
+  {
+   "url": "https://github.com/hashicorp/consul-k8s",
+   "name": "hashicorp/consul-k8s"
+  },
+  {
+   "url": "https://www.consul.io/docs/k8s",
+   "name": "Documentation"
+  }
+ ],
+ "version": "2.1.0",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://helm.releases.hashicorp.com/consul-2.1.0.tgz",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "hashicorp",
+  "url": "https://helm.releases.hashicorp.com",
+  "kind": 0
+ }
+}

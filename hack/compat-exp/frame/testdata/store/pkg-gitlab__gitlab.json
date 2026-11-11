@@ -1,0 +1,26 @@
+{
+ "package_id": "1c1909b0-0d7f-4b2b-9ba1-396d7837078b",
+ "name": "gitlab",
+ "normalized_name": "gitlab",
+ "keywords": [
+  "gitlab"
+ ],
+ "links": [
+  {
+   "url": "https://gitlab.com/gitlab-org/charts/gitlab",
+   "name": "source"
+  }
+ ],
+ "version": "10.5.5",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://gitlab-charts.s3.amazonaws.com/gitlab-10.5.5.tgz",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "gitlab",
+  "url": "http://charts.gitlab.io/",
+  "kind": 0
+ }
+}

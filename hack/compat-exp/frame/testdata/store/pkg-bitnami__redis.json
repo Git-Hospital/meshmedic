@@ -1,0 +1,28 @@
+{
+ "package_id": "0602c8d2-b17d-432f-89f0-95000f3057a2",
+ "name": "redis",
+ "normalized_name": "redis",
+ "keywords": [
+  "redis",
+  "keyvalue",
+  "database"
+ ],
+ "links": [
+  {
+   "url": "https://github.com/bitnami/charts/tree/main/bitnami/redis",
+   "name": "source"
+  }
+ ],
+ "version": "28.3.12",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "oci://registry-1.docker.io/bitnamicharts/redis:28.3.12",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "bitnami",
+  "url": "https://charts.bitnami.com/bitnami",
+  "kind": 0
+ }
+}

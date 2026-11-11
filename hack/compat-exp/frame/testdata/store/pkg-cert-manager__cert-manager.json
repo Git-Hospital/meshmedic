@@ -1,0 +1,29 @@
+{
+ "package_id": "f475c82a-27a5-4f71-8413-fe70d31268a2",
+ "name": "cert-manager",
+ "normalized_name": "cert-manager",
+ "keywords": [
+  "cert-manager",
+  "kube-lego",
+  "letsencrypt",
+  "tls"
+ ],
+ "links": [
+  {
+   "url": "https://github.com/cert-manager/cert-manager",
+   "name": "source"
+  }
+ ],
+ "version": "1.21.3",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://charts.jetstack.io/charts/cert-manager-v1.21.3.tgz",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "cert-manager",
+  "url": "https://charts.jetstack.io",
+  "kind": 0
+ }
+}

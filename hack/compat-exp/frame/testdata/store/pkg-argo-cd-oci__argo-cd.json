@@ -1,0 +1,32 @@
+{
+ "package_id": "bc2bff04-e334-440d-9a2a-ae616b2f1389",
+ "name": "argo-cd",
+ "normalized_name": "argo-cd",
+ "keywords": [
+  "argoproj",
+  "argocd",
+  "gitops"
+ ],
+ "links": [
+  {
+   "url": "https://github.com/argoproj/argo-cd",
+   "name": "source"
+  },
+  {
+   "url": "https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd",
+   "name": "source"
+  }
+ ],
+ "version": "10.18.0",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "oci://ghcr.io/argoproj/argo-helm/argo-cd:10.18.0",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "argo-cd-oci",
+  "url": "oci://ghcr.io/argoproj/argo-helm/argo-cd",
+  "kind": 0
+ }
+}

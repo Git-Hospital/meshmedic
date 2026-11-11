@@ -1,0 +1,43 @@
+{
+ "package_id": "1925b08a-e7e9-4efd-bf2c-9f897dcea582",
+ "name": "redis",
+ "normalized_name": "redis",
+ "keywords": [
+  "redis",
+  "database",
+  "cache",
+  "in-memory",
+  "key-value",
+  "nosql"
+ ],
+ "links": [
+  {
+   "url": "https://github.com/CloudPirates-io/helm-charts/tree/main/charts/redis",
+   "name": "Helm Chart"
+  },
+  {
+   "url": "https://github.com/redis/redis",
+   "name": "Application"
+  },
+  {
+   "url": "https://redis.io",
+   "name": "Redis"
+  },
+  {
+   "url": "https://www.cloudpirates.io",
+   "name": "Maintainer CloudPirates"
+  }
+ ],
+ "version": "0.38.1",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "oci://registry-1.docker.io/cloudpirates/redis:0.38.1",
+ "data": {
+  "type": "application"
+ },
+ "repository": {
+  "name": "cloudpirates-redis",
+  "url": "oci://registry-1.docker.io/cloudpirates/redis",
+  "kind": 0
+ }
+}

@@ -1,0 +1,24 @@
+{
+ "package_id": "00000000-0000-4000-8000-642645981996",
+ "name": "zeta-tie",
+ "normalized_name": "zeta-tie",
+ "keywords": null,
+ "links": [
+  {
+   "name": "source",
+   "url": "https://github.com/Zeta-Org/charts"
+  }
+ ],
+ "version": "1.0.0",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://charts.example.test/zeta-tie-1.0.0.tgz",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "example-repo",
+  "url": "https://charts.example.test",
+  "kind": 0
+ }
+}

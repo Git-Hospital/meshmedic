@@ -1,0 +1,56 @@
+{
+ "packages": [
+  {
+   "package_id": "00000000-0000-4000-8000-444506952403",
+   "name": "no-links",
+   "normalized_name": "no-links",
+   "stars": 147,
+   "deprecated": false,
+   "version": "1.0.0",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-588880870504",
+   "name": "cni-keyword",
+   "normalized_name": "cni-keyword",
+   "stars": 146,
+   "deprecated": false,
+   "version": "1.0.0",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "cc720a54-333c-4b12-a191-c971ab4435fa",
+   "name": "istiod",
+   "normalized_name": "istiod",
+   "stars": 143,
+   "deprecated": false,
+   "version": "1.31.0-rc.0",
+   "repository": {
+    "name": "istio-official",
+    "url": "https://istio-release.storage.googleapis.com/charts",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "523fac59-94c4-4166-890e-68b138136d70",
+   "name": "consul",
+   "normalized_name": "consul",
+   "stars": 90,
+   "deprecated": false,
+   "version": "2.1.0",
+   "repository": {
+    "name": "hashicorp",
+    "url": "https://helm.releases.hashicorp.com",
+    "kind": 0
+   }
+  }
+ ]
+}

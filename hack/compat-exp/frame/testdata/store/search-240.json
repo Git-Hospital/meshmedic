@@ -1,0 +1,43 @@
+{
+ "packages": [
+  {
+   "package_id": "38ef6ee4-85bb-4f41-911b-99da9a5e4cca",
+   "name": "prometheus-pushgateway",
+   "normalized_name": "prometheus-pushgateway",
+   "stars": 31,
+   "deprecated": false,
+   "version": "3.11.2",
+   "repository": {
+    "name": "prometheus-community",
+    "url": "https://prometheus-community.github.io/helm-charts",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "3eb46dbf-0396-4dea-a26d-c28c62aabdd3",
+   "name": "linkerd-viz",
+   "normalized_name": "linkerd-viz",
+   "stars": 25,
+   "deprecated": false,
+   "version": "30.12.11",
+   "repository": {
+    "name": "linkerd2",
+    "url": "https://helm.linkerd.io/stable",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "c2ed8aee-a276-4a6c-b56e-4c441f05c77d",
+   "name": "common",
+   "normalized_name": "common",
+   "stars": 25,
+   "deprecated": false,
+   "version": "2.41.0",
+   "repository": {
+    "name": "bitnami",
+    "url": "https://charts.bitnami.com/bitnami",
+    "kind": 0
+   }
+  }
+ ]
+}

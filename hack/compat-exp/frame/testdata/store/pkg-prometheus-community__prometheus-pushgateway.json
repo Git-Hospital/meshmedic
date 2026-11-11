@@ -1,0 +1,31 @@
+{
+ "package_id": "38ef6ee4-85bb-4f41-911b-99da9a5e4cca",
+ "name": "prometheus-pushgateway",
+ "normalized_name": "prometheus-pushgateway",
+ "keywords": [
+  "pushgateway",
+  "prometheus"
+ ],
+ "links": [
+  {
+   "url": "https://github.com/prometheus/pushgateway",
+   "name": "source"
+  },
+  {
+   "url": "https://github.com/prometheus-community/helm-charts",
+   "name": "Chart Source"
+  }
+ ],
+ "version": "3.11.2",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://github.com/prometheus-community/helm-charts/releases/download/prometheus-pushgateway-3.11.2/prometheus-pushgateway-3.11.2.tgz",
+ "data": {
+  "type": "application"
+ },
+ "repository": {
+  "name": "prometheus-community",
+  "url": "https://prometheus-community.github.io/helm-charts",
+  "kind": 0
+ }
+}

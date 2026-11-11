@@ -1,0 +1,26 @@
+{
+ "package_id": "3eb46dbf-0396-4dea-a26d-c28c62aabdd3",
+ "name": "linkerd-viz",
+ "normalized_name": "linkerd-viz",
+ "keywords": [
+  "service-mesh"
+ ],
+ "links": [
+  {
+   "url": "https://github.com/linkerd/linkerd2/",
+   "name": "source"
+  }
+ ],
+ "version": "30.12.11",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://helm.linkerd.io/stable/linkerd-viz-30.12.11.tgz",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "linkerd2",
+  "url": "https://helm.linkerd.io/stable",
+  "kind": 0
+ }
+}

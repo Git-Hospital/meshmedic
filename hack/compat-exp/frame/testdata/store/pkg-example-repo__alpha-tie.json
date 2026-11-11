@@ -1,0 +1,24 @@
+{
+ "package_id": "00000000-0000-4000-8000-270129622950",
+ "name": "alpha-tie",
+ "normalized_name": "alpha-tie",
+ "keywords": null,
+ "links": [
+  {
+   "name": "source",
+   "url": "https://github.com/alpha-org/charts"
+  }
+ ],
+ "version": "1.0.0",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://charts.example.test/alpha-tie-1.0.0.tgz",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "example-repo",
+  "url": "https://charts.example.test",
+  "kind": 0
+ }
+}

@@ -1,0 +1,27 @@
+{
+ "package_id": "dd4ec18f-a820-42eb-84d3-ddcfbd4bf13a",
+ "name": "keycloak",
+ "normalized_name": "keycloak",
+ "keywords": [
+  "keycloak",
+  "access-management"
+ ],
+ "links": [
+  {
+   "url": "https://github.com/bitnami/charts/tree/main/bitnami/keycloak",
+   "name": "source"
+  }
+ ],
+ "version": "25.2.0",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "oci://registry-1.docker.io/bitnamicharts/keycloak:25.2.0",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "bitnami",
+  "url": "https://charts.bitnami.com/bitnami",
+  "kind": 0
+ }
+}

@@ -1,0 +1,27 @@
+{
+ "package_id": "543c2852-a29c-42a0-bbd2-a56030b6d298",
+ "name": "prometheus-operator-crds",
+ "normalized_name": "prometheus-operator-crds",
+ "keywords": [
+  "prometheus",
+  "crds"
+ ],
+ "links": [
+  {
+   "url": "https://github.com/prometheus-community/helm-charts",
+   "name": "Chart Source"
+  }
+ ],
+ "version": "33.0.2",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://github.com/prometheus-community/helm-charts/releases/download/prometheus-operator-crds-33.0.2/prometheus-operator-crds-33.0.2.tgz",
+ "data": {
+  "type": "application"
+ },
+ "repository": {
+  "name": "prometheus-community",
+  "url": "https://prometheus-community.github.io/helm-charts",
+  "kind": 0
+ }
+}

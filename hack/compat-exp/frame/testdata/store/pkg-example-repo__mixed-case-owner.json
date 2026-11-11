@@ -1,0 +1,28 @@
+{
+ "package_id": "00000000-0000-4000-8000-924140208024",
+ "name": "mixed-case-owner",
+ "normalized_name": "mixed-case-owner",
+ "keywords": null,
+ "links": [
+  {
+   "name": "Application Sources",
+   "url": "https://github.com/app-org/app"
+  },
+  {
+   "name": "Helm chart source",
+   "url": "https://github.com/MixedCase-Org/charts/tree/main/x"
+  }
+ ],
+ "version": "1.0.0",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://charts.example.test/mixed-case-owner-1.0.0.tgz",
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "example-repo",
+  "url": "https://charts.example.test",
+  "kind": 0
+ }
+}

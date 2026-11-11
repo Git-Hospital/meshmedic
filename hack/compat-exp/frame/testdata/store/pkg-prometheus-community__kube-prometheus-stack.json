@@ -1,0 +1,36 @@
+{
+ "package_id": "7918f2cb-0742-4993-b58a-673129604cf6",
+ "name": "kube-prometheus-stack",
+ "normalized_name": "kube-prometheus-stack",
+ "keywords": [
+  "operator",
+  "prometheus",
+  "kube-prometheus"
+ ],
+ "links": [
+  {
+   "url": "https://github.com/prometheus-community/helm-charts",
+   "name": "Chart Source"
+  },
+  {
+   "url": "https://github.com/prometheus-operator/kube-prometheus",
+   "name": "Upstream Project"
+  },
+  {
+   "url": "https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/README.md#upgrading-chart",
+   "name": "Upgrade Process"
+  }
+ ],
+ "version": "93.2.0",
+ "prerelease": false,
+ "deprecated": false,
+ "content_url": "https://github.com/prometheus-community/helm-charts/releases/download/kube-prometheus-stack-93.2.0/kube-prometheus-stack-93.2.0.tgz",
+ "data": {
+  "type": "application"
+ },
+ "repository": {
+  "name": "prometheus-community",
+  "url": "https://prometheus-community.github.io/helm-charts",
+  "kind": 0
+ }
+}

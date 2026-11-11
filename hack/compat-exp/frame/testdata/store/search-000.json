@@ -1,0 +1,108 @@
+{
+ "packages": [
+  {
+   "package_id": "7918f2cb-0742-4993-b58a-673129604cf6",
+   "name": "kube-prometheus-stack",
+   "normalized_name": "kube-prometheus-stack",
+   "stars": 1235,
+   "deprecated": false,
+   "version": "93.2.0",
+   "repository": {
+    "name": "prometheus-community",
+    "url": "https://prometheus-community.github.io/helm-charts",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "f475c82a-27a5-4f71-8413-fe70d31268a2",
+   "name": "cert-manager",
+   "normalized_name": "cert-manager",
+   "stars": 998,
+   "deprecated": false,
+   "version": "1.21.3",
+   "repository": {
+    "name": "cert-manager",
+    "url": "https://charts.jetstack.io",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "d5dad873-8e69-411b-8391-933d4391988a",
+   "name": "prometheus",
+   "normalized_name": "prometheus",
+   "stars": 557,
+   "deprecated": false,
+   "version": "29.47.1",
+   "repository": {
+    "name": "prometheus-community",
+    "url": "https://prometheus-community.github.io/helm-charts",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "0602c8d2-b17d-432f-89f0-95000f3057a2",
+   "name": "redis",
+   "normalized_name": "redis",
+   "stars": 507,
+   "deprecated": false,
+   "version": "28.3.12",
+   "repository": {
+    "name": "bitnami",
+    "url": "https://charts.bitnami.com/bitnami",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "c617753b-3376-40a1-81a1-3ab00e2868ac",
+   "name": "postgresql",
+   "normalized_name": "postgresql",
+   "stars": 431,
+   "deprecated": false,
+   "version": "18.12.19",
+   "repository": {
+    "name": "bitnami",
+    "url": "https://charts.bitnami.com/bitnami",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-029059613458",
+   "name": "example-deprecated",
+   "normalized_name": "example-deprecated",
+   "stars": 300,
+   "deprecated": true,
+   "version": "1.0.0",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "1c1909b0-0d7f-4b2b-9ba1-396d7837078b",
+   "name": "gitlab",
+   "normalized_name": "gitlab",
+   "stars": 282,
+   "deprecated": false,
+   "version": "10.5.5",
+   "repository": {
+    "name": "gitlab",
+    "url": "http://charts.gitlab.io/",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "dd4ec18f-a820-42eb-84d3-ddcfbd4bf13a",
+   "name": "keycloak",
+   "normalized_name": "keycloak",
+   "stars": 275,
+   "deprecated": false,
+   "version": "25.2.0",
+   "repository": {
+    "name": "bitnami",
+    "url": "https://charts.bitnami.com/bitnami",
+    "kind": 0
+   }
+  }
+ ]
+}
