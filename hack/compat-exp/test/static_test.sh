@@ -134,7 +134,18 @@ jq '.charts += [{"id":"norender","chart":"norender","version":"1.0.0","publisher
 run_static "$repo/hack/compat-exp/static.sh" "$T/bad.json" "$T/outbad.json"
 eq "a chart that does not render fails the run" "$rc" 1
 [[ ! -e "$T/outbad.json" ]] && ok "and writes no file" || bad "and writes no file"
-grep -q "norender: helm template failed" "$T/stderr" && ok "and names the chart" || bad "and names the chart"
+grep -q "chart norender (worlds W1, W3): helm template failed" "$T/stderr" && ok "and names the chart and the worlds" || bad "and names the chart and the worlds"
+grep -q "rendered at qualification" "$T/stderr" && ok "and says a listed chart that fails now is an error" || bad "and says a listed chart that fails now is an error"
+
+# the overrides of the cause list and the workflow belong to analyze.sh's test mode only
+echo '{"keys":[{"key":"x","worlds":["W1"],"staticCheck":null}]}' >"$T/other-causes.json"
+run_static env STATIC_CAUSES="$T/other-causes.json" "$repo/hack/compat-exp/static.sh" "$list" "$T/outc.json"
+eq "STATIC_CAUSES without MMC_ANALYZE_TEST=1 is refused" "$rc" 2
+grep -q "MMC_ANALYZE_TEST" "$T/stderr" && ok "and says why" || bad "and says why"
+run_static env STATIC_WORKFLOW="$T/none.yml" "$repo/hack/compat-exp/static.sh" "$list" "$T/outc.json"
+eq "STATIC_WORKFLOW without MMC_ANALYZE_TEST=1 is refused" "$rc" 2
+run_static env MMC_ANALYZE_TEST=1 STATIC_CAUSES="$T/other-causes.json" "$repo/hack/compat-exp/static.sh" "$list" "$T/outc.json"
+[[ $rc -ne 2 ]] && ok "with MMC_ANALYZE_TEST=1 the override is read" || bad "with MMC_ANALYZE_TEST=1 the override is read"
 
 run_static env STUB_HELM_VERSION=v4.0.5 "$repo/hack/compat-exp/static.sh" "$list" "$T/outh.json"
 eq "a helm other than the pinned one is refused" "$rc" 1

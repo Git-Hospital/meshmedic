@@ -37,6 +37,11 @@
 # Environment: STATICCHECK (a staticcheck binary; default: go build of
 # hack/compat-exp/staticcheck), MMC_STATE (helm's config and cache, as in
 # observe.sh; default $PWD/.mmc-state).
+# A chart that does not render is an error naming the chart and its worlds: every
+# chart of a frozen list rendered at qualification, so a later failure is real and
+# is not skipped. Do not call this with the acceptance list (analyze.sh refuses a
+# list without a qualification run id before it gets here).
+#
 # Exit codes: 0 written, 1 a chart did not render or a check did not run (no
 # output is written), 2 usage or a refused input.
 set -uo pipefail
@@ -48,6 +53,12 @@ shift 2
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 pilot="$root/hack/compat-pilot"
+# The cause list and the workflow come from the checked tree. The overrides
+# exist for tests only, behind the same switch as analyze.sh's tool overrides.
+if [[ ( -n "${STATIC_CAUSES:-}" || -n "${STATIC_WORKFLOW:-}" ) && "${MMC_ANALYZE_TEST:-}" != 1 ]]; then
+  echo "static.sh: STATIC_CAUSES and STATIC_WORKFLOW are test overrides; they are refused unless MMC_ANALYZE_TEST=1" >&2
+  exit 2
+fi
 causes_file="${STATIC_CAUSES:-$here/causes.json}"
 workflow="${STATIC_WORKFLOW:-$root/.github/workflows/compat-exp.yml}"
 
@@ -128,7 +139,7 @@ for id in "${ids[@]}"; do
   # and this is the same with `template`, without waiting.
   if ! helm template "$release" "$chart" "${mmc_target[@]}" ${mmc_repo_args[@]+"${mmc_repo_args[@]}"} \
     ${values[@]+"${values[@]}"} >"$tmp/$id.yaml" 2>"$tmp/$id.err"; then
-    failed+=("$id: helm template failed: $(tail -2 "$tmp/$id.err" | tr '\n' ' ')")
+    failed+=("chart $id (worlds ${worlds[0]}, ${worlds[1]}): helm template failed; a chart of the frozen list rendered at qualification, so this is an error and not a skipped chart: $(tail -2 "$tmp/$id.err" | tr '\n' ' ')")
     continue
   fi
   jq -c -n --arg id "$id" --arg chart "$chart" --arg version "$version" --arg release "$release" \
