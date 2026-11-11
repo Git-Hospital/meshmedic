@@ -52,7 +52,9 @@ func LoadUnprovable(dir string) (map[string]string, error) {
 //     catalog does not have. A quiet id that does not exist is the quiet kind
 //     of damage: the "neighbour stays quiet" assertion passes because nothing
 //     by that name can fire;
-//   - a declaration for an id the catalog does not have.
+//   - a declaration for an id the catalog does not have;
+//   - an entry that has a proof and a declaration. It is one or the other, and
+//     the inventory would count it twice.
 func CheckCoverage(scenarios []catalog.Scenario, specs []Spec, unprovable map[string]string) []string {
 	known := make(map[string]bool, len(scenarios))
 	for _, s := range scenarios {
@@ -79,6 +81,8 @@ func CheckCoverage(scenarios []catalog.Scenario, specs []Spec, unprovable map[st
 	for id := range unprovable {
 		if !known[id] {
 			problems = append(problems, fmt.Sprintf("%s declares %q, which is not in the catalog", unprovableFile, id))
+		} else if proven[id] {
+			problems = append(problems, fmt.Sprintf("entry %q has both a proof and a declaration in %s", id, unprovableFile))
 		}
 	}
 	for _, s := range scenarios {

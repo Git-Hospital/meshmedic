@@ -80,6 +80,13 @@ func TestCheckCoverage(t *testing.T) {
 			},
 			`proof "proven": expect.allowFiring names "gone"`,
 		},
+		"proven and declared unprovable": {
+			func(s []Spec, u map[string]string) ([]Spec, map[string]string) {
+				u["proven"] = "but it has a proof"
+				return s, u
+			},
+			`entry "proven" has both a proof and a declaration`,
+		},
 		"declaration for an unknown id": {
 			func(s []Spec, u map[string]string) ([]Spec, map[string]string) {
 				u["retired"] = "no longer in the catalog"

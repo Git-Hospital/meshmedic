@@ -58,6 +58,13 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`go test` now holds the proof inventory to "zero silently missing".** A
+  catalog entry with neither a proof nor a declaration in
+  `proof/UNPROVABLE.yaml` fails the tests, and so does a proof or a declaration
+  that names an id the catalog does not have, or an entry that has both.
+  `meshmedic-prove --list` reads the declarations from `--proofs` and stops on
+  a file that does not parse. (closes #16)
+
 - **`meshmedic-prove remediate`**, which asks the question the rest of the
   suite cannot: if I merge what this entry proposed, does the incident stop?
 
