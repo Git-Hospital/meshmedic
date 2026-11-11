@@ -38,6 +38,9 @@ type Record struct {
 		Owner string `json:"owner"`
 		Image string `json:"image"`
 	} `json:"pullFailures"`
+	// CapacityPending marks a run in which a pod stayed Pending for lack of
+	// cpu or memory. Records from before the field existed read as false.
+	CapacityPending bool `json:"capacityPending"`
 }
 
 // pullFailure names the image a run could not pull, if any. Such a run
@@ -70,13 +73,18 @@ func pullFailure(r Record) string {
 }
 
 // usable drops the runs that measured something other than the chart, and
-// says why for each.
+// says why for each: a registry that refused a pull, or a runner without the
+// room to schedule a pod. A run that is both is left out as a pull failure.
 func usable(world string, rs []Record) ([]Record, []string) {
 	var out []Record
 	var dropped []string
 	for _, r := range rs {
 		if img := pullFailure(r); img != "" {
 			dropped = append(dropped, fmt.Sprintf("%s run %d: image pull failed (%s)", world, r.Run, img))
+			continue
+		}
+		if r.CapacityPending {
+			dropped = append(dropped, fmt.Sprintf("%s run %d: capacity Pending (a pod could not be scheduled)", world, r.Run))
 			continue
 		}
 		out = append(out, r)

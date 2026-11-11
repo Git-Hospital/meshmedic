@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -349,5 +350,73 @@ func TestValidWorlds(t *testing.T) {
 		if got := validWorlds(tc.oracle, tc.worlds); got != tc.ok {
 			t.Errorf("validWorlds(%s, %v) = %v, want %v", tc.oracle, tc.worlds, got, tc.ok)
 		}
+	}
+}
+
+func capacityPending(rs []Record) []Record {
+	for i := range rs {
+		rs[i].CapacityPending = true
+	}
+	return rs
+}
+
+// A pod that stays Pending for lack of cpu or memory measured the runner, not
+// the chart, so the run is left out the way a pull failure is.
+func TestCapacityPendingLeavesTheRunOut(t *testing.T) {
+	ok := map[string]string{"helm:install": "ok"}
+	failed := map[string]string{"helm:install": "failed"}
+	w0 := capacityPending(same("W0", 3, failed))
+	c, _ := Compare("c", "W1", w0, same("W1", 3, ok), 3)
+	if c.Verdict() != "undecided" || len(c.Dropped) != 3 {
+		t.Fatalf("want undecided with three runs left out, got %+v", c)
+	}
+	if !strings.Contains(c.Dropped[0], "capacity") {
+		t.Fatalf("the reason should say capacity, got %q", c.Dropped[0])
+	}
+
+	// One bad run out of four still leaves three to decide on.
+	w1 := append(same("W1", 3, ok), capacityPending(runs("W1", failed))...)
+	w1[3].Run = 4
+	c, _ = Compare("c", "W1", same("W0", 3, ok), w1, 3)
+	if c.Verdict() != "same" || len(c.Dropped) != 1 {
+		t.Fatalf("want same with one run left out, got %+v", c)
+	}
+
+	// A world left with two runs is undecided, not compatible.
+	c, _ = Compare("c", "W1", same("W0", 3, ok), append(same("W1", 2, ok), w1[3]), 3)
+	if c.Verdict() != "undecided" || !strings.Contains(c.Undecided, "W1 has 2 of 3 runs") {
+		t.Fatalf("want undecided on two runs, got %+v", c)
+	}
+}
+
+// A run that is both leaves one reason, the pull failure, as before.
+func TestPullFailureWinsOverCapacity(t *testing.T) {
+	ok := map[string]string{"helm:install": "ok"}
+	w1 := capacityPending(pullFailed(same("W1", 3, ok), "x/y:1"))
+	c, _ := Compare("c", "W1", same("W0", 3, ok), w1, 3)
+	if len(c.Dropped) != 3 || !strings.Contains(c.Dropped[0], "image pull failed") {
+		t.Fatalf("want the pull failure named, got %+v", c.Dropped)
+	}
+}
+
+// Records written before capacityPending existed carry no such field, and a
+// record with it set to false is a usable run.
+func TestRecordWithoutCapacityPendingIsUsable(t *testing.T) {
+	var old, with Record
+	if err := json.Unmarshal([]byte(`{"world":"W1","chart":"c","run":1}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`{"world":"W1","chart":"c","run":1,"capacityPending":false}`), &with); err != nil {
+		t.Fatal(err)
+	}
+	if old.CapacityPending || with.CapacityPending {
+		t.Fatal("false expected")
+	}
+	var pending Record
+	if err := json.Unmarshal([]byte(`{"world":"W1","chart":"c","run":1,"capacityPending":true}`), &pending); err != nil || !pending.CapacityPending {
+		t.Fatalf("true expected, got %+v %v", pending, err)
+	}
+	if got, _ := usable("W1", []Record{old, with, pending}); len(got) != 2 {
+		t.Fatalf("want two usable runs, got %d", len(got))
 	}
 }
