@@ -113,13 +113,6 @@ func TestMechanicalExclusions(t *testing.T) {
 			t.Fatalf("%+v", c)
 		}
 	})
-	t.Run("chart missing from run 2 is undecided", func(t *testing.T) {
-		f := newFixture([]ChartReport{chart("a", wr("W3", d(wk))), chart("b", wr("W3", ok(wk)))}, []ChartReport{chart("b", wr("W3", ok(wk)))}, nil)
-		c := cellOf(t, f.analyze(t), "a", "W3", wk)
-		if c.Status != StExcluded || c.Reasons[0] != ledger.ReasonUndecided {
-			t.Fatalf("%+v", c)
-		}
-	})
 	t.Run("an undecided key whose values agree with the oracle is not a cell", func(t *testing.T) {
 		f := newFixture([]ChartReport{chart("a", wr("W3", ok(wk)))}, []ChartReport{chart("a", uw("W3", ledger.ReasonPullFailure, ok(wk)))}, nil)
 		res := f.analyze(t)
@@ -920,7 +913,7 @@ func TestDeterministic(t *testing.T) {
 		}
 		f := newFixture(r, r, nil)
 		f.pad(3)
-		f.in.FrameOrder = order
+		f.in.FrameOrder = append(append([]string{}, order...), names(3, "z")...)
 		res := f.analyze(t)
 		b, err := RenderJSON(res)
 		if err != nil {

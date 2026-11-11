@@ -71,7 +71,7 @@ jq -r '.[].id' "$T/frame/candidates-charts.json" | while read -r id; do
     installs: [{n:1,durationSeconds:120,ready:true,helmRc:0},{n:2,durationSeconds:118,ready:true,helmRc:0},{n:3,durationSeconds:119,ready:true,helmRc:0}],
     bias: {hasStatefulSet: false, hasNetworkPolicy: false, hasNonHttpPort: false, hasHeadlessService: false}}' >"$T/qual/$id.qualify.json"
 done
-must "select.sh" "$repo/hack/compat-exp/select.sh" "$T/frame/candidates.json" "$T/qual" "$T/charts-exp.json"
+must "select.sh" "$repo/hack/compat-exp/select.sh" "$T/frame/candidates.json" "$T/qual" "$T/charts-exp.json" 7001
 eq "select: 50 charts and 5 reserves" "$(jq -c '[(.charts | length), (.reserves | length)]' "$T/charts-exp.json")" "[50,5]"
 eq "ids: frame charts and select.sh agree, in order" "$(jq -c '[.charts[].id, .reserves[].id]' "$T/charts-exp.json")" "$(jq -c '.[0:55] | map(.id)' "$T/frame/candidates-charts.json")"
 eq "ids: the duplicate package is <repository>-<name> in both" "$(jq -c '.charts[3:5] | map(.id)' "$T/charts-exp.json")" '["repo4-dup","repo5-dup"]'
@@ -174,12 +174,19 @@ observe_set() {
 observe_set "$T/res-1001" "$T/plan-observe/charts.json" 1.31.3 $id1 $id2 $id3 && ok "observe.sh: 3 charts x 3 worlds x 3 runs"
 eq "records: 27 files named <id>.<world>.run<N>.json" "$(find "$T/res-1001" -name "app-[123].W[013].run[123].json" | wc -l | tr -d " ")" 27
 eq "ids: the record's chart field is the list's id" "$(jq -s -c 'map(.chart) | unique' "$T/res-1001"/*.json)" '["app-1","app-2","app-3"]'
+# hand-made: the sample is the 50 primary charts (crossrun refuses a smaller one), so the other 47 get
+# copies of app-1's records under their own ids; the stub cluster has no behaviour that differs per chart.
+for id in $(jq -r '.charts[3:][].id' "$T/charts-exp.json"); do
+  for f in "$T/res-1001"/app-1.*.json; do
+    jq --arg id "$id" '.chart = $id' "$f" >"$T/res-1001/$id.${f#*/app-1.}"
+  done
+done
 cp -R "$T/res-1001" "$T/res-1002"   # hand-made: a second run with the same stub behaviour
 for r in 1001 1002; do
   "$B/difftable" -json -worlds W1,W3 "$T/res-$r" >"$T/report-$r.json" 2>"$T/dt.err" && ok "difftable -json run $r" || { bad "difftable -json run $r"; head -3 "$T/dt.err"; }
 done
-eq "ids: the report's charts are the records' charts" "$(jq -c '[.charts[].chart]' "$T/report-1001.json")" '["app-1","app-2","app-3"]'
-eq "run 1: app-2 differs in W3 only" "$(jq -c '[.charts[] | {c: .chart, w: [.worlds[] | {(.world): .verdict}] | add}]' "$T/report-1001.json")" \
+eq "ids: the report's charts are the records' charts" "$(jq -c '[.charts[].chart] | sort == ([$l[0].charts[].id] | sort)' --slurpfile l "$T/charts-exp.json" "$T/report-1001.json")" true
+eq "run 1: app-2 differs in W3 only" "$(jq -c '[.charts[] | select(.chart | IN("app-1","app-2","app-3")) | {c: .chart, w: [.worlds[] | {(.world): .verdict}] | add}] | sort_by(.c)' "$T/report-1001.json")" \
   '[{"c":"app-1","w":{"W1":"same","W3":"same"}},{"c":"app-2","w":{"W1":"same","W3":"differs"}},{"c":"app-3","w":{"W1":"same","W3":"same"}}]'
 keys="$(jq -c '[.charts[] | select(.chart == "app-2") | .worlds[] | select(.world == "W3") | .keys[] | select(.verdict == "differs") | .key]' "$T/report-1001.json")"
 eq "run 1: two findings, the same not-ready workload at install and in the late snapshot" "$keys" '["late:workload:Deployment/app-2:ready","workload:Deployment/app-2:ready"]'
@@ -264,7 +271,7 @@ res="$T/analysis/result.json"
 eq "manifest: run times come from gh run view" "$(jq -c '[.runs[] | {id, started, ended}]' "$T/analysis/inputs.json")" \
   '[{"id":"1001","started":"2026-11-20T08:00:00Z","ended":"2026-11-20T09:10:00Z"},{"id":"1002","started":"2026-11-20T22:10:00Z","ended":"2026-11-20T23:20:00Z"}]'
 eq "manifest: recheck istio comes from the records" "$(jq -c '.recheck | {id, istio}' "$T/analysis/inputs.json")" '{"id":"1005","istio":"1.32.0"}'
-eq "static.json: rows for the 3 charts x 2 worlds x the checks" "$(jq length "$T/analysis/static.json")" "$((3 * 2 * 8))"
+eq "static.json: rows for the 50 charts x 2 worlds x the checks" "$(jq length "$T/analysis/static.json")" "$((50 * 2 * 8))"
 eq "static: only app-2 is flagged by the L7 check, in W3" "$(jq -c '[.[] | select(.flagged)] | map([.chart, .world, .check])' "$T/analysis/static.json")" '[["app-2","W3","l7-without-waypoint"]]'
 eq "static: the L7 check is not applicable to W1 (not 'not flagged')" "$(jq -c '.[] | select(.chart == "app-2" and .world == "W1" and .check == "l7-without-waypoint") | {applicable, flagged}' "$T/analysis/static.json")" '{"applicable":false,"flagged":false}'
 eq "crossrun: two cells of one chart, both counted and credited to ambient-l7" "$(jq -c '[.cells[] | select(.status == "counted") | {chart, world, credit}]' "$res")" '[{"chart":"app-2","world":"W3","credit":"ambient-l7"},{"chart":"app-2","world":"W3","credit":"ambient-l7"}]'

@@ -179,6 +179,13 @@ type Hypothetical struct {
 	Region  RegionRow `json:"region"`
 }
 
+// SampleInfo is the chart set the numbers are over: the frame's primary charts
+// with the replacements applied.
+type SampleInfo struct {
+	Charts       []string      `json:"charts"`
+	Replacements []Replacement `json:"replacements"`
+}
+
 // Result is crossrun's whole output.
 type Result struct {
 	Schema   int     `json:"schema"`
@@ -190,6 +197,7 @@ type Result struct {
 	// after run 1 and declares no region.
 	Final          bool             `json:"final"`
 	Warnings       []string         `json:"warnings"`
+	Sample         SampleInfo       `json:"sample"`
 	Cells          []CellResult     `json:"cells"`
 	Universal      []UniversalRow   `json:"worldUniversal"`
 	OptOut         []OptOutEvidence `json:"optOutEvidence"`
@@ -260,14 +268,14 @@ func worldKind(w WorldReport) string {
 	return ledger.ReasonUndecided
 }
 
-func buildView(name string, rep *Report, in *Inputs) (*runView, []UndecidedWorld, error) {
+func buildView(name string, rep *Report, in *Inputs, sample *Sample) (*runView, []UndecidedWorld, error) {
 	v := &runView{
 		states: map[ledger.Cell]cellState{}, present: map[chartWorld]bool{}, verdict: map[chartWorld]string{},
 		classes: map[chartWorld]map[string]bool{}, charts: map[string]bool{}, keyCls: map[ledger.Cell]string{},
 	}
 	var uw []UndecidedWorld
 	for _, ch := range rep.Charts {
-		if ch.FixOf != "" {
+		if ch.FixOf != "" || sample.Replaced[ch.Chart] {
 			continue
 		}
 		if _, ok := in.Publisher[ch.Chart]; !ok {
@@ -328,6 +336,7 @@ func (v *runView) isCell(c ledger.Cell) bool {
 
 type analysis struct {
 	in       *Inputs
+	sample   *Sample
 	views    []*runView
 	rowOf    map[ledger.Cell]*ledger.Row
 	cells    []*CellResult
@@ -380,9 +389,22 @@ func Analyze(in *Inputs) (*Result, error) {
 	res.Final = len(in.Runs) == 2
 	res.GapOK = a.gapOK
 
+	sample, err := buildSample(in)
+	if err != nil {
+		return nil, err
+	}
+	a.sample = sample
+	res.Sample = SampleInfo{Charts: append([]string{}, sample.Active...), Replacements: append([]Replacement{}, in.Replacements...)}
+	sort.Strings(res.Sample.Charts)
+	sampleWarnings, err := checkComplete(sample, in.Runs)
+	if err != nil {
+		return nil, err
+	}
+	res.Warnings = append(res.Warnings, sampleWarnings...)
+
 	var uworlds []UndecidedWorld
 	for i, r := range in.Runs {
-		v, uw, err := buildView(fmt.Sprintf("%d (%s)", i+1, r.ID), r.Report, in)
+		v, uw, err := buildView(fmt.Sprintf("%d (%s)", i+1, r.ID), r.Report, in, sample)
 		if err != nil {
 			return nil, err
 		}
@@ -520,7 +542,7 @@ func (a *analysis) compared(chart, world string) bool {
 
 func (a *analysis) qualifiedCharts() []string {
 	var out []string
-	for _, id := range a.in.FrameOrder {
+	for _, id := range a.sample.Active {
 		if !a.in.Qualified[id] {
 			continue
 		}

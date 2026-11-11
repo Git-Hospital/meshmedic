@@ -37,6 +37,14 @@ func RenderMarkdown(r *Result) []byte {
 		w("\n")
 	}
 
+	w("Sample: %d charts of the frozen list, %d replaced by reserves.\n\n", len(r.Sample.Charts), len(r.Sample.Replacements))
+	for _, x := range r.Sample.Replacements {
+		w("- replaced %s by %s (%s; evidence run %s)\n", x.Chart, x.Reserve, x.Reason, x.Run)
+	}
+	if len(r.Sample.Replacements) > 0 {
+		w("\n")
+	}
+
 	w("## Decision\n\n")
 	w("%s\n\n", r.Metrics)
 	if r.Final {

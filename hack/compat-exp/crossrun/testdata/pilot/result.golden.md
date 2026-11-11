@@ -4,6 +4,8 @@ Run 1 40109270484, run 2 40119399052, gap 13.88 h (at least 12 h).
 
 - WARNING: no static check results given: S is 0 and regions B and E are decided without it (S is a lower bound)
 
+Sample: 10 charts of the frozen list, 0 replaced by reserves.
+
 ## Decision
 
 N_new=0 P_new=0 D=0 P_D=0 S=0

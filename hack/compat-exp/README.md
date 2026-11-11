@@ -97,7 +97,10 @@ charts` and in select.sh (the e2e test compares them); observe.sh records it as
 ## File formats the guard and select.sh use
 
 `charts-exp.json` (written by `select.sh`): `schema`, `sha256`,
-`installDeadlineSeconds`, `counts`, `charts` (50), `reserves` (15), `bias`.
+`installDeadlineSeconds`, `counts`, `charts` (50), `reserves` (15), `bias`,
+`qualification` (`run`: the qualification run id, `candidatesSha256`,
+`recordsSha256`: what the list was selected from; analyze.sh reruns select.sh on
+that run's records and refuses a list that does not reproduce byte for byte).
 Entries carry `id`, `chart`, `version`, optional `repo`, `why`, `rank`,
 `publisher`, `qualified` (true) and `deadline` (the same for all, `<n>s`). The
 hash is the sha256 of `jq -S -c 'del(.sha256)'` of the file.

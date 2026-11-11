@@ -8,6 +8,21 @@
   "warnings": [
     "no static check results given: S is 0 and regions B and E are decided without it (S is a lower bound)"
   ],
+  "sample": {
+    "charts": [
+      "argo-cd",
+      "cloudnative-pg",
+      "grafana",
+      "kube-prometheus-stack",
+      "nats",
+      "podinfo",
+      "prometheus-pushgateway",
+      "rabbitmq",
+      "redis",
+      "valkey"
+    ],
+    "replacements": []
+  },
   "cells": [
     {
       "chart": "argo-cd",

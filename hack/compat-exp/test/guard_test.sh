@@ -31,6 +31,7 @@ sha() { shasum -a 256 | cut -d' ' -f1; }
 # hash select.sh would store.
 mklist() {
   jq -n --argjson n "$1" '{schema: 1, installDeadlineSeconds: 600,
+    qualification: {run: "7001", candidatesSha256: ("a" * 64), recordsSha256: ("b" * 64)},
     charts: [range(1; $n + 1) as $i | {id: "c\($i)", chart: "c\($i)", version: "1.0.0", repo: "https://example.test/\($i)", deadline: "600s"}],
     reserves: [{id: "r1", chart: "r1", version: "1.0.0", deadline: "600s"}, {id: "r2", chart: "oci://example.test/r2", version: "2.0.0", deadline: "600s"}]}' |
     jq -S . >"$2.body"
@@ -262,6 +263,27 @@ jq 'del(.sha256)' "$d/hack/compat-exp/charts-exp.json" >"$d/x" && mv "$d/x" "$d/
 commit "$d" "drop hash"
 g "$d" observe
 refuses "list without a hash" "must be a charts-exp.json"
+# F6: a frozen list names the qualification run it was selected from
+d="$tmp/noqual"
+cp -R "$r" "$d"
+jq -S 'del(.qualification) | del(.sha256)' "$d/hack/compat-exp/charts-exp.json" >"$d/x"
+jq -S --arg h "$(jq -S -c . "$d/x" | sha)" '. + {sha256: $h}' "$d/x" >"$d/hack/compat-exp/charts-exp.json" && rm "$d/x"
+commit "$d" "list without a qualification run"
+for m in observe recheck; do
+  g "$d" "$m" GUARD_CHART_IDS="c1"
+  refuses "$m: a list without the qualification run id is refused" "no qualification run id"
+done
+fx0="$d/hack/compat-exp/fixes"
+mkdir -p "$fx0"
+echo '[{"id":"c1-fix","fixOf":"c1","cause":"protocol","chart":"c1","version":"1.0.0","repo":"https://example.test/1","values":["--set","a=b"],"cellWorlds":["W3"]}]' >"$fx0/f.json"
+commit "$d" "fix"
+g "$d" certify GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json GUARD_FIX_ID=c1-fix
+refuses "certify: a list without the qualification run id is refused" "no qualification run id"
+jq -S 'del(.sha256) | .qualification.run = "12;id"' "$r/hack/compat-exp/charts-exp.json" >"$d/x"
+jq -S --arg h "$(jq -S -c . "$d/x" | sha)" '. + {sha256: $h}' "$d/x" >"$d/hack/compat-exp/charts-exp.json" && rm "$d/x"
+commit "$d" "bad run id"
+g "$d" observe
+refuses "a qualification run id that is not digits is refused" "no qualification run id"
 d="$tmp/twice"
 cp -R "$r" "$d"
 mklist 6 "$d/hack/compat-exp/charts-exp.json"

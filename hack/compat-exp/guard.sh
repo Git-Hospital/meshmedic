@@ -36,8 +36,10 @@
 #     descendant of it, and every frozen instrument file byte-identical to the
 #     tag's version (and no untracked file among them).
 #  4. The chart list: its stored sha256 matches its canonical content (jq -S -c
-#     of the file without the sha256 key), and at most one commit since the tag
-#     touched it. In qualify mode the list is the candidate list, which must be
+#     of the file without the sha256 key), it names the qualification run it was
+#     selected from (observe, certify, recheck), and at most one commit since
+#     the tag touched it (HEAD's ancestry only: analyze.sh's rerun of select.sh on
+#     the qualification run's records is what binds the sample). In qualify mode the list is the candidate list, which must be
 #     identical to the tag's.
 #  5. Every fix entry: fixOf names a chart in the frozen list (charts and
 #     reserves), its cause is a key of causes.json or a new key with a complete
@@ -214,6 +216,18 @@ case "$mode" in
   *)
     jq -e 'type == "object" and (.charts | type == "array") and (.reserves | type == "array") and (.sha256 | type == "string")' \
       "$chart_file" >/dev/null || die "$charts_in must be a charts-exp.json (charts, reserves, sha256)"
+    # The qualification run id (select.sh writes it with the hashes of the
+    # candidates and the records it chose from). Without it the list could have
+    # been chosen after data existed. This check only demands that the origin
+    # is stated; what protects the sample is analyze.sh, which downloads that
+    # run's records, reruns select.sh on them and refuses to go on unless the
+    # result is byte-identical to this list. The one-commit rule below counts
+    # commits on HEAD's ancestry only, so it cannot see a list that was
+    # committed on another branch first.
+    jq -e '(.qualification | type == "object") and (.qualification.run | type == "string" and test("^[0-9]{1,20}$"))
+        and (.qualification.candidatesSha256 | type == "string" and test("^[0-9a-f]{64}$"))
+        and (.qualification.recordsSha256 | type == "string" and test("^[0-9a-f]{64}$"))' "$chart_file" >/dev/null ||
+      die "$charts_in has no qualification run id (qualification.run, candidatesSha256, recordsSha256): a frozen list names the qualification run it was selected from"
     stored="$(jq -r .sha256 "$chart_file")"
     actual="$(jq -S -c 'del(.sha256)' "$chart_file" | sha)"
     [[ "$stored" == "$actual" ]] ||
