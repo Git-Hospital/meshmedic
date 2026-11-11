@@ -1,0 +1,320 @@
+{
+  "schema": 1,
+  "rows": [
+    {
+      "chart": "redis",
+      "world": "W3",
+      "key": "helm:install",
+      "cause": "ambient-np",
+      "type": "defect",
+      "typeBasis": {
+        "doc": "networkPolicy.extraIngress is a generic key (section 2, Type)"
+      },
+      "fix": {
+        "entry": "redis-np-15008",
+        "form": "values",
+        "helmLint": true
+      },
+      "runs": {
+        "run1": "40109270484",
+        "run2": "40119399052",
+        "certification": [
+          "40109270484",
+          "40119399052"
+        ]
+      },
+      "recheck": {
+        "version": "1.31.3",
+        "result": "reproduces-3of3",
+        "run": "40119399052"
+      },
+      "upstream": {
+        "merged": false
+      },
+      "reviewer": {
+        "verdict": "agree",
+        "run": "fixture"
+      },
+      "status": "counted",
+      "publisher": "bitnami",
+      "note": "test fixture from pilot 1: no recheck version or reviewer existed, those fields are stand-ins"
+    },
+    {
+      "chart": "redis",
+      "world": "W3",
+      "key": "workload:StatefulSet/redis-replicas:ready",
+      "cause": "ambient-np",
+      "type": "defect",
+      "typeBasis": {
+        "doc": "networkPolicy.extraIngress is a generic key (section 2, Type)"
+      },
+      "fix": {
+        "entry": "redis-np-15008",
+        "form": "values",
+        "helmLint": true
+      },
+      "runs": {
+        "run1": "40109270484",
+        "run2": "40119399052",
+        "certification": [
+          "40109270484",
+          "40119399052"
+        ]
+      },
+      "recheck": {
+        "version": "1.31.3",
+        "result": "reproduces-3of3",
+        "run": "40119399052"
+      },
+      "upstream": {
+        "merged": false
+      },
+      "reviewer": {
+        "verdict": "agree",
+        "run": "fixture"
+      },
+      "status": "counted",
+      "publisher": "bitnami",
+      "note": "test fixture from pilot 1: no recheck version or reviewer existed, those fields are stand-ins"
+    },
+    {
+      "chart": "redis",
+      "world": "W3",
+      "key": "workload:StatefulSet/redis-replicas:restarts",
+      "cause": "ambient-np",
+      "type": "defect",
+      "typeBasis": {
+        "doc": "networkPolicy.extraIngress is a generic key (section 2, Type)"
+      },
+      "fix": {
+        "entry": "redis-np-15008",
+        "form": "values",
+        "helmLint": true
+      },
+      "runs": {
+        "run1": "40109270484",
+        "run2": "40119399052",
+        "certification": [
+          "40109270484",
+          "40119399052"
+        ]
+      },
+      "recheck": {
+        "version": "1.31.3",
+        "result": "reproduces-3of3",
+        "run": "40119399052"
+      },
+      "upstream": {
+        "merged": false
+      },
+      "reviewer": {
+        "verdict": "agree",
+        "run": "fixture"
+      },
+      "status": "counted",
+      "publisher": "bitnami",
+      "note": "test fixture from pilot 1: no recheck version or reviewer existed, those fields are stand-ins"
+    },
+    {
+      "chart": "rabbitmq",
+      "world": "W3",
+      "key": "helm:install",
+      "cause": "ambient-np",
+      "type": "defect",
+      "typeBasis": {
+        "doc": "networkPolicy.extraIngress is a generic key (section 2, Type)"
+      },
+      "fix": {
+        "entry": "rabbitmq-np-15008",
+        "form": "values",
+        "helmLint": true
+      },
+      "runs": {
+        "run1": "40109270484",
+        "run2": "40119399052",
+        "certification": [
+          "40109270484",
+          "40119399052"
+        ]
+      },
+      "recheck": {
+        "version": "1.31.3",
+        "result": "reproduces-3of3",
+        "run": "40119399052"
+      },
+      "upstream": {
+        "merged": false
+      },
+      "reviewer": {
+        "verdict": "agree",
+        "run": "fixture"
+      },
+      "status": "counted",
+      "publisher": "bitnami",
+      "note": "test fixture from pilot 1: no recheck version or reviewer existed, those fields are stand-ins"
+    },
+    {
+      "chart": "rabbitmq",
+      "world": "W3",
+      "key": "port:rabbitmq-headless:15672:http",
+      "cause": "ambient-np",
+      "type": "defect",
+      "typeBasis": {
+        "doc": "networkPolicy.extraIngress is a generic key (section 2, Type)"
+      },
+      "fix": {
+        "entry": "rabbitmq-np-15008",
+        "form": "values",
+        "helmLint": true
+      },
+      "runs": {
+        "run1": "40109270484",
+        "run2": "40119399052",
+        "certification": [
+          "40109270484",
+          "40119399052"
+        ]
+      },
+      "recheck": {
+        "version": "1.31.3",
+        "result": "reproduces-3of3",
+        "run": "40119399052"
+      },
+      "upstream": {
+        "merged": false
+      },
+      "reviewer": {
+        "verdict": "agree",
+        "run": "fixture"
+      },
+      "status": "counted",
+      "publisher": "bitnami",
+      "note": "test fixture from pilot 1: no recheck version or reviewer existed, those fields are stand-ins"
+    },
+    {
+      "chart": "rabbitmq",
+      "world": "W3",
+      "key": "port:rabbitmq:15672:http",
+      "cause": "ambient-np",
+      "type": "defect",
+      "typeBasis": {
+        "doc": "networkPolicy.extraIngress is a generic key (section 2, Type)"
+      },
+      "fix": {
+        "entry": "rabbitmq-np-15008",
+        "form": "values",
+        "helmLint": true
+      },
+      "runs": {
+        "run1": "40109270484",
+        "run2": "40119399052",
+        "certification": [
+          "40109270484",
+          "40119399052"
+        ]
+      },
+      "recheck": {
+        "version": "1.31.3",
+        "result": "reproduces-3of3",
+        "run": "40119399052"
+      },
+      "upstream": {
+        "merged": false
+      },
+      "reviewer": {
+        "verdict": "agree",
+        "run": "fixture"
+      },
+      "status": "counted",
+      "publisher": "bitnami",
+      "note": "test fixture from pilot 1: no recheck version or reviewer existed, those fields are stand-ins"
+    },
+    {
+      "chart": "rabbitmq",
+      "world": "W3",
+      "key": "workload:StatefulSet/rabbitmq:ready",
+      "cause": "ambient-np",
+      "type": "defect",
+      "typeBasis": {
+        "doc": "networkPolicy.extraIngress is a generic key (section 2, Type)"
+      },
+      "fix": {
+        "entry": "rabbitmq-np-15008",
+        "form": "values",
+        "helmLint": true
+      },
+      "runs": {
+        "run1": "40109270484",
+        "run2": "40119399052",
+        "certification": [
+          "40109270484",
+          "40119399052"
+        ]
+      },
+      "recheck": {
+        "version": "1.31.3",
+        "result": "reproduces-3of3",
+        "run": "40119399052"
+      },
+      "upstream": {
+        "merged": false
+      },
+      "reviewer": {
+        "verdict": "agree",
+        "run": "fixture"
+      },
+      "status": "counted",
+      "publisher": "bitnami",
+      "note": "test fixture from pilot 1: no recheck version or reviewer existed, those fields are stand-ins"
+    },
+    {
+      "chart": "rabbitmq",
+      "world": "W3",
+      "key": "workload:StatefulSet/rabbitmq:restarts",
+      "cause": "ambient-np",
+      "type": "defect",
+      "typeBasis": {
+        "doc": "networkPolicy.extraIngress is a generic key (section 2, Type)"
+      },
+      "fix": {
+        "entry": "rabbitmq-np-15008",
+        "form": "values",
+        "helmLint": true
+      },
+      "runs": {
+        "run1": "40109270484",
+        "run2": "40119399052",
+        "certification": [
+          "40109270484",
+          "40119399052"
+        ]
+      },
+      "recheck": {
+        "version": "1.31.3",
+        "result": "reproduces-3of3",
+        "run": "40119399052"
+      },
+      "upstream": {
+        "merged": false
+      },
+      "reviewer": {
+        "verdict": "agree",
+        "run": "fixture"
+      },
+      "status": "counted",
+      "publisher": "bitnami",
+      "note": "test fixture from pilot 1: no recheck version or reviewer existed, those fields are stand-ins"
+    },
+    {
+      "chart": "podinfo",
+      "world": "W1",
+      "key": "helm:test",
+      "status": "excluded",
+      "exclusion": {
+        "reason": "c-optout",
+        "evidence": "podinfo's test pods carry sidecar.istio.io/inject=false and call podinfo in plaintext under STRICT (docs/compat-pilot.md, podinfo section); the pod names in the records are a hand-built fixture"
+      }
+    }
+  ],
+  "newKeys": []
+}

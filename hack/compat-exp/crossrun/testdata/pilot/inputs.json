@@ -1,0 +1,38 @@
+{
+  "runs": [
+    {
+      "id": "40109270484",
+      "report": "run1.report.json",
+      "records": "records-run1",
+      "started": "2026-10-24T09:00:00Z",
+      "ended": "2026-10-24T10:07:00Z"
+    },
+    {
+      "id": "40119399052",
+      "report": "run2.report.json",
+      "records": "records-run2",
+      "started": "2026-10-25T00:00:00Z",
+      "ended": "2026-10-25T01:07:00Z"
+    }
+  ],
+  "certification": [
+    {
+      "id": "40109270484",
+      "report": "run1.report.json",
+      "istio": "1.31.3"
+    },
+    {
+      "id": "40119399052",
+      "report": "run2.report.json",
+      "istio": "1.31.3"
+    }
+  ],
+  "recheck": {
+    "id": "40119399052",
+    "report": "run2.report.json",
+    "istio": "1.31.3"
+  },
+  "causes": "../causes.json",
+  "ledger": "ledger.json",
+  "frame": "frame.json"
+}

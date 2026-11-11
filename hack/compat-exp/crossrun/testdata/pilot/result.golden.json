@@ -1,0 +1,541 @@
+{
+  "schema": 1,
+  "run1": "40109270484",
+  "run2": "40119399052",
+  "gapHours": 13.883333333333333,
+  "gapOk": true,
+  "warnings": [
+    "no static check results given: S is 0 and regions B and E are decided without it (S is a lower bound)"
+  ],
+  "cells": [
+    {
+      "chart": "argo-cd",
+      "world": "W3",
+      "key": "workload:Deployment/argo-cd-argocd-dex-server:restarts",
+      "class": "workload",
+      "publisher": "argoproj",
+      "run1": "flaky",
+      "run2": "same",
+      "holdsInBothRuns": false,
+      "exclusionReasons": [
+        "flaky"
+      ],
+      "status": "excluded"
+    },
+    {
+      "chart": "podinfo",
+      "world": "W1",
+      "key": "helm:test",
+      "class": "helm:test",
+      "publisher": "stefanprodan",
+      "run1": "finding",
+      "run2": "finding",
+      "holdsInBothRuns": true,
+      "exclusionReasons": [
+        "c-optout"
+      ],
+      "status": "excluded"
+    },
+    {
+      "chart": "rabbitmq",
+      "world": "W3",
+      "key": "helm:install",
+      "class": "helm:install",
+      "publisher": "bitnami",
+      "run1": "finding",
+      "run2": "finding",
+      "holdsInBothRuns": true,
+      "status": "counted",
+      "credit": "ambient-np",
+      "type": "defect"
+    },
+    {
+      "chart": "rabbitmq",
+      "world": "W3",
+      "key": "port:rabbitmq-headless:15672:http",
+      "class": "port",
+      "publisher": "bitnami",
+      "run1": "finding",
+      "run2": "finding",
+      "holdsInBothRuns": true,
+      "status": "counted",
+      "credit": "ambient-np",
+      "type": "defect"
+    },
+    {
+      "chart": "rabbitmq",
+      "world": "W3",
+      "key": "port:rabbitmq:15672:http",
+      "class": "port",
+      "publisher": "bitnami",
+      "run1": "finding",
+      "run2": "finding",
+      "holdsInBothRuns": true,
+      "status": "counted",
+      "credit": "ambient-np",
+      "type": "defect"
+    },
+    {
+      "chart": "rabbitmq",
+      "world": "W3",
+      "key": "workload:StatefulSet/rabbitmq:ready",
+      "class": "workload",
+      "publisher": "bitnami",
+      "run1": "finding",
+      "run2": "finding",
+      "holdsInBothRuns": true,
+      "status": "counted",
+      "credit": "ambient-np",
+      "type": "defect"
+    },
+    {
+      "chart": "rabbitmq",
+      "world": "W3",
+      "key": "workload:StatefulSet/rabbitmq:restarts",
+      "class": "workload",
+      "publisher": "bitnami",
+      "run1": "finding",
+      "run2": "finding",
+      "holdsInBothRuns": true,
+      "status": "counted",
+      "credit": "ambient-np",
+      "type": "defect"
+    },
+    {
+      "chart": "redis",
+      "world": "W3",
+      "key": "helm:install",
+      "class": "helm:install",
+      "publisher": "bitnami",
+      "run1": "finding",
+      "run2": "finding",
+      "holdsInBothRuns": true,
+      "status": "counted",
+      "credit": "ambient-np",
+      "type": "defect"
+    },
+    {
+      "chart": "redis",
+      "world": "W3",
+      "key": "workload:StatefulSet/redis-replicas:ready",
+      "class": "workload",
+      "publisher": "bitnami",
+      "run1": "finding",
+      "run2": "finding",
+      "holdsInBothRuns": true,
+      "status": "counted",
+      "credit": "ambient-np",
+      "type": "defect"
+    },
+    {
+      "chart": "redis",
+      "world": "W3",
+      "key": "workload:StatefulSet/redis-replicas:restarts",
+      "class": "workload",
+      "publisher": "bitnami",
+      "run1": "finding",
+      "run2": "finding",
+      "holdsInBothRuns": true,
+      "status": "counted",
+      "credit": "ambient-np",
+      "type": "defect"
+    }
+  ],
+  "worldUniversal": [
+    {
+      "kind": "cause",
+      "name": "ambient-np",
+      "world": "W3",
+      "numerator": 2,
+      "denominator": 10,
+      "universal": false,
+      "computed": true,
+      "differingCharts": [
+        "rabbitmq",
+        "redis"
+      ]
+    },
+    {
+      "kind": "class",
+      "name": "helm:test",
+      "world": "W1",
+      "numerator": 1,
+      "denominator": 10,
+      "universal": false,
+      "computed": true,
+      "differingCharts": [
+        "podinfo"
+      ]
+    },
+    {
+      "kind": "class",
+      "name": "port",
+      "world": "W1",
+      "numerator": 0,
+      "denominator": 9,
+      "universal": false,
+      "computed": true
+    },
+    {
+      "kind": "class",
+      "name": "helm:test",
+      "world": "W3",
+      "numerator": 0,
+      "denominator": 10,
+      "universal": false,
+      "computed": true
+    },
+    {
+      "kind": "class",
+      "name": "port",
+      "world": "W3",
+      "numerator": 1,
+      "denominator": 9,
+      "universal": false,
+      "computed": true,
+      "differingCharts": [
+        "rabbitmq"
+      ]
+    }
+  ],
+  "optOutEvidence": [
+    {
+      "chart": "podinfo",
+      "world": "W1",
+      "assertedByLedger": true,
+      "podsWithEffectiveOptOut": 12,
+      "pods": [
+        {
+          "run": "40109270484 run1",
+          "pod": "mmc-client",
+          "owner": "Pod/mmc-client",
+          "client": true,
+          "metadata": [],
+          "effectiveOptOut": false,
+          "istioProxy": true
+        },
+        {
+          "run": "40109270484 run1",
+          "pod": "podinfo-6d8f7c-abcde",
+          "owner": "Deployment/podinfo",
+          "client": false,
+          "metadata": [],
+          "effectiveOptOut": false,
+          "istioProxy": true
+        },
+        {
+          "run": "40109270484 run1",
+          "pod": "podinfo-grpc-test-x1",
+          "owner": "Pod/podinfo-grpc-test-x1",
+          "client": false,
+          "metadata": [
+            "annotation sidecar.istio.io/inject=false"
+          ],
+          "effectiveOptOut": true,
+          "istioProxy": false
+        },
+        {
+          "run": "40109270484 run1",
+          "pod": "podinfo-jwt-test-x2",
+          "owner": "Pod/podinfo-jwt-test-x2",
+          "client": false,
+          "metadata": [
+            "annotation sidecar.istio.io/inject=false"
+          ],
+          "effectiveOptOut": true,
+          "istioProxy": false
+        },
+        {
+          "run": "40109270484 run2",
+          "pod": "mmc-client",
+          "owner": "Pod/mmc-client",
+          "client": true,
+          "metadata": [],
+          "effectiveOptOut": false,
+          "istioProxy": true
+        },
+        {
+          "run": "40109270484 run2",
+          "pod": "podinfo-6d8f7c-abcde",
+          "owner": "Deployment/podinfo",
+          "client": false,
+          "metadata": [],
+          "effectiveOptOut": false,
+          "istioProxy": true
+        },
+        {
+          "run": "40109270484 run2",
+          "pod": "podinfo-grpc-test-x1",
+          "owner": "Pod/podinfo-grpc-test-x1",
+          "client": false,
+          "metadata": [
+            "annotation sidecar.istio.io/inject=false"
+          ],
+          "effectiveOptOut": true,
+          "istioProxy": false
+        },
+        {
+          "run": "40109270484 run2",
+          "pod": "podinfo-jwt-test-x2",
+          "owner": "Pod/podinfo-jwt-test-x2",
+          "client": false,
+          "metadata": [
+            "annotation sidecar.istio.io/inject=false"
+          ],
+          "effectiveOptOut": true,
+          "istioProxy": false
+        },
+        {
+          "run": "40109270484 run3",
+          "pod": "mmc-client",
+          "owner": "Pod/mmc-client",
+          "client": true,
+          "metadata": [],
+          "effectiveOptOut": false,
+          "istioProxy": true
+        },
+        {
+          "run": "40109270484 run3",
+          "pod": "podinfo-6d8f7c-abcde",
+          "owner": "Deployment/podinfo",
+          "client": false,
+          "metadata": [],
+          "effectiveOptOut": false,
+          "istioProxy": true
+        },
+        {
+          "run": "40109270484 run3",
+          "pod": "podinfo-grpc-test-x1",
+          "owner": "Pod/podinfo-grpc-test-x1",
+          "client": false,
+          "metadata": [
+            "annotation sidecar.istio.io/inject=false"
+          ],
+          "effectiveOptOut": true,
+          "istioProxy": false
+        },
+        {
+          "run": "40109270484 run3",
+          "pod": "podinfo-jwt-test-x2",
+          "owner": "Pod/podinfo-jwt-test-x2",
+          "client": false,
+          "metadata": [
+            "annotation sidecar.istio.io/inject=false"
+          ],
+          "effectiveOptOut": true,
+          "istioProxy": false
+        },
+        {
+          "run": "40119399052 run1",
+          "pod": "mmc-client",
+          "owner": "Pod/mmc-client",
+          "client": true,
+          "metadata": [],
+          "effectiveOptOut": false,
+          "istioProxy": true
+        },
+        {
+          "run": "40119399052 run1",
+          "pod": "podinfo-6d8f7c-abcde",
+          "owner": "Deployment/podinfo",
+          "client": false,
+          "metadata": [],
+          "effectiveOptOut": false,
+          "istioProxy": true
+        },
+        {
+          "run": "40119399052 run1",
+          "pod": "podinfo-grpc-test-x1",
+          "owner": "Pod/podinfo-grpc-test-x1",
+          "client": false,
+          "metadata": [
+            "annotation sidecar.istio.io/inject=false"
+          ],
+          "effectiveOptOut": true,
+          "istioProxy": false
+        },
+        {
+          "run": "40119399052 run1",
+          "pod": "podinfo-jwt-test-x2",
+          "owner": "Pod/podinfo-jwt-test-x2",
+          "client": false,
+          "metadata": [
+            "annotation sidecar.istio.io/inject=false"
+          ],
+          "effectiveOptOut": true,
+          "istioProxy": false
+        },
+        {
+          "run": "40119399052 run2",
+          "pod": "mmc-client",
+          "owner": "Pod/mmc-client",
+          "client": true,
+          "metadata": [],
+          "effectiveOptOut": false,
+          "istioProxy": true
+        },
+        {
+          "run": "40119399052 run2",
+          "pod": "podinfo-6d8f7c-abcde",
+          "owner": "Deployment/podinfo",
+          "client": false,
+          "metadata": [],
+          "effectiveOptOut": false,
+          "istioProxy": true
+        },
+        {
+          "run": "40119399052 run2",
+          "pod": "podinfo-grpc-test-x1",
+          "owner": "Pod/podinfo-grpc-test-x1",
+          "client": false,
+          "metadata": [
+            "annotation sidecar.istio.io/inject=false"
+          ],
+          "effectiveOptOut": true,
+          "istioProxy": false
+        },
+        {
+          "run": "40119399052 run2",
+          "pod": "podinfo-jwt-test-x2",
+          "owner": "Pod/podinfo-jwt-test-x2",
+          "client": false,
+          "metadata": [
+            "annotation sidecar.istio.io/inject=false"
+          ],
+          "effectiveOptOut": true,
+          "istioProxy": false
+        },
+        {
+          "run": "40119399052 run3",
+          "pod": "mmc-client",
+          "owner": "Pod/mmc-client",
+          "client": true,
+          "metadata": [],
+          "effectiveOptOut": false,
+          "istioProxy": true
+        },
+        {
+          "run": "40119399052 run3",
+          "pod": "podinfo-6d8f7c-abcde",
+          "owner": "Deployment/podinfo",
+          "client": false,
+          "metadata": [],
+          "effectiveOptOut": false,
+          "istioProxy": true
+        },
+        {
+          "run": "40119399052 run3",
+          "pod": "podinfo-grpc-test-x1",
+          "owner": "Pod/podinfo-grpc-test-x1",
+          "client": false,
+          "metadata": [
+            "annotation sidecar.istio.io/inject=false"
+          ],
+          "effectiveOptOut": true,
+          "istioProxy": false
+        },
+        {
+          "run": "40119399052 run3",
+          "pod": "podinfo-jwt-test-x2",
+          "owner": "Pod/podinfo-jwt-test-x2",
+          "client": false,
+          "metadata": [
+            "annotation sidecar.istio.io/inject=false"
+          ],
+          "effectiveOptOut": true,
+          "istioProxy": false
+        }
+      ]
+    }
+  ],
+  "undecidedWorlds": null,
+  "ambientNpPrevalence": {
+    "countedCells": 8,
+    "charts": [
+      "rabbitmq",
+      "redis"
+    ]
+  },
+  "metrics": {
+    "nNew": 0,
+    "pNew": 0,
+    "d": 0,
+    "pD": 0,
+    "s": 0
+  },
+  "sComputed": false,
+  "staticChecks": null,
+  "region": {
+    "region": "E",
+    "condition": "anything else",
+    "outcome": "Drop"
+  },
+  "firstMatchTrace": [
+    {
+      "region": "A",
+      "matched": false,
+      "failed": [
+        "N_new \u003e= 3",
+        "P_new \u003e= 3",
+        "D \u003e= 2",
+        "P_D \u003e= 2"
+      ]
+    },
+    {
+      "region": "B",
+      "matched": false,
+      "failed": [
+        "N_new \u003e= 2",
+        "P_new \u003e= 2",
+        "S \u003e= 2"
+      ]
+    },
+    {
+      "region": "C",
+      "matched": false,
+      "failed": [
+        "N_new \u003e= 3",
+        "P_new \u003e= 3"
+      ]
+    },
+    {
+      "region": "E",
+      "matched": true
+    }
+  ],
+  "futility": {
+    "nMax": 0,
+    "pMax": 0,
+    "cellsNeitherCreditedNorExcluded": 0,
+    "newPublishersAmongThem": 0,
+    "reachableRegions": [
+      "E"
+    ],
+    "onlyRegionEReachable": true,
+    "stopDrop": true,
+    "prevalenceCertificatesSkipped": true
+  },
+  "undecidedShare": {
+    "undecidedCells": 0,
+    "cells": 10,
+    "overFifteenPercent": false,
+    "note": "the stop applies after one rerun; crossrun reports the share of this input only"
+  },
+  "unresolved": null,
+  "unexplained": null,
+  "ifAllCounted": {
+    "openCellsCounted": 0,
+    "metrics": {
+      "nNew": 0,
+      "pNew": 0,
+      "d": 0,
+      "pD": 0,
+      "s": 0
+    },
+    "region": {
+      "region": "E",
+      "condition": "anything else",
+      "outcome": "Drop"
+    }
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "world": "W1",
+  "chart": "podinfo",
+  "run": 3,
+  "podMesh": [
+    {
+      "pod": "podinfo-6d8f7c-abcde",
+      "client": false,
+      "owner": "Deployment/podinfo",
+      "meshMetadata": [],
+      "istioProxy": {
+        "container": true,
+        "initContainer": false,
+        "native": true
+      },
+      "ambientRedirection": ""
+    },
+    {
+      "pod": "podinfo-grpc-test-x1",
+      "client": false,
+      "owner": "Pod/podinfo-grpc-test-x1",
+      "meshMetadata": [
+        {
+          "kind": "annotation",
+          "key": "sidecar.istio.io/inject",
+          "value": "false"
+        }
+      ],
+      "istioProxy": {
+        "container": false,
+        "initContainer": false,
+        "native": false
+      },
+      "ambientRedirection": ""
+    },
+    {
+      "pod": "podinfo-jwt-test-x2",
+      "client": false,
+      "owner": "Pod/podinfo-jwt-test-x2",
+      "meshMetadata": [
+        {
+          "kind": "annotation",
+          "key": "sidecar.istio.io/inject",
+          "value": "false"
+        }
+      ],
+      "istioProxy": {
+        "container": false,
+        "initContainer": false,
+        "native": false
+      },
+      "ambientRedirection": ""
+    },
+    {
+      "pod": "mmc-client",
+      "client": true,
+      "owner": "Pod/mmc-client",
+      "meshMetadata": [],
+      "istioProxy": {
+        "container": true,
+        "initContainer": false,
+        "native": true
+      },
+      "ambientRedirection": ""
+    }
+  ]
+}
