@@ -1,0 +1,16 @@
+# Not injected: the sidecar.istio.io/inject label is false.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:
+  template:
+    metadata:
+      labels:
+        app: app
+        sidecar.istio.io/inject: "false"
+    spec:
+      securityContext:
+        runAsUser: 1337
+      containers:
+        - name: app

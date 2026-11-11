@@ -1,0 +1,15 @@
+# Pod-level runAsUser 1337 applies to every container that does not set its own.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      securityContext:
+        runAsUser: 1337
+      containers:
+        - name: app

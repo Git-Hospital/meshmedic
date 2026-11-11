@@ -1,0 +1,16 @@
+# A host-network pod is never enrolled, so its 15090 is not checked.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: agent
+spec:
+  template:
+    metadata:
+      labels:
+        app: agent
+    spec:
+      hostNetwork: true
+      containers:
+        - name: agent
+          ports:
+            - containerPort: 15090

@@ -1,0 +1,40 @@
+# An ipBlock covering 169.254.7.127 on the probe port admits the probe.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - ports:
+        - port: 15008
+    - from:
+        - podSelector:
+            matchLabels:
+              role: client
+        - ipBlock:
+            cidr: 169.254.0.0/16
+      ports:
+        - port: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http

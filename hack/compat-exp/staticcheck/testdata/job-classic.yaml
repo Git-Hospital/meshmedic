@@ -1,0 +1,16 @@
+# Opted out of native sidecars; held until the proxy starts, so only the
+# Job check applies.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+spec:
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/nativeSidecar: "false"
+        proxy.istio.io/config: '{ "holdApplicationUntilProxyStarts": true }'
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
