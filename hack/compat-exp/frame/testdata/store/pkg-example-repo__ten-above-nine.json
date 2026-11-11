@@ -1,0 +1,33 @@
+{
+ "package_id": "00000000-0000-4000-8000-769641971543",
+ "name": "ten-above-nine",
+ "normalized_name": "ten-above-nine",
+ "keywords": null,
+ "links": [
+  {
+   "name": "source",
+   "url": "https://github.com/pin-e/c"
+  }
+ ],
+ "version": "1.9.0",
+ "deprecated": false,
+ "available_versions": [
+  {
+   "version": "1.9.0"
+  },
+  {
+   "version": "1.10.0"
+  },
+  {
+   "version": "1.2.0"
+  }
+ ],
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "example-repo",
+  "url": "https://charts.example.test",
+  "kind": 0
+ }
+}

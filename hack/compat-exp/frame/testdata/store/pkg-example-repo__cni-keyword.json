@@ -1,0 +1,30 @@
+{
+ "package_id": "00000000-0000-4000-8000-588880870504",
+ "name": "cni-keyword",
+ "normalized_name": "cni-keyword",
+ "keywords": [
+  "CNI",
+  "networking"
+ ],
+ "links": [
+  {
+   "name": "source",
+   "url": "https://github.com/cni-org/cni"
+  }
+ ],
+ "version": "1.0.0",
+ "deprecated": false,
+ "available_versions": [
+  {
+   "version": "1.0.0"
+  }
+ ],
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "example-repo",
+  "url": "https://charts.example.test",
+  "kind": 0
+ }
+}

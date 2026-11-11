@@ -1,0 +1,56 @@
+{
+ "packages": [
+  {
+   "package_id": "523fac59-94c4-4166-890e-68b138136d70",
+   "name": "consul",
+   "normalized_name": "consul",
+   "stars": 90,
+   "deprecated": false,
+   "version": "2.1.0",
+   "repository": {
+    "name": "hashicorp",
+    "url": "https://helm.releases.hashicorp.com",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "bc2bff04-e334-440d-9a2a-ae616b2f1389",
+   "name": "argo-cd",
+   "normalized_name": "argo-cd",
+   "stars": 82,
+   "deprecated": false,
+   "version": "10.18.0",
+   "repository": {
+    "name": "argo-cd-oci",
+    "url": "oci://ghcr.io/argoproj/argo-helm/argo-cd",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "bbbbdf45-b7af-4ce2-9e84-08cf7b3a13eb",
+   "name": "tigera-operator",
+   "normalized_name": "tigera-operator",
+   "stars": 41,
+   "deprecated": false,
+   "version": "3.33.0",
+   "repository": {
+    "name": "projectcalico",
+    "url": "https://docs.projectcalico.org/charts/",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "1925b08a-e7e9-4efd-bf2c-9f897dcea582",
+   "name": "redis",
+   "normalized_name": "redis",
+   "stars": 41,
+   "deprecated": false,
+   "version": "0.38.1",
+   "repository": {
+    "name": "cloudpirates-redis",
+    "url": "oci://registry-1.docker.io/cloudpirates/redis",
+    "kind": 0
+   }
+  }
+ ]
+}

@@ -1,0 +1,36 @@
+{
+ "package_id": "00000000-0000-4000-8000-526551682241",
+ "name": "alpha-newest",
+ "normalized_name": "alpha-newest",
+ "keywords": null,
+ "links": [
+  {
+   "name": "source",
+   "url": "https://github.com/pin-a/c"
+  }
+ ],
+ "version": "16.0.0-alpha1",
+ "deprecated": false,
+ "available_versions": [
+  {
+   "version": "16.0.0-alpha1"
+  },
+  {
+   "version": "15.4.2"
+  },
+  {
+   "version": "15.4.1"
+  },
+  {
+   "version": "13.14.5"
+  }
+ ],
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "example-repo",
+  "url": "https://charts.example.test",
+  "kind": 0
+ }
+}

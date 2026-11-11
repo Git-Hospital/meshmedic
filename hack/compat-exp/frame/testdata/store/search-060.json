@@ -1,0 +1,108 @@
+{
+ "packages": [
+  {
+   "package_id": "67a49f70-cf98-416d-b5a9-3c2f2cbe81a1",
+   "name": "external-secrets",
+   "normalized_name": "external-secrets",
+   "stars": 252,
+   "deprecated": false,
+   "version": "2.15.0",
+   "repository": {
+    "name": "external-secrets-operator",
+    "url": "https://charts.external-secrets.io/",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "9ea94cbd-0496-45f2-a7de-5cca1a614f31",
+   "name": "cilium",
+   "normalized_name": "cilium",
+   "stars": 201,
+   "deprecated": false,
+   "version": "1.21.0-pre.4",
+   "repository": {
+    "name": "cilium",
+    "url": "https://helm.cilium.io/",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-642645981996",
+   "name": "zeta-tie",
+   "normalized_name": "zeta-tie",
+   "stars": 150,
+   "deprecated": false,
+   "version": "1.0.0",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-270129622950",
+   "name": "alpha-tie",
+   "normalized_name": "alpha-tie",
+   "stars": 150,
+   "deprecated": false,
+   "version": "1.0.0",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-775387287474",
+   "name": "widgets-crds",
+   "normalized_name": "widgets-crds",
+   "stars": 149,
+   "deprecated": false,
+   "version": "1.0.0",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-924140208024",
+   "name": "mixed-case-owner",
+   "normalized_name": "mixed-case-owner",
+   "stars": 148,
+   "deprecated": false,
+   "version": "1.0.0",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-444506952403",
+   "name": "no-links",
+   "normalized_name": "no-links",
+   "stars": 147,
+   "deprecated": false,
+   "version": "1.0.0",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-588880870504",
+   "name": "cni-keyword",
+   "normalized_name": "cni-keyword",
+   "stars": 146,
+   "deprecated": false,
+   "version": "1.0.0",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  }
+ ]
+}

@@ -1,0 +1,27 @@
+{
+ "package_id": "00000000-0000-4000-8000-029059613458",
+ "name": "example-deprecated",
+ "normalized_name": "example-deprecated",
+ "keywords": null,
+ "links": [
+  {
+   "name": "source",
+   "url": "https://github.com/example-org/deprecated"
+  }
+ ],
+ "version": "1.0.0",
+ "deprecated": true,
+ "available_versions": [
+  {
+   "version": "1.0.0"
+  }
+ ],
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "example-repo",
+  "url": "https://charts.example.test",
+  "kind": 0
+ }
+}

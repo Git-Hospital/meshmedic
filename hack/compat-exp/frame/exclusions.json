@@ -1,0 +1,19 @@
+{
+  "comment": "Exclusion data for frame build (docs/compat-experiment.md section 4: no CNIs, meshes, library or CRD-only charts). Library charts are not listed here: they are decided by the Artifact Hub field data.type == \"library\". Every other class is decided by the entries below, applied in file order, first match wins, and the entry's reason is copied into candidates.json next to the skipped package. An entry matches when ALL of its match fields match: repository (exact Artifact Hub repository name), name (exact package name), name_suffix (package name ends with it), keyword (one of the package's Artifact Hub keywords, compared case-insensitively). Add an entry only with a reason a reader can check against the chart; the file is part of the frozen instrument and its sha256 is recorded in candidates.json.",
+  "entries": [
+    {"class": "mesh", "repository": "istio-official", "reason": "Istio itself: every chart in the Artifact Hub repository istio-official (base, istiod, gateway, cni, ztunnel) installs the mesh under test."},
+    {"class": "mesh", "keyword": "service-mesh", "reason": "The chart declares the Artifact Hub keyword service-mesh (the Linkerd charts do)."},
+    {"class": "mesh", "repository": "hashicorp", "name": "consul", "reason": "HashiCorp's consul chart installs Consul service mesh (connect injector); the Bitnami consul chart is a key-value store and is not excluded."},
+    {"class": "cni", "keyword": "cni", "reason": "The chart declares the Artifact Hub keyword cni."},
+    {"class": "cni", "repository": "cilium", "name": "cilium", "reason": "Cilium is a CNI plugin; a cluster has one, and the experiment's kind clusters already have theirs."},
+    {"class": "cni", "name": "tigera-operator", "reason": "Installs Calico, a CNI plugin."},
+    {"class": "cni", "name": "calico", "reason": "Calico, a CNI plugin."},
+    {"class": "cni", "name": "flannel", "reason": "Flannel, a CNI plugin."},
+    {"class": "cni", "name": "antrea", "reason": "Antrea, a CNI plugin."},
+    {"class": "cni", "name": "kube-router", "reason": "kube-router is a CNI and network policy provider."},
+    {"class": "cni", "name": "multus-cni", "reason": "Multus, a CNI meta-plugin."},
+    {"class": "crd-only", "name_suffix": "-crds", "reason": "By convention a chart named *-crds ships only CustomResourceDefinitions (linkerd-crds, prometheus-operator-crds)."},
+    {"class": "crd-only", "name_suffix": "-crd", "reason": "By convention a chart named *-crd ships only CustomResourceDefinitions."},
+    {"class": "crd-only", "keyword": "crds", "reason": "The chart declares the Artifact Hub keyword crds."}
+  ]
+}

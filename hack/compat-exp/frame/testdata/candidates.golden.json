@@ -1,0 +1,346 @@
+{
+  "input_sha256": "385fa1ffa0753bad00c158eaba0265eefe8de27243e4d9d6c51b7b568fb9a090",
+  "exclusions_sha256": "0a4baf174fd13d1a8048c65faedc4e608e76807bd25fb5cf1b333c6e9d2e5fbf",
+  "rules": {
+    "source": "Artifact Hub /api/v1/packages/search?kind=0&sort=stars, offsets 0 to 240 at limit 60 (top 300 Helm packages)",
+    "publisher_cap": 2,
+    "tie_break": "stars descending, then the order Artifact Hub returned the packages in (page by page), then repository name, then package name",
+    "order": "candidates and skipped are both in rank order"
+  },
+  "counts": {
+    "ranked": 30,
+    "candidates": 18,
+    "skipped": 12,
+    "publishers": 16
+  },
+  "candidates": [
+    {
+      "rank": 1,
+      "stars": 1235,
+      "package": "kube-prometheus-stack",
+      "repository": "prometheus-community",
+      "repository_url": "https://prometheus-community.github.io/helm-charts",
+      "publisher": "prometheus-community",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/prometheus-community/helm-charts",
+      "repo": "https://prometheus-community.github.io/helm-charts",
+      "chart": "kube-prometheus-stack",
+      "version": "93.2.0"
+    },
+    {
+      "rank": 2,
+      "stars": 998,
+      "package": "cert-manager",
+      "repository": "cert-manager",
+      "repository_url": "https://charts.jetstack.io",
+      "publisher": "cert-manager",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/cert-manager/cert-manager",
+      "repo": "https://charts.jetstack.io",
+      "chart": "cert-manager",
+      "version": "1.21.3"
+    },
+    {
+      "rank": 3,
+      "stars": 557,
+      "package": "prometheus",
+      "repository": "prometheus-community",
+      "repository_url": "https://prometheus-community.github.io/helm-charts",
+      "publisher": "prometheus",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/prometheus/alertmanager",
+      "repo": "https://prometheus-community.github.io/helm-charts",
+      "chart": "prometheus",
+      "version": "29.47.1"
+    },
+    {
+      "rank": 4,
+      "stars": 507,
+      "package": "redis",
+      "repository": "bitnami",
+      "repository_url": "https://charts.bitnami.com/bitnami",
+      "publisher": "bitnami",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/bitnami/charts/tree/main/bitnami/redis",
+      "repo": "https://charts.bitnami.com/bitnami",
+      "chart": "redis",
+      "version": "28.3.12"
+    },
+    {
+      "rank": 5,
+      "stars": 431,
+      "package": "postgresql",
+      "repository": "bitnami",
+      "repository_url": "https://charts.bitnami.com/bitnami",
+      "publisher": "bitnami",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/bitnami/charts/tree/main/bitnami/postgresql",
+      "repo": "https://charts.bitnami.com/bitnami",
+      "chart": "postgresql",
+      "version": "18.12.19"
+    },
+    {
+      "rank": 7,
+      "stars": 282,
+      "package": "gitlab",
+      "repository": "gitlab",
+      "repository_url": "http://charts.gitlab.io/",
+      "publisher": "gitlab",
+      "publisher_source": "repository-name: no source link on github.com",
+      "repo": "http://charts.gitlab.io",
+      "chart": "gitlab",
+      "version": "10.5.5"
+    },
+    {
+      "rank": 9,
+      "stars": 252,
+      "package": "external-secrets",
+      "repository": "external-secrets-operator",
+      "repository_url": "https://charts.external-secrets.io/",
+      "publisher": "external-secrets-operator",
+      "publisher_source": "repository-name: no source link",
+      "repo": "https://charts.external-secrets.io",
+      "chart": "external-secrets",
+      "version": "2.15.0"
+    },
+    {
+      "rank": 11,
+      "stars": 150,
+      "package": "zeta-tie",
+      "repository": "example-repo",
+      "repository_url": "https://charts.example.test",
+      "publisher": "zeta-org",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/Zeta-Org/charts",
+      "repo": "https://charts.example.test",
+      "chart": "zeta-tie",
+      "version": "1.0.0"
+    },
+    {
+      "rank": 12,
+      "stars": 150,
+      "package": "alpha-tie",
+      "repository": "example-repo",
+      "repository_url": "https://charts.example.test",
+      "publisher": "alpha-org",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/alpha-org/charts",
+      "repo": "https://charts.example.test",
+      "chart": "alpha-tie",
+      "version": "1.0.0"
+    },
+    {
+      "rank": 14,
+      "stars": 148,
+      "package": "mixed-case-owner",
+      "repository": "example-repo",
+      "repository_url": "https://charts.example.test",
+      "publisher": "mixedcase-org",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/MixedCase-Org/charts/tree/main/x",
+      "repo": "https://charts.example.test",
+      "chart": "mixed-case-owner",
+      "version": "1.0.0"
+    },
+    {
+      "rank": 15,
+      "stars": 147,
+      "package": "no-links",
+      "repository": "example-repo",
+      "repository_url": "https://charts.example.test",
+      "publisher": "example-repo",
+      "publisher_source": "repository-name: no source link",
+      "repo": "https://charts.example.test",
+      "chart": "no-links",
+      "version": "1.0.0"
+    },
+    {
+      "rank": 18,
+      "stars": 140,
+      "package": "alpha-newest",
+      "repository": "example-repo",
+      "repository_url": "https://charts.example.test",
+      "publisher": "pin-a",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/pin-a/c",
+      "repo": "https://charts.example.test",
+      "chart": "alpha-newest",
+      "version": "15.4.2",
+      "skippedPrerelease": "16.0.0-alpha1"
+    },
+    {
+      "rank": 19,
+      "stars": 139,
+      "package": "rc-unflagged",
+      "repository": "example-repo",
+      "repository_url": "https://charts.example.test",
+      "publisher": "pin-b",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/pin-b/c",
+      "repo": "https://charts.example.test",
+      "chart": "rc-unflagged",
+      "version": "2.1.1",
+      "skippedPrerelease": "2.2.0-rc.1"
+    },
+    {
+      "rank": 21,
+      "stars": 137,
+      "package": "build-metadata",
+      "repository": "example-repo",
+      "repository_url": "https://charts.example.test",
+      "publisher": "pin-d",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/pin-d/c",
+      "repo": "https://charts.example.test",
+      "chart": "build-metadata",
+      "version": "1.2.3+build5"
+    },
+    {
+      "rank": 22,
+      "stars": 136,
+      "package": "ten-above-nine",
+      "repository": "example-repo",
+      "repository_url": "https://charts.example.test",
+      "publisher": "pin-e",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/pin-e/c",
+      "repo": "https://charts.example.test",
+      "chart": "ten-above-nine",
+      "version": "1.10.0"
+    },
+    {
+      "rank": 24,
+      "stars": 82,
+      "package": "argo-cd",
+      "repository": "argo-cd-oci",
+      "repository_url": "oci://ghcr.io/argoproj/argo-helm/argo-cd",
+      "publisher": "argoproj",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/argoproj/argo-cd",
+      "chart": "oci://ghcr.io/argoproj/argo-helm/argo-cd",
+      "version": "10.18.0"
+    },
+    {
+      "rank": 26,
+      "stars": 41,
+      "package": "redis",
+      "repository": "cloudpirates-redis",
+      "repository_url": "oci://registry-1.docker.io/cloudpirates/redis",
+      "publisher": "cloudpirates-redis",
+      "publisher_source": "repository-name: no source link",
+      "chart": "oci://registry-1.docker.io/cloudpirates/redis",
+      "version": "0.38.1"
+    },
+    {
+      "rank": 28,
+      "stars": 31,
+      "package": "prometheus-pushgateway",
+      "repository": "prometheus-community",
+      "repository_url": "https://prometheus-community.github.io/helm-charts",
+      "publisher": "prometheus",
+      "publisher_source": "github-source-link",
+      "publisher_link": "https://github.com/prometheus/pushgateway",
+      "repo": "https://prometheus-community.github.io/helm-charts",
+      "chart": "prometheus-pushgateway",
+      "version": "3.11.2"
+    }
+  ],
+  "skipped": [
+    {
+      "rank": 6,
+      "stars": 300,
+      "package": "example-deprecated",
+      "repository": "example-repo",
+      "reason": "deprecated: the search result says deprecated",
+      "class": "deprecated"
+    },
+    {
+      "rank": 8,
+      "stars": 275,
+      "package": "keycloak",
+      "repository": "bitnami",
+      "reason": "publisher cap: \"bitnami\" already has 2 charts in the list",
+      "class": "publisher-cap"
+    },
+    {
+      "rank": 10,
+      "stars": 201,
+      "package": "cilium",
+      "repository": "cilium",
+      "reason": "cni: Cilium is a CNI plugin; a cluster has one, and the experiment's kind clusters already have theirs. (exclusions.json entry 5)",
+      "class": "cni"
+    },
+    {
+      "rank": 13,
+      "stars": 149,
+      "package": "widgets-crds",
+      "repository": "example-repo",
+      "reason": "crd-only: By convention a chart named *-crds ships only CustomResourceDefinitions (linkerd-crds, prometheus-operator-crds). (exclusions.json entry 12)",
+      "class": "crd-only"
+    },
+    {
+      "rank": 16,
+      "stars": 146,
+      "package": "cni-keyword",
+      "repository": "example-repo",
+      "reason": "cni: The chart declares the Artifact Hub keyword cni. (exclusions.json entry 4)",
+      "class": "cni"
+    },
+    {
+      "rank": 17,
+      "stars": 143,
+      "package": "istiod",
+      "repository": "istio-official",
+      "reason": "mesh: Istio itself: every chart in the Artifact Hub repository istio-official (base, istiod, gateway, cni, ztunnel) installs the mesh under test. (exclusions.json entry 1)",
+      "class": "mesh"
+    },
+    {
+      "rank": 20,
+      "stars": 138,
+      "package": "only-prerelease",
+      "repository": "example-repo",
+      "reason": "no-stable-version: none of the listed versions is free of a pre-release part",
+      "class": "no-stable-version"
+    },
+    {
+      "rank": 23,
+      "stars": 90,
+      "package": "consul",
+      "repository": "hashicorp",
+      "reason": "mesh: HashiCorp's consul chart installs Consul service mesh (connect injector); the Bitnami consul chart is a key-value store and is not excluded. (exclusions.json entry 3)",
+      "class": "mesh"
+    },
+    {
+      "rank": 25,
+      "stars": 41,
+      "package": "tigera-operator",
+      "repository": "projectcalico",
+      "reason": "cni: Installs Calico, a CNI plugin. (exclusions.json entry 6)",
+      "class": "cni"
+    },
+    {
+      "rank": 27,
+      "stars": 35,
+      "package": "prometheus-operator-crds",
+      "repository": "prometheus-community",
+      "reason": "crd-only: By convention a chart named *-crds ships only CustomResourceDefinitions (linkerd-crds, prometheus-operator-crds). (exclusions.json entry 12)",
+      "class": "crd-only"
+    },
+    {
+      "rank": 29,
+      "stars": 25,
+      "package": "linkerd-viz",
+      "repository": "linkerd2",
+      "reason": "mesh: The chart declares the Artifact Hub keyword service-mesh (the Linkerd charts do). (exclusions.json entry 2)",
+      "class": "mesh"
+    },
+    {
+      "rank": 30,
+      "stars": 25,
+      "package": "common",
+      "repository": "bitnami",
+      "reason": "library: the chart type (data.type) is library",
+      "class": "library"
+    }
+  ]
+}

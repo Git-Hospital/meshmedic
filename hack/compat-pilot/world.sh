@@ -21,6 +21,15 @@
 # a tool that installs things must not be able to do it to the wrong cluster
 # by accident.
 #
+# Registry mirror (compat experiment, docs/compat-experiment.md section 5):
+# MMC_REGISTRY_MIRROR=1 gives the cluster's containerd a docker.io mirror,
+# mirror.gcr.io first and registry-1.docker.io as the fallback, identically in
+# every world, W0 included. Unset or 0 leaves the cluster exactly as the pilot
+# made it: no kind config file, no extra line in the world file. When on, the
+# world file gets a registry_mirror line naming the endpoints.
+# MMC_DRY_RUN=1 prints the kind command and config that would be used and
+# exits before touching kind, kubectl or the state directory.
+#
 # Usage:
 #   ISTIO_VERSION=1.x.y KIND_NODE_IMAGE=kindest/node:v1.x.y hack/compat-pilot/world.sh W3
 #   hack/compat-pilot/world.sh --delete W3
@@ -43,6 +52,65 @@ esac
 state="${MMC_STATE:-$PWD/.mmc-state}"
 cluster="mmc-$(tr '[:upper:]' '[:lower:]' <<<"$world")"
 export KUBECONFIG="$state/$cluster.kubeconfig"
+# The docker.io mirror. containerd reads /etc/containerd/certs.d/docker.io/
+# hosts.toml: hosts are tried in order, then `server` as the fallback. The
+# directory is mounted from the host into every node; config_path is set
+# explicitly so the lookup also works on node images that do not default it.
+mirror_endpoints="https://mirror.gcr.io,https://registry-1.docker.io"
+case "${MMC_REGISTRY_MIRROR:-0}" in
+  0 | "") mirror=0 ;;
+  1) mirror=1 ;;
+  *)
+    echo "MMC_REGISTRY_MIRROR must be 0 or 1" >&2
+    exit 2
+    ;;
+esac
+case "$state" in /*) state_abs="$state" ;; *) state_abs="$PWD/$state" ;; esac
+
+mirror_hosts_toml() {
+  cat <<'EOF'
+server = "https://registry-1.docker.io"
+
+[host."https://mirror.gcr.io"]
+  capabilities = ["pull", "resolve"]
+EOF
+}
+
+# $1 is the absolute host directory that holds docker.io/hosts.toml.
+kind_config() {
+  cat <<EOF
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+containerdConfigPatches:
+- |-
+  [plugins."io.containerd.grpc.v1.cri".registry]
+    config_path = "/etc/containerd/certs.d"
+nodes:
+- role: control-plane
+  extraMounts:
+  - hostPath: $1/docker.io
+    containerPath: /etc/containerd/certs.d/docker.io
+    readOnly: true
+EOF
+}
+
+kind_args=(create cluster --name "$cluster" --kubeconfig "$KUBECONFIG")
+if [[ "$mirror" == 1 ]]; then
+  kind_args+=(--config "$state_abs/$cluster.kind.yaml")
+fi
+kind_args+=(${KIND_NODE_IMAGE:+--image "$KIND_NODE_IMAGE"} --wait 180s)
+
+if [[ "${MMC_DRY_RUN:-}" == 1 ]]; then
+  echo "kind ${kind_args[*]}"
+  if [[ "$mirror" == 1 ]]; then
+    echo "--- kind config"
+    kind_config "$state_abs/registry-mirror"
+    echo "--- docker.io/hosts.toml"
+    mirror_hosts_toml
+  fi
+  exit 0
+fi
+
 mkdir -p "$state"
 
 # A world is created, never adopted. If a cluster by this name already exists
@@ -53,8 +121,13 @@ if kind get clusters 2>/dev/null | grep -qx "$cluster"; then
   exit 2
 fi
 
-kind create cluster --name "$cluster" --kubeconfig "$KUBECONFIG" \
-  ${KIND_NODE_IMAGE:+--image "$KIND_NODE_IMAGE"} --wait 180s
+if [[ "$mirror" == 1 ]]; then
+  mkdir -p "$state/registry-mirror/docker.io"
+  mirror_hosts_toml >"$state/registry-mirror/docker.io/hosts.toml"
+  kind_config "$state_abs/registry-mirror" >"$state/$cluster.kind.yaml"
+fi
+
+kind "${kind_args[@]}"
 
 if [[ "$world" != W0 ]]; then
   : "${ISTIO_VERSION:?pin ISTIO_VERSION for a mesh world}"
@@ -101,6 +174,9 @@ fi
     # setting istiod actually runs with is part of the world's identity.
     echo "native_sidecars=$(kubectl -n istio-system get deploy istiod -o json |
       jq -r '[.spec.template.spec.containers[0].env[]? | select(.name=="ENABLE_NATIVE_SIDECARS") | .value][0] // "default"')"
+  fi
+  if [[ "$mirror" == 1 ]]; then
+    echo "registry_mirror=docker.io:$mirror_endpoints"
   fi
   echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } >"$state/$cluster.world"

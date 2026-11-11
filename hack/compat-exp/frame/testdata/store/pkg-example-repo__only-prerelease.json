@@ -1,0 +1,33 @@
+{
+ "package_id": "00000000-0000-4000-8000-154889418229",
+ "name": "only-prerelease",
+ "normalized_name": "only-prerelease",
+ "keywords": null,
+ "links": [
+  {
+   "name": "source",
+   "url": "https://github.com/pin-c/c"
+  }
+ ],
+ "version": "0.1.0-beta.2",
+ "deprecated": false,
+ "available_versions": [
+  {
+   "version": "0.1.0-beta.2"
+  },
+  {
+   "version": "0.1.0-dev"
+  },
+  {
+   "version": "0.0.1-rc.1"
+  }
+ ],
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "example-repo",
+  "url": "https://charts.example.test",
+  "kind": 0
+ }
+}

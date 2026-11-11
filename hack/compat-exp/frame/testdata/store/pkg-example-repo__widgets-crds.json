@@ -1,0 +1,27 @@
+{
+ "package_id": "00000000-0000-4000-8000-775387287474",
+ "name": "widgets-crds",
+ "normalized_name": "widgets-crds",
+ "keywords": null,
+ "links": [
+  {
+   "name": "source",
+   "url": "https://github.com/widgets-org/crds"
+  }
+ ],
+ "version": "1.0.0",
+ "deprecated": false,
+ "available_versions": [
+  {
+   "version": "1.0.0"
+  }
+ ],
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "example-repo",
+  "url": "https://charts.example.test",
+  "kind": 0
+ }
+}
