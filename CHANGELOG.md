@@ -7,6 +7,14 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Env values inside the `last-applied-configuration` annotation are now
+  redacted.** A catalog path that reads `metadata` or `metadata.annotations` of
+  a Deployment made with `kubectl apply` no longer copies the applied spec's
+  secret-like env values and arguments into the report. The annotation is
+  parsed as JSON and redacted like any object; a value that is not JSON is
+  replaced whole. JSON inside other annotations is still not parsed.
+  (closes #33)
+
 - **Targets with unknown scenario IDs now fail startup.** `watch` and `check`
   name the target and unknown IDs before querying Prometheus. An empty scenario
   list still selects the whole catalog. (#27, closes #14)

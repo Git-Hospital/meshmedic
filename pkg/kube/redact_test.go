@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -182,5 +183,114 @@ func TestDiffTemplatesNeverHidesAChange(t *testing.T) {
 	}
 	if diff := diffTemplates(tmpl("--password=a"), tmpl("--password=a")); diff != "(no template change: restart or scale only)" {
 		t.Errorf("no change: %s", diff)
+	}
+}
+
+const lastApplied = "kubectl.kubernetes.io/last-applied-configuration"
+
+// deploymentWithAnnotation is a Deployment as kubectl apply leaves it: the applied spec, with its
+// env and args, sits in one annotation as a JSON string.
+func deploymentWithAnnotation(value string) map[string]any {
+	return map[string]any{"metadata": map[string]any{
+		"name":        "app",
+		"annotations": map[string]any{lastApplied: value, "team": "payments"},
+	}}
+}
+
+const appliedJSON = `{"apiVersion":"apps/v1","kind":"Deployment","spec":{"template":{"spec":{"containers":[{"name":"app","image":"app:1",` +
+	`"args":["--api-token=tok-fake-123","--mode=fast"],` +
+	`"env":[{"name":"DB_PASSWORD","value":"fake-pw-xyz"},{"name":"MODE","value":"fast"}]}]}}}}`
+
+// The applied spec inside the annotation is parsed and redacted like an object (#33).
+func TestExtractFieldRedactsLastAppliedAnnotation(t *testing.T) {
+	obj := deploymentWithAnnotation(appliedJSON)
+	for _, path := range []string{"metadata", "metadata.annotations"} {
+		got, err := ExtractField(obj, path)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		for _, leak := range []string{"fake-pw-xyz", "tok-fake-123"} {
+			if strings.Contains(got, leak) {
+				t.Errorf("%s leaks %q: %s", path, leak, got)
+			}
+		}
+		for _, want := range []string{"payments", `app:1`, `--mode=fast`, `[redacted]`} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s lost %q: %s", path, want, got)
+			}
+		}
+	}
+	// The key contains dots, so a catalog path cannot name it; it must not match, let alone leak.
+	if got, err := ExtractField(obj, "metadata.annotations."+lastApplied); err == nil {
+		t.Errorf("dotted key path matched: %s", got)
+	}
+}
+
+// The exact annotation key, reached as a value rather than by a dotted path.
+func TestRedactAllRedactsLastAppliedByKey(t *testing.T) {
+	annotations := map[string]any{lastApplied: appliedJSON}
+	got := renderValue(annotations)
+	if strings.Contains(got, "fake-pw-xyz") || strings.Contains(got, "tok-fake-123") {
+		t.Errorf("annotation value leaks: %s", got)
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(got), &out); err != nil {
+		t.Fatal(err)
+	}
+	var applied map[string]any
+	if err := json.Unmarshal([]byte(out[lastApplied]), &applied); err != nil {
+		t.Fatalf("annotation is no longer JSON: %v", err)
+	}
+	if annotations[lastApplied] != appliedJSON {
+		t.Error("redaction changed the object it was given")
+	}
+}
+
+// A value that is not JSON is replaced whole, since nothing can be said about what it holds.
+func TestRedactLastAppliedFailsClosed(t *testing.T) {
+	for _, bad := range []string{`not json DB_PASSWORD fake-pw-xyz`, `{"env":[{"name":"DB_PASSWORD","value":"fake-pw-xyz"}`, ``} {
+		got, err := ExtractField(deploymentWithAnnotation(bad), "metadata.annotations")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(got, "fake-pw-xyz") || strings.Contains(got, "not json") {
+			t.Errorf("non-JSON annotation passes through: %s", got)
+		}
+		if !strings.Contains(got, `"`+lastApplied+`":"[redacted]"`) {
+			t.Errorf("non-JSON annotation not replaced by the marker: %s", got)
+		}
+	}
+}
+
+// Secret-like name=value pairs nested in the annotation JSON, in args and in other strings.
+func TestRedactLastAppliedNested(t *testing.T) {
+	applied := `{"spec":{"template":{"spec":{"initContainers":[{"name":"init","command":["sh","-c","export DB_PASSWORD=fake-pw-xyz; run"]}],` +
+		`"containers":[{"name":"app","args":["--db-password=fake-pw-xyz","API_KEY=fake-key-abc"]}]}}}}`
+	got, err := ExtractField(deploymentWithAnnotation(applied), "metadata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{"fake-pw-xyz", "fake-key-abc"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("nested value leaks %q: %s", leak, got)
+		}
+	}
+}
+
+// In a rollout diff the annotation is compared after redaction, and a changed credential inside it
+// still shows that something changed.
+func TestDiffTemplatesRedactsLastAppliedAnnotation(t *testing.T) {
+	tmpl := func(pw string) map[string]any {
+		return map[string]any{"metadata": map[string]any{"annotations": map[string]any{
+			lastApplied: `{"env":[{"name":"DB_PASSWORD","value":"` + pw + `"}]}`,
+		}}}
+	}
+	oldR, newR := redactTemplates(tmpl("fake-old-1"), tmpl("fake-new-2"))
+	b, _ := json.Marshal([]any{oldR, newR})
+	if strings.Contains(string(b), "fake-old-1") || strings.Contains(string(b), "fake-new-2") {
+		t.Errorf("diff input leaks: %s", b)
+	}
+	if !strings.Contains(string(b), "redacted, changed") {
+		t.Errorf("changed credential in the annotation not marked: %s", b)
 	}
 }
