@@ -83,6 +83,15 @@ eq "report compares W1 and W3 only" "$(jq -r '.jobs.report.steps[] | select(.nam
 eq "select job runs select.sh" "$(jq -r '.jobs.select.steps[] | select(.name == "select") | .run' "$j" | grep -c 'select.sh')" 1
 eq "the qualify and observe jobs read the plan's chart list" "$(q '[.jobs.qualify.env.CHARTS_FILE, .jobs.observe.env.CHARTS_FILE] | unique | length')" 1
 
+# the post-run tools: ledger check in the guard job for certify and recheck, nothing else on the runner
+eq "the guard job sets up Go for the ledger tool" "$(jq -c '[.jobs.guard.steps[] | .uses // empty | sub("@.*"; "")]' "$j")" '["actions/checkout","actions/setup-go"]'
+eq "the ledger check step runs after the guard step" "$(jq -c '[.jobs.guard.steps[] | .name // empty]' "$j")" '["guard","ledger check"]'
+eq "the ledger check runs the ledger tool in certify and recheck only" "$(jq -c '.jobs.guard.steps[] | select(.name == "ledger check") | .run | [contains("= certify"), contains("= recheck"), contains("go run ./hack/compat-exp/ledger/cmd/ledger check")]' "$j")" '[true,true,true]'
+eq "the ledger check takes the mode through env" "$(jq -c '.jobs.guard.steps[] | select(.name == "ledger check") | .env | keys' "$j")" '["GUARD_MODE"]'
+eq "the notice step for the other tools is gone" "$(grep -c 'post-run tools present\|not invoked here' "$wf" || true)" 0
+eq "no run block calls crossrun, static.sh or staticcheck" "$(jq -r '[.jobs[].steps[]? | .run // empty] | join(" ")' "$j" | grep -c 'crossrun\|static\.sh\|staticcheck' || true)" 0
+eq "ledger is called only in the guard job" "$(jq -c '[.jobs | to_entries[] | select(.value.steps | map(.run // "") | join(" ") | test("ledger")) | .key]' "$j")" '["guard"]'
+
 # the workflow is in the guard's frozen list, and the guard exists
 eq "the workflow is a frozen file" "$(grep -c '^  \.github/workflows/compat-exp\.yml$' "$guard")" 1
 

@@ -112,6 +112,26 @@ jobs:
           GUARD_FIX_ID: ${{ inputs.fix_id }}
           GUARD_ISTIO: ${{ inputs.istio }}
         run: hack/compat-exp/guard.sh check
+      # Certification and recheck rest on the ledger (docs/compat-experiment.md
+      # sections 2 and 3: new keys, classifications), so it must pass its schema
+      # check before a cluster is built for them. The guard step above has already
+      # shown that the ledger tool is the frozen one. The other post-run tools
+      # (static.sh, crossrun) run on a maintainer's machine through
+      # hack/compat-exp/analyze.sh, not here.
+      # actions/setup-go v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+      - name: ledger check
+        env:
+          GUARD_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          if [ "$GUARD_MODE" = certify ] || [ "$GUARD_MODE" = recheck ]; then
+            go run ./hack/compat-exp/ledger/cmd/ledger check
+          else
+            echo "ledger check: not needed in mode $GUARD_MODE"
+          fi
 
   # The matrix, computed from the chart list. guard.sh fails the run if it
   # would pass 256 jobs (GitHub's limit per run).
@@ -382,16 +402,6 @@ jobs:
           echo "run id: $RUN_ID" >> "$GITHUB_STEP_SUMMARY"
           go run ./hack/compat-pilot/difftable "${args[@]}" results | tee table.md >> "$GITHUB_STEP_SUMMARY"
           go run ./hack/compat-pilot/difftable -json "${args[@]}" results > "report-$RUN_ID.json"
-      # Hook, disabled by absence: the tools below are built outside this
-      # change. This step only says which exist; it runs none of them, because
-      # their interfaces are not part of this workflow's contract yet.
-      - name: hook, post-run tools present
-        run: |
-          for tool in staticcheck ledger crossrun; do
-            if [ -d "hack/compat-exp/$tool" ]; then
-              echo "present: hack/compat-exp/$tool (not invoked here; run it on the report artifact)"
-            fi
-          done
       # actions/upload-artifact v4
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
