@@ -3,9 +3,11 @@
 # Everything CI runs, in the order it runs it.
 all: fmt-check build vet test validate check-lock
 
-# Fails and lists the files when gofmt would change any.
+# Fails and lists the files when gofmt would change any, and fails when gofmt
+# itself does, as on a file it cannot parse.
 fmt-check:
-	@test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
+	@unformatted="$$(gofmt -l .)" || exit 1; \
+	test -z "$$unformatted" || { echo "$$unformatted"; exit 1; }
 
 build:
 	go build ./...
