@@ -66,7 +66,10 @@
 #     entry names, the world W0, W1 or W3, and each record says the chart, world and run of
 #     its directory and file name. A flat results/ (the old layout), a missing or empty one, an
 #     extra or unexpected file, and zero records for a report chart or (runs 1 and 2) for a
-#     chart of the frozen list stop the script.
+#     chart of the frozen list stop the script. Before anything reads a download the whole
+#     download is refused if it holds a symbolic link, anything but regular files and
+#     directories, a name outside [A-Za-z0-9._-], a name starting with a dot or containing "..";
+#     the qualification artifact holds only out/charts-exp.json and qual/ID.qualify.json.
 #  4. The sample is not choosable after data exists: the qualification run's records
 #     (artifact charts-exp-ID, qual/) are downloaded, select.sh is run on them and on the
 #     committed candidates.json, and the result must be byte-identical to the chart list.
@@ -246,6 +249,20 @@ export STATICCHECK
 
 # --- what a download may hold -------------------------------------------------------------------
 
+# check_download DIR LABEL: right after every download, before anything reads it. The
+# whole download is refused if it holds a symbolic link, anything that is not a regular
+# file or a directory, or a name (any path component) that does not fit [A-Za-z0-9._-],
+# starts with a dot or contains "..".
+check_download() {
+  local dir="$1" label="$2" bad
+  bad="$(find "$dir" -type l -print -quit)"
+  [[ -z "$bad" ]] || die "$label: the download holds a symbolic link ($(printf '%s' "$bad" | tr -c '[:print:]' '?')); refused"
+  bad="$(find "$dir" ! -type f ! -type d -print -quit)"
+  [[ -z "$bad" ]] || die "$label: the download holds something that is not a regular file ($(printf '%s' "$bad" | tr -c '[:print:]' '?')); refused"
+  bad="$(LC_ALL=C find "$dir" -mindepth 1 \( -name '.*' -o -name '*..*' -o -name '*[!A-Za-z0-9._-]*' \) -print -quit)"
+  [[ -z "$bad" ]] || die "$label: the download holds a file name outside the strict pattern ([A-Za-z0-9._-], no leading dot, no ..): $(printf '%s' "$bad" | tr -c '[:print:]' '?'); refused"
+}
+
 # The chart ids the frozen list predicts: charts and reserves, and the fix entries of the
 # committed fixes files (certification runs record those under the fix id).
 allowed_ids="$tmp/allowed-ids"
@@ -254,6 +271,28 @@ allowed_ids="$tmp/allowed-ids"
   for f in "$root"/hack/compat-exp/fixes/*.json; do [[ -f "$f" ]] && jq -r '.[]?.id' "$f"; done
 } 2>/dev/null | sort -u >"$allowed_ids"
 [[ -s "$allowed_ids" ]] || die "$charts_rel lists no chart"
+
+# check_toplevel ROLE ID DIR: the artifact holds only what the workflow's upload step names.
+check_toplevel() {
+  local role="$1" id="$2" dir="$3" want e
+  shopt -s nullglob
+  if [[ "$role" == qualification ]]; then want="out qual"; else want="report-$id.json table.md results"; fi
+  for e in "$dir"/*; do
+    e="${e##*/}"
+    [[ " $want " == *" $e "* ]] || die "run $id: its artifact holds an unexpected top-level entry '$e' (expected: $want)"
+  done
+  if [[ "$role" == qualification ]]; then
+    [[ -d "$dir/out" && -d "$dir/qual" ]] || die "run $id: its artifact holds no out/ and qual/"
+    [[ "$(find "$dir/out" -type f | wc -l | tr -d ' ')" == 1 && -f "$dir/out/charts-exp.json" && -z "$(find "$dir/out" -mindepth 1 -type d -print -quit)" ]] ||
+      die "run $id: out/ must hold charts-exp.json and nothing else"
+    local f n
+    while IFS= read -r f; do
+      n="$(basename "$f")"
+      [[ -f "$f" && "$n" == *.qualify.json && "$(dirname "$f")" == "$dir/qual" ]] || die "run $id: unexpected entry in qual/: ${f#"$dir"/}"
+      [[ "$(jq -r .id "$f" 2>/dev/null)" == "${n%.qualify.json}" ]] || die "run $id: qual/$n does not say it is the record of ${n%.qualify.json}"
+    done < <(find "$dir/qual" -mindepth 1)
+  fi
+}
 
 # check_records ROLE ID DIR: results/ has the layout of the workflow's report artifact:
 # exp-<run id>-<chart>-<world>/<chart>.<world>.run<1-3>.json, charts the frozen list (or a
@@ -322,6 +361,8 @@ fetch_run() {
 
   gh_ run download "$id" -n "$artifact" -D "$d" >"$tmp/dl.log" 2>&1 ||
     die "gh run download $id failed: $(tail -2 "$tmp/dl.log" | tr '\n' ' ')"
+  check_download "$d" "run $id"
+  check_toplevel "$role" "$id" "$d"
 
   # the run metadata: one artifact per attempt, written by the guard job only
   local meta mode istio recs_istio m ref first="" nm=0 mw
@@ -339,6 +380,7 @@ fetch_run() {
       rm -rf "$m"
       continue
     fi
+    check_download "$m" "run $id (run-metadata-$id-$n)"
     meta="$m/run-metadata.json"
     [[ -f "$meta" && ! -L "$meta" && -z "$(find "$m" -mindepth 1 ! -name run-metadata.json -print -quit)" ]] ||
       die "run $id: run-metadata-$id-$n must hold the one file run-metadata.json"

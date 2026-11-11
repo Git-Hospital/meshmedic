@@ -350,9 +350,27 @@ refuses "a file of another chart in a directory" 12 bash -c 'cp results/exp-12-a
 refuses "a record that says another chart" 12 bash -c 'jq ".chart = \"app-2\"" results/exp-12-app-1-W1/app-1.W1.run1.json > x && mv x results/exp-12-app-1-W1/app-1.W1.run1.json' "does not say the chart, world and run"
 refuses "a record that says another world" 12 bash -c 'jq ".world = \"W3\"" results/exp-12-app-1-W1/app-1.W1.run1.json > x && mv x results/exp-12-app-1-W1/app-1.W1.run1.json' "does not say the chart, world and run"
 refuses "a record that says another run" 12 bash -c 'jq ".run = 2" results/exp-12-app-1-W1/app-1.W1.run1.json > x && mv x results/exp-12-app-1-W1/app-1.W1.run1.json' "does not say the chart, world and run"
+refuses "an unexpected top-level file in the report artifact" 12 bash -c 'echo x > extra.txt' "unexpected top-level entry"
 XARGS=(--cert 13 --cert 14)
 refuses "the report of a chart without records" 13 bash -c 'echo "{\"schema\":1,\"charts\":[{\"chart\":\"app-55\"}]}" > report-13.json' "holds no record of it"
 refuses "a certification run with no records" 13 bash -c 'rm -rf results/*' "holds no records at all"
+XARGS=()
+# every download: a symbolic link, a non-regular file, a bad name, a dot file, a .. in a name
+for what in "report artifact:12:results/exp-12-app-1-W1" "metadata artifact:12.meta-1:." "qualification artifact:7001:qual"; do
+  label="${what%%:*}"; rest="${what#*:}"; id="${rest%%:*}"; sub="${rest#*:}"
+  tgt="$T/fix/$id/$sub"
+  [[ "$id" == 12.meta-1 ]] && tgt="$T/fix/12.meta-1"
+  ln -s /etc/hosts "$tgt/link.json"; an "${A[@]}"; eq "a symbolic link in the $label: refused" "$rc" 1; says "  and says so" "symbolic link"; resetall
+  mkfifo "$tgt/pipe.json"; an "${A[@]}"; eq "a named pipe in the $label: refused" "$rc" 1; says "  and says so" "not a regular file"; resetall
+  echo x >"$tgt/.hidden"; an "${A[@]}"; eq "a dot file in the $label: refused" "$rc" 1; says "  and says so" "strict pattern"; resetall
+  echo x >"$tgt/a b.json"; an "${A[@]}"; eq "a file name with a space in the $label: refused" "$rc" 1; says "  and says so" "strict pattern"; resetall
+  echo x >"$tgt/a..b.json"; an "${A[@]}"; eq "a file name containing .. in the $label: refused" "$rc" 1; says "  and says so" "strict pattern"; resetall
+  mkdir "$tgt/.git"; an "${A[@]}"; eq "a directory starting with a dot in the $label: refused" "$rc" 1; says "  and says so" "strict pattern"; resetall
+done
+refuses "an unexpected file in out/ of the qualification artifact" 7001 bash -c 'echo x > out/other.json' "out/ must hold"
+refuses "an unexpected file in qual/ of the qualification artifact" 7001 bash -c 'echo x > qual/notes.json' "unexpected entry in qual/"
+refuses "a qualification record that is another chart's" 7001 bash -c 'jq ".id = \"app-2\"" qual/app-1.qualify.json > x && mv x qual/app-1.qualify.json' "does not say it is the record of app-1"
+
 # ledger failure: after all of the above checks pass
 N="$T/badledger"; rm -rf "$N"; cp -R "$R" "$N"
 echo '{"schema":1,"rows":[{"chart":"x"}],"newKeys":[]}' >"$N/hack/compat-exp/ledger.json"
