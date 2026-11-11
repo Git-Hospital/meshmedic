@@ -1,0 +1,379 @@
+{
+  "schemaVersion": 1,
+  "preRegistration": "docs/compat-experiment.md, section 3",
+  "tool": "hack/compat-exp/staticcheck",
+  "checkedOn": "2026-11-11",
+  "istioIo": {
+    "site": "https://istio.io/latest/ (Istio 1.32 documentation on the check date)",
+    "repository": "istio/istio.io",
+    "ref": "release-1.32",
+    "commitMeaning": "istioIoCommit is the last commit on ref that touched sourcePath, read through the GitHub API on checkedOn",
+    "alsoChecked": "every quote is also in the same source files on release-1.31, the documentation of the Istio version the runs use"
+  },
+  "quoteForm": "Quotes are the rendered page text: markup and backticks removed, typographic apostrophes written as ASCII. Each quote and heading was found on the live page on checkedOn.",
+  "keys": [
+    {
+      "key": "ambient-np",
+      "mechanism": "A NetworkPolicy of the chart drops ambient's HBONE traffic on port 15008, or the kubelet probes that ambient sends from 169.254.7.127.",
+      "anchor": {
+        "url": "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
+        "sourcePath": "content/en/docs/ambient/usage/networkpolicy/index.md",
+        "heading": "Ambient traffic overlay and Kubernetes NetworkPolicy",
+        "quote": "However, NetworkPolicy is enforced on the host, outside the pod. This means that if you have preexisting NetworkPolicy in place that, for example, will deny list inbound traffic to an ambient pod on every port but 443, you will have to add an exception to that NetworkPolicy for port 15008.",
+        "istioIoCommit": "198c2dcf97e4737567c77e21e9707f270c7caa8e",
+        "checkedOn": "2026-11-11"
+      },
+      "additionalAnchors": [
+        {
+          "url": "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
+          "sourcePath": "content/en/docs/ambient/usage/networkpolicy/index.md",
+          "heading": "Ambient, health probes, and Kubernetes NetworkPolicy",
+          "quote": "This behavior is transparently enabled when you add pods to the ambient mesh, and by default ambient uses the link-local addresses 169.254.7.127 (IPv4) and fd16:9254:7127:1337:ffff:ffff:ffff:ffff (IPv6) to identify and correctly allow kubelet health probe packets.",
+          "istioIoCommit": "198c2dcf97e4737567c77e21e9707f270c7caa8e",
+          "checkedOn": "2026-11-11"
+        },
+        {
+          "url": "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
+          "sourcePath": "content/en/docs/ambient/usage/networkpolicy/index.md",
+          "heading": "Ambient, health probes, and Kubernetes NetworkPolicy",
+          "quote": "Note: If your workload, namespace, or cluster enforces Kubernetes NetworkPolicy, you must allow both the IPv4 and IPv6 addresses used by ambient mode.",
+          "istioIoCommit": "198c2dcf97e4737567c77e21e9707f270c7caa8e",
+          "checkedOn": "2026-11-11"
+        }
+      ],
+      "worlds": [
+        "W3"
+      ],
+      "staticCheck": "np-hbone-probe",
+      "staticCheckRule": "In W3, a pod in the mesh that a NetworkPolicy isolates for ingress is flagged when no ingress rule of the policies selecting it admits TCP 15008, or when a kubelet probe port of the pod is not admitted from 169.254.7.127. A rule admits a port when its ports list is empty or has a TCP entry that omits the port, names it, names a container port with that number, or is a range covering it; it admits 169.254.7.127 when its from list is empty or has an ipBlock whose cidr covers the address and whose except list does not.",
+      "staticCheckWorlds": [
+        "W3"
+      ],
+      "expectedBreadth": {
+        "guess": true,
+        "underBound": "uncertain, possibly over",
+        "falsePositiveClass": "charts whose default NetworkPolicy blocks 15008 between components whose broken traffic the observations cannot see (client-first TCP between the chart's own pods); argo-cd 10.11.1 in pilot 1 is one",
+        "note": "ambient-np is excluded from S (section 1), so the bound does not decide anything for this key"
+      },
+      "requirementKeyHint": "a values key documented as admitting ambient's HBONE port 15008 or the probe address 169.254.7.127 in the chart's NetworkPolicy (for example networkPolicy.allowAmbient or networkPolicy.hbone.enabled); networkPolicy.extraIngress is generic and does not count",
+      "notes": "The IPv6 probe address is not checked: the worlds are IPv4-only kind clusters. Peers (from) are not evaluated for 15008: HBONE arrives from the same client pods the rule already admits on the app port."
+    },
+    {
+      "key": "protocol",
+      "mechanism": "The protocol Istio declares or detects for a Service port is not what the port carries, server-first protocols included.",
+      "anchor": {
+        "url": "https://istio.io/latest/docs/ops/deployment/application-requirements/",
+        "sourcePath": "content/en/docs/ops/deployment/application-requirements/index.md",
+        "heading": "Server First Protocols",
+        "quote": "Both of these features work by inspecting the initial bytes of a connection to determine the protocol, which is incompatible with server first protocols. In order to support these cases, follow the Explicit protocol selection steps to declare the protocol of the application as TCP.",
+        "istioIoCommit": "5bb3795f2eab2e45a6fd3668a2e4775b199dae72",
+        "checkedOn": "2026-11-11"
+      },
+      "additionalAnchors": [
+        {
+          "url": "https://istio.io/latest/docs/ops/deployment/application-requirements/",
+          "sourcePath": "content/en/docs/ops/deployment/application-requirements/index.md",
+          "heading": "Server First Protocols",
+          "quote": "The following ports are known to commonly carry server first protocols, and are automatically assumed to be TCP:",
+          "istioIoCommit": "5bb3795f2eab2e45a6fd3668a2e4775b199dae72",
+          "checkedOn": "2026-11-11"
+        },
+        {
+          "url": "https://istio.io/latest/docs/ops/deployment/application-requirements/",
+          "sourcePath": "content/en/docs/ops/deployment/application-requirements/index.md",
+          "heading": "Pod requirements",
+          "quote": "If a pod belongs to multiple Kubernetes services, the services cannot use the same port number for different protocols, for instance HTTP and TCP.",
+          "istioIoCommit": "5bb3795f2eab2e45a6fd3668a2e4775b199dae72",
+          "checkedOn": "2026-11-11"
+        },
+        {
+          "url": "https://istio.io/latest/docs/ops/configuration/traffic-management/protocol-selection/",
+          "sourcePath": "content/en/docs/ops/configuration/traffic-management/protocol-selection/index.md",
+          "heading": "Explicit protocol selection",
+          "quote": "If both are defined, appProtocol takes precedence over the port name.",
+          "istioIoCommit": "0abe8b4eb61e331b93167c60d29e7be6a2d07d42",
+          "checkedOn": "2026-11-11"
+        }
+      ],
+      "worlds": [
+        "W1"
+      ],
+      "staticCheck": "protocol-declared",
+      "staticCheckRule": "In W1, a TCP port of a Service that selects a pod in the mesh is flagged when its number is one of the server-first ports Istio documents (25, 53, 3306, 27017) and its appProtocol, else its name prefix, declares http, http2, grpc, grpc-web or http_proxy. A pod in the mesh is flagged when two of its Service ports target the same container port with different declared protocols (classes http, http2, tls, tcp; undeclared ports are not compared).",
+      "staticCheckWorlds": [
+        "W1"
+      ],
+      "expectedBreadth": {
+        "guess": true,
+        "underBound": "likely",
+        "falsePositiveClass": "one container port declared http by one Service port and https or grpc by another, where the app multiplexes and the probes still pass (argo-cd 10.11.1 server in pilot 1)",
+        "note": "The documentation names no server-first port that Istio does not already treat as TCP, so an undeclared server-first protocol on another port (NATS 4222, for example) cannot be seen statically and a finding of that kind is missed: the narrowness is the documentation's, not tuned."
+      },
+      "requirementKeyHint": "a values key that sets one port's appProtocol or protocol-prefixed name, documented as such (for example service.ports.client.appProtocol); service annotations or a free-form ports list do not count",
+      "notes": "W3 is out: ztunnel carries bytes and does not sniff, and the dataplane-modes page lists server-first protocols as supported in ambient. Protocol selection follows ConvertProtocol in istio/istio 1.31.3 (pkg/config/kube/conversion.go)."
+    },
+    {
+      "key": "bind-address",
+      "mechanism": "The app listens on an address the proxy does not forward to.",
+      "anchor": {
+        "url": "https://istio.io/latest/docs/reference/config/analysis/ist0143/",
+        "sourcePath": "content/en/docs/reference/config/analysis/ist0143/index.md",
+        "heading": "LocalhostListener",
+        "quote": "This message occurs when a workload is listening on a localhost network interface, but the port is exposed in the Service. When this occurs, the port will not be accessible to other pods.",
+        "istioIoCommit": "9140d5208c2c8b122af1fc3108f80da1f08880a4",
+        "checkedOn": "2026-11-11"
+      },
+      "additionalAnchors": [
+        {
+          "url": "https://istio.io/latest/docs/reference/config/analysis/ist0143/",
+          "sourcePath": "content/en/docs/reference/config/analysis/ist0143/index.md",
+          "heading": "LocalhostListener",
+          "quote": "This behavior matches what would occur in a standard Kubernetes cluster without Istio, but older versions of Istio exposed these ports.",
+          "istioIoCommit": "9140d5208c2c8b122af1fc3108f80da1f08880a4",
+          "checkedOn": "2026-11-11"
+        }
+      ],
+      "worlds": [
+        "W1",
+        "W3"
+      ],
+      "staticCheck": null,
+      "noStaticCheckReason": "The bind address is set in the app's configuration, arguments or code, not in a field Kubernetes defines, so a rendered manifest does not show it; Istio's own IST0143 needs a runtime look at the pod's sockets and is left out of istioctl analyze for that reason.",
+      "expectedBreadth": null,
+      "requirementKeyHint": "a values key documented as the address the server listens on (for example server.listenAddress or bindAddress: 0.0.0.0)",
+      "notes": "Section 3 anchors this key on application-requirements, which states no bind-address requirement in 1.31 or 1.32; the statement is on the IST0143 page, which also says that since Istio 1.10 a localhost listener fails the same way without Istio, so this key may produce no W0 difference at all."
+    },
+    {
+      "key": "uid-1337",
+      "mechanism": "The app runs as UID 1337, the proxy's UID, so the sidecar's redirection lets its traffic through unproxied.",
+      "anchor": {
+        "url": "https://istio.io/latest/docs/ops/deployment/application-requirements/",
+        "sourcePath": "content/en/docs/ops/deployment/application-requirements/index.md",
+        "heading": "Pod requirements",
+        "quote": "Application UIDs: Ensure your pods do not run applications as a user with the user ID (UID) value of 1337 because 1337 is reserved for the sidecar proxy.",
+        "istioIoCommit": "5bb3795f2eab2e45a6fd3668a2e4775b199dae72",
+        "checkedOn": "2026-11-11"
+      },
+      "additionalAnchors": [],
+      "worlds": [
+        "W1"
+      ],
+      "staticCheck": "uid-1337",
+      "staticCheckRule": "In W1, a container or init container of a pod in the mesh is flagged when its effective runAsUser (the container's securityContext, else the pod's) is 1337.",
+      "staticCheckWorlds": [
+        "W1"
+      ],
+      "expectedBreadth": {
+        "guess": true,
+        "underBound": "likely, well under",
+        "falsePositiveClass": "none expected; the miss is an image whose USER is 1337 with no runAsUser in the manifest, which a rendered chart cannot show",
+        "note": ""
+      },
+      "requirementKeyHint": "a scalar values key that sets the app's UID (for example podSecurityContext.runAsUser or containerSecurityContext.runAsUser); a free-form securityContext map passed through unchanged is generic",
+      "notes": "W3 is out: ambient's in-pod rules match packet mark 1337, not a UID (traffic-redirection page)."
+    },
+    {
+      "key": "reserved-port",
+      "mechanism": "The app uses a port Istio uses inside the pod.",
+      "anchor": {
+        "url": "https://istio.io/latest/docs/ops/deployment/application-requirements/",
+        "sourcePath": "content/en/docs/ops/deployment/application-requirements/index.md",
+        "heading": "Ports used by Istio",
+        "quote": "To avoid port conflicts with sidecars, applications should not use any of the ports used by Envoy.",
+        "istioIoCommit": "5bb3795f2eab2e45a6fd3668a2e4775b199dae72",
+        "checkedOn": "2026-11-11"
+      },
+      "additionalAnchors": [
+        {
+          "url": "https://istio.io/latest/docs/ambient/architecture/traffic-redirection/",
+          "sourcePath": "content/en/docs/ambient/architecture/traffic-redirection/index.md",
+          "heading": "Istio's in-pod traffic redirection model",
+          "quote": "it should establish local proxy listening ports inside the pod's network namespace (on ports 15008, 15006, and 15001)",
+          "istioIoCommit": "6cccc93391f0e6b578b3f8896cbb499b98388c1b",
+          "checkedOn": "2026-11-11"
+        }
+      ],
+      "worlds": [
+        "W1",
+        "W3"
+      ],
+      "staticCheck": "reserved-port",
+      "staticCheckRule": "A pod in the mesh is flagged when a container declares, or a Service selecting it targets, a TCP port Istio uses inside the pod: in W1 15000, 15001, 15002, 15004, 15006, 15008, 15020, 15021, 15053 or 15090 (the sidecar's ports), in W3 15001, 15006 or 15008 (ztunnel's in-pod listeners).",
+      "staticCheckWorlds": [
+        "W1",
+        "W3"
+      ],
+      "expectedBreadth": {
+        "guess": true,
+        "underBound": "likely, well under",
+        "falsePositiveClass": "a declared containerPort in the list that the app never listens on",
+        "note": "the W1 list is the sidecar table (Pod-internal or not); istiod's ports are left out because they belong to the control plane's pods"
+      },
+      "requirementKeyHint": "a values key documented as the port the app listens on (for example containerPorts.metrics or metrics.port)",
+      "notes": "Section 3 names only application-requirements, whose table is the sidecar's; the W3 list comes from the ambient traffic-redirection page."
+    },
+    {
+      "key": "startup-order",
+      "mechanism": "The app, or an init container, needs the network before its proxy is ready.",
+      "anchor": {
+        "url": "https://istio.io/latest/docs/ops/common-problems/injection/",
+        "sourcePath": "content/en/docs/ops/common-problems/injection/index.md",
+        "heading": "Pod or containers start with network issues if istio-proxy is not ready",
+        "quote": "Many applications execute commands or checks during startup, which require network connectivity. This can cause application containers to hang or restart if the istio-proxy sidecar container is not ready.",
+        "istioIoCommit": "fb7fd2171bce5ddffacdc68cfa986a7256f83ae0",
+        "checkedOn": "2026-11-11"
+      },
+      "additionalAnchors": [
+        {
+          "url": "https://istio.io/latest/blog/2023/native-sidecars/",
+          "sourcePath": "content/en/blog/2023/native-sidecars/index.md",
+          "heading": "Sidecar woes",
+          "quote": "InitContainers, which run before Istio's container starts, cannot access the network.",
+          "istioIoCommit": "cf0160972b6346048cf0a6e57392a2ccfd855496",
+          "checkedOn": "2026-11-11"
+        },
+        {
+          "url": "https://istio.io/latest/docs/reference/config/annotations/",
+          "sourcePath": "content/en/docs/reference/config/annotations/index.html",
+          "heading": "sidecar.istio.io/nativeSidecar",
+          "quote": "Specifies if the istio-proxy sidecar should be injected as a native sidecar or not. Takes precedence over the ENABLE_NATIVE_SIDECARS environment variable.",
+          "istioIoCommit": "5388949b491bdfcb98d9991d687da158d1e41529",
+          "checkedOn": "2026-11-11"
+        }
+      ],
+      "worlds": [
+        "W1"
+      ],
+      "staticCheck": "classic-sidecar-startup",
+      "staticCheckRule": "In W1, a pod in the mesh whose proxy is a classic sidecar (pod annotation sidecar.istio.io/nativeSidecar set to false, or native sidecars off in the world) is flagged when it has init containers, or when its proxy.istio.io/config annotation does not set holdApplicationUntilProxyStarts to true.",
+      "staticCheckWorlds": [
+        "W1"
+      ],
+      "expectedBreadth": {
+        "guess": true,
+        "underBound": "likely, near 0%",
+        "falsePositiveClass": "pods that opt out of native sidecars and whose init containers or start do not need the network",
+        "note": "with native sidecars on (the pinned worlds) the proxy starts before init containers and the app, so the check can only flag pods that opt out; a startup finding on a native-sidecar pod is missed by design"
+      },
+      "requirementKeyHint": "a values key documented as setting holdApplicationUntilProxyStarts for the chart's pods, or as an Istio or mesh startup option (for example istio.holdApplicationUntilProxyStarts); podAnnotations does not count",
+      "notes": "Section 3 gives holdApplicationUntilProxyStarts without a page; it is on ops/common-problems/injection."
+    },
+    {
+      "key": "job-lifecycle",
+      "mechanism": "The proxy keeps running after the app exits, so a Job or test pod never completes.",
+      "anchor": {
+        "url": "https://istio.io/latest/blog/2023/native-sidecars/",
+        "sourcePath": "content/en/blog/2023/native-sidecars/index.md",
+        "heading": "Sidecar woes",
+        "quote": "If an application container intentionally exits (typically from usage in a Job), Istio's container will still run and keep the pod running indefinitely.",
+        "istioIoCommit": "cf0160972b6346048cf0a6e57392a2ccfd855496",
+        "checkedOn": "2026-11-11"
+      },
+      "additionalAnchors": [
+        {
+          "url": "https://istio.io/latest/docs/reference/config/annotations/",
+          "sourcePath": "content/en/docs/reference/config/annotations/index.html",
+          "heading": "sidecar.istio.io/nativeSidecar",
+          "quote": "Specifies if the istio-proxy sidecar should be injected as a native sidecar or not. Takes precedence over the ENABLE_NATIVE_SIDECARS environment variable.",
+          "istioIoCommit": "5388949b491bdfcb98d9991d687da158d1e41529",
+          "checkedOn": "2026-11-11"
+        }
+      ],
+      "worlds": [
+        "W1"
+      ],
+      "staticCheck": "classic-sidecar-job",
+      "staticCheckRule": "In W1, a Job, a CronJob, or a bare Pod with restartPolicy Never or OnFailure, whose pod is in the mesh, is flagged when its proxy is a classic sidecar (pod annotation sidecar.istio.io/nativeSidecar set to false, or native sidecars off in the world).",
+      "staticCheckWorlds": [
+        "W1"
+      ],
+      "expectedBreadth": {
+        "guess": true,
+        "underBound": "likely, near 0%",
+        "falsePositiveClass": "opted-out Jobs that end their proxy themselves (a call to /quitquitquit)",
+        "note": "with native sidecars on, the proxy ends with the Job; pilot 1 saw no Job held open in any world"
+      },
+      "requirementKeyHint": "a values key documented as ending the proxy when the Job finishes or as choosing native sidecars for the chart's Jobs (for example job.istio.quitProxy or a nativeSidecar switch); podAnnotations does not count",
+      "notes": "No istio.io documentation page states the Job requirement as a requirement; the statement is in the native sidecars blog post (section 3: 'native sidecars'), and the docs page overview/dataplane-modes only has a table cell ('Complicated by long life of sidecar')."
+    },
+    {
+      "key": "apiserver-caller",
+      "mechanism": "kube-apiserver, outside the mesh, cannot reach a webhook or APIService backend that is in the mesh under STRICT mTLS.",
+      "anchor": null,
+      "noAnchorReason": "No istio.io page found that says kube-apiserver, webhooks or APIServices cannot reach in-mesh backends under STRICT; searched application-requirements, the security FAQ, mtls-migration, security-model, common-problems (injection, security, network), app-health-check and the ambient pages. The nearest statement is general (any non-Istio client) and would equally anchor the 'callers outside the mesh' blind spot that section 5 excludes.",
+      "nearestStatement": {
+        "url": "https://istio.io/latest/about/faq/security/",
+        "sourcePath": "content/en/about/faq/security/non-istio-to-istio.md",
+        "heading": "If mutual TLS is globally enabled, can non-Istio services access Istio services?",
+        "quote": "When STRICT mutual TLS is enabled, non-Istio workloads cannot communicate to Istio services, as they will not have a valid Istio client certificate.",
+        "istioIoCommit": "317f91c336955a9e2005c6cabb03521b897b176a",
+        "checkedOn": "2026-11-11"
+      },
+      "needsNewKeyRule": true,
+      "worlds": [
+        "W1",
+        "W3"
+      ],
+      "staticCheck": "webhook-backend-in-mesh",
+      "staticCheckRule": "A webhook of a ValidatingWebhookConfiguration or MutatingWebhookConfiguration, an APIService, or a CustomResourceDefinition conversion webhook is flagged when its service reference names a Service port the chart renders whose Service selects a pod in the mesh of the world. In W1 it is not flagged when the pod's traffic.sidecar.istio.io/excludeInboundPorts or includeInboundPorts annotation keeps the target port out of the sidecar.",
+      "staticCheckWorlds": [
+        "W1",
+        "W3"
+      ],
+      "expectedBreadth": {
+        "guess": true,
+        "underBound": "unlikely, unless E1 differs for these charts",
+        "falsePositiveClass": "operator charts with webhooks whose failurePolicy is Ignore or that are never called during an install, so only E1 can show a difference (kube-prometheus-stack and cloudnative-pg in pilot 1, both 'same' before E1 existed)",
+        "note": "if E1 differs for at least 90% of the charts with E1 keys, rule 5 excludes the class as world-universal and the key counts nothing (section 5)"
+      },
+      "requirementKeyHint": "a values key documented as keeping the webhook port out of the mesh or as a port-level PERMISSIVE policy for it (for example webhook.istio.excludeInboundPorts); disabling the webhook is generic (it disables a component)",
+      "notes": "With anchor null the key counts only through the new-key rule's anchor requirement (section 3); the check is still frozen here so S could be scored if the key is admitted."
+    },
+    {
+      "key": "ambient-l7",
+      "mechanism": "The chart's L7 Istio or Gateway API mesh configuration needs a waypoint in ambient, and the chart renders none.",
+      "anchor": {
+        "url": "https://istio.io/latest/docs/ambient/usage/l7-features/",
+        "sourcePath": "content/en/docs/ambient/usage/l7-features/index.md",
+        "heading": "Considerations for authorization policies",
+        "quote": "The ztunnel cannot enforce L7 policies. If a policy with rules matching L7 attributes is targeted with a workload selector (rather than attached with a targetRef), such that it is enforced by a ztunnel, it will fail safe by becoming a DENY policy.",
+        "istioIoCommit": "f0b453114fe62ee1c972a5ca4a515428767b1132",
+        "checkedOn": "2026-11-11"
+      },
+      "additionalAnchors": [
+        {
+          "url": "https://istio.io/latest/docs/ambient/usage/l7-features/",
+          "sourcePath": "content/en/docs/ambient/usage/l7-features/index.md",
+          "heading": "Traffic routing",
+          "quote": "With a waypoint proxy deployed, you can use the following traffic route types:",
+          "istioIoCommit": "f0b453114fe62ee1c972a5ca4a515428767b1132",
+          "checkedOn": "2026-11-11"
+        },
+        {
+          "url": "https://istio.io/latest/docs/ambient/usage/l4-policy/",
+          "sourcePath": "content/en/docs/ambient/usage/l4-policy/index.md",
+          "heading": "Allowed policy attributes",
+          "quote": "This list of attributes determines whether a policy is considered L4-only:",
+          "istioIoCommit": "5453c1c4b1589e1335d1a0a93f6c9bba5e350a94",
+          "checkedOn": "2026-11-11"
+        }
+      ],
+      "worlds": [
+        "W3"
+      ],
+      "staticCheck": "l7-without-waypoint",
+      "staticCheckRule": "In W3, when the chart renders no Gateway of gatewayClassName istio-waypoint, an AuthorizationPolicy without targetRef or targetRefs is flagged when a rule uses an attribute outside the L4 list on Istio's ambient L4 policy page. So is a VirtualService bound to the mesh (gateways empty or containing mesh) with http routes, and an HTTPRoute or GRPCRoute with a Service parentRef.",
+      "staticCheckWorlds": [
+        "W3"
+      ],
+      "expectedBreadth": {
+        "guess": true,
+        "underBound": "likely, well under",
+        "falsePositiveClass": "DENY policies with only L7 attributes, which ztunnel skips so nothing breaks (l4-policy page), and Istio resources whose CRDs are absent so the API server refuses them in every world",
+        "note": "default installs rarely render Istio or GAMMA resources"
+      },
+      "requirementKeyHint": "a values key documented as creating or naming a waypoint for the chart, or attaching its policies with targetRefs (for example istio.waypoint.enabled or authorizationPolicy.targetRefs)",
+      "notes": "The l7-features page says a selector-targeted L7 policy becomes DENY; the l4-policy page ('Policies with Layer 7 conditions') says a DENY policy with only L7 attributes allows traffic. The check follows the anchor and flags both; the DENY case is in the false-positive class."
+    }
+  ]
+}
