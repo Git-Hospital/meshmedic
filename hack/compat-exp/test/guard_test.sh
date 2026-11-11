@@ -31,6 +31,7 @@ sha() { shasum -a 256 | cut -d' ' -f1; }
 # hash select.sh would store.
 mklist() {
   jq -n --argjson n "$1" '{schema: 1, installDeadlineSeconds: 600,
+    qualification: {run: "7001", candidatesSha256: ("a" * 64), recordsSha256: ("b" * 64)},
     charts: [range(1; $n + 1) as $i | {id: "c\($i)", chart: "c\($i)", version: "1.0.0", repo: "https://example.test/\($i)", deadline: "600s"}],
     reserves: [{id: "r1", chart: "r1", version: "1.0.0", deadline: "600s"}, {id: "r2", chart: "oci://example.test/r2", version: "2.0.0", deadline: "600s"}]}' |
     jq -S . >"$2.body"
@@ -106,6 +107,48 @@ ISTIO=1.32.0 g "$r" acceptance
 refuses "acceptance runs on the primary version only" "runs on Istio"
 g "$r" acceptance GUARD_CHARTS_FILE=hack/compat-exp/charts-exp.json
 refuses "acceptance takes only its own list" "acceptance runs"
+
+# --- guard.sh freeze: the freeze alone, for analyze.sh ----------------------------------
+
+d="$tmp/fz"
+newrepo "$d"
+pre="$(git -C "$d" rev-parse HEAD)"
+CMD=freeze g "$d" observe
+refuses "freeze without the tag" "does not exist"
+echo "second" >"$d/hack/compat-exp/classification-prompt.md"; commit "$d" "before the tag"
+freeze "$d"
+tagsha="$(git -C "$d" rev-parse HEAD)"
+CMD=freeze g "$d" observe
+passes "freeze at the tag"
+echo "data" >"$d/hack/compat-exp/ledger.json"; commit "$d" "data only"
+CMD=freeze g "$d" observe
+passes "freeze at a descendant that changes data only"
+child="$(git -C "$d" rev-parse HEAD)"
+CMD=freeze OUT="$tagsha" g "$d" observe
+passes "freeze of a commit: the tag itself"
+CMD=freeze OUT="$child" g "$d" observe
+passes "freeze of a commit: a descendant with unchanged frozen files"
+CMD=freeze OUT="$pre" g "$d" observe
+refuses "freeze of a commit before the tag" "not tag compat-exp-freeze or a descendant"
+CMD=freeze OUT="HEAD" g "$d" observe
+refuses "freeze of a commit needs a full sha" "not a full commit sha"
+CMD=freeze OUT="$(printf 'a%.0s' $(seq 1 40))" g "$d" observe
+refuses "freeze of an unknown commit" "not in this repository"
+echo "tampered" >>"$d/hack/compat-exp/crossrun/main.go"
+CMD=freeze g "$d" observe
+refuses "freeze: an uncommitted change to a frozen file" "frozen instrument files differ"
+commit "$d" "change crossrun"
+CMD=freeze g "$d" observe
+refuses "freeze: a committed change to a frozen file" "frozen instrument files differ"
+CMD=freeze OUT="$(git -C "$d" rev-parse HEAD)" g "$d" observe
+refuses "freeze of a commit that changed a frozen file" "frozen instrument files at"
+CMD=freeze OUT="$child" g "$d" observe
+passes "freeze of the earlier commit is still fine"
+git -C "$d" reset -q --hard "$child"
+echo x >"$d/hack/compat-exp/crossrun/extra.go"
+CMD=freeze g "$d" observe
+refuses "freeze: an untracked file among the frozen paths" "untracked files"
+rm "$d/hack/compat-exp/crossrun/extra.go"
 
 # --- the real acceptance list passes the real guard --------------------------------
 
@@ -262,6 +305,27 @@ jq 'del(.sha256)' "$d/hack/compat-exp/charts-exp.json" >"$d/x" && mv "$d/x" "$d/
 commit "$d" "drop hash"
 g "$d" observe
 refuses "list without a hash" "must be a charts-exp.json"
+# F6: a frozen list names the qualification run it was selected from
+d="$tmp/noqual"
+cp -R "$r" "$d"
+jq -S 'del(.qualification) | del(.sha256)' "$d/hack/compat-exp/charts-exp.json" >"$d/x"
+jq -S --arg h "$(jq -S -c . "$d/x" | sha)" '. + {sha256: $h}' "$d/x" >"$d/hack/compat-exp/charts-exp.json" && rm "$d/x"
+commit "$d" "list without a qualification run"
+for m in observe recheck; do
+  g "$d" "$m" GUARD_CHART_IDS="c1"
+  refuses "$m: a list without the qualification run id is refused" "no qualification run id"
+done
+fx0="$d/hack/compat-exp/fixes"
+mkdir -p "$fx0"
+echo '[{"id":"c1-fix","fixOf":"c1","cause":"protocol","chart":"c1","version":"1.0.0","repo":"https://example.test/1","values":["--set","a=b"],"cellWorlds":["W3"]}]' >"$fx0/f.json"
+commit "$d" "fix"
+g "$d" certify GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json GUARD_FIX_ID=c1-fix
+refuses "certify: a list without the qualification run id is refused" "no qualification run id"
+jq -S 'del(.sha256) | .qualification.run = "12;id"' "$r/hack/compat-exp/charts-exp.json" >"$d/x"
+jq -S --arg h "$(jq -S -c . "$d/x" | sha)" '. + {sha256: $h}' "$d/x" >"$d/hack/compat-exp/charts-exp.json" && rm "$d/x"
+commit "$d" "bad run id"
+g "$d" observe
+refuses "a qualification run id that is not digits is refused" "no qualification run id"
 d="$tmp/twice"
 cp -R "$r" "$d"
 mklist 6 "$d/hack/compat-exp/charts-exp.json"

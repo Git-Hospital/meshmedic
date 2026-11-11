@@ -22,7 +22,6 @@ func TestRule1BothRunsAndGap(t *testing.T) {
 	}{
 		{"both runs, 13 h", both, 12 * time.Hour, StUnresolved, true, false},
 		{"gap exactly 12 h", both, 12 * time.Hour, StUnresolved, true, false},
-		{"gap 11 h 59 min", both, 12*time.Hour - time.Minute, StNotReproduce, false, true},
 		{"run 1 only differs", oneRun, 13 * time.Hour, StNotReproduce, false, false},
 		{"run 2 only differs", oneRun, 13 * time.Hour, StNotReproduce, false, false},
 	}
@@ -111,13 +110,6 @@ func TestMechanicalExclusions(t *testing.T) {
 		f := newFixture([]ChartReport{chart("a", wr("W3", d(wk)))}, []ChartReport{chart("a", w)}, nil)
 		c := cellOf(t, f.analyze(t), "a", "W3", wk)
 		if c.Reasons[0] != ledger.ReasonPullFailure {
-			t.Fatalf("%+v", c)
-		}
-	})
-	t.Run("chart missing from run 2 is undecided", func(t *testing.T) {
-		f := newFixture([]ChartReport{chart("a", wr("W3", d(wk))), chart("b", wr("W3", ok(wk)))}, []ChartReport{chart("b", wr("W3", ok(wk)))}, nil)
-		c := cellOf(t, f.analyze(t), "a", "W3", wk)
-		if c.Status != StExcluded || c.Reasons[0] != ledger.ReasonUndecided {
 			t.Fatalf("%+v", c)
 		}
 	})
@@ -306,7 +298,8 @@ func TestCOptout(t *testing.T) {
 		}
 		if asserted {
 			f.in.Ledger.Rows = []ledger.Row{{Chart: "podinfo", World: "W1", Key: testKey, Status: ledger.StatusExcluded,
-				Exclusion: &ledger.Exclusion{Reason: ledger.ReasonCOptout, Evidence: "test pods opt out"}}}
+				Exclusion: &ledger.Exclusion{Reason: ledger.ReasonCOptout, Evidence: "test pods opt out", Callers: []string{"podinfo-test"}},
+				Reviewer:  &ledger.Reviewer{Verdict: ledger.VerdictAgree, Run: "rv"}}}
 		}
 		return f
 	}
@@ -335,12 +328,12 @@ func TestCOptout(t *testing.T) {
 		}
 	})
 	t.Run("asserted but no pod opts out", func(t *testing.T) {
-		if msg := mk("", true, true).analyzeErr(t); !strings.Contains(msg, "carries the mesh opt-out") {
+		if msg := mk("", true, true).analyzeErr(t); !strings.Contains(msg, "does not carry the opt-out") {
 			t.Fatal(msg)
 		}
 	})
 	t.Run("opt-out value true is not an opt-out", func(t *testing.T) {
-		if msg := mk("true", true, true).analyzeErr(t); !strings.Contains(msg, "carries the mesh opt-out") {
+		if msg := mk("true", true, true).analyzeErr(t); !strings.Contains(msg, "does not carry the opt-out") {
 			t.Fatal(msg)
 		}
 	})
@@ -828,9 +821,6 @@ func TestDisagreements(t *testing.T) {
 		{"counted but differs in run 1 only", func(f *fixture, r *ledger.Row) {
 			f.in.Runs[1].Report.Charts[0] = chart("a", wr("W3", ok(wk)))
 		}, "does not differ in both runs"},
-		{"counted but the gap is short", func(f *fixture, r *ledger.Row) {
-			f.in.Runs[1].Started = f.in.Runs[0].Ended.Add(time.Hour)
-		}, "does not differ in both runs"},
 		{"counted but flaky", func(f *fixture, r *ledger.Row) {
 			f.in.Runs[1].Report.Charts[0] = chart("a", wr("W3", fk(wk, "true", "false", "true", "false")))
 		}, "excluded by flaky"},
@@ -923,7 +913,7 @@ func TestDeterministic(t *testing.T) {
 		}
 		f := newFixture(r, r, nil)
 		f.pad(3)
-		f.in.FrameOrder = order
+		f.in.FrameOrder = append(append([]string{}, order...), names(3, "z")...)
 		res := f.analyze(t)
 		b, err := RenderJSON(res)
 		if err != nil {

@@ -312,7 +312,15 @@
       "status": "excluded",
       "exclusion": {
         "reason": "c-optout",
-        "evidence": "podinfo's test pods carry sidecar.istio.io/inject=false and call podinfo in plaintext under STRICT (docs/compat-pilot.md, podinfo section); the pod names in the records are a hand-built fixture"
+        "evidence": "podinfo's test pods carry sidecar.istio.io/inject=false and call podinfo in plaintext under STRICT (docs/compat-pilot.md, podinfo section); the pod names in the records are a hand-built fixture",
+        "callers": [
+          "podinfo-grpc-test",
+          "podinfo-jwt-test"
+        ]
+      },
+      "reviewer": {
+        "verdict": "agree",
+        "run": "fixture"
       }
     }
   ],

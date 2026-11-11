@@ -8,6 +8,12 @@
 #
 # Usage:
 #   guard.sh check          validate the inputs and the repository; exit 0 or 1
+#   guard.sh freeze [SHA]   only the freeze: the tag exists, HEAD (or the full commit
+#                           SHA) is the tag or a descendant, and every frozen file is
+#                           byte-identical to the tag's (for HEAD: in the working tree
+#                           too, with no untracked file among them). analyze.sh runs
+#                           this, from the tag's copy of this script, on HEAD and on
+#                           every workflow run's head commit. No other input is read.
 #   guard.sh plan OUTDIR    check again, then write OUTDIR/charts.json (the
 #                           chart list observe.sh and qualify.sh read) and
 #                           OUTDIR/matrix.json, and print key=value lines for
@@ -36,8 +42,10 @@
 #     descendant of it, and every frozen instrument file byte-identical to the
 #     tag's version (and no untracked file among them).
 #  4. The chart list: its stored sha256 matches its canonical content (jq -S -c
-#     of the file without the sha256 key), and at most one commit since the tag
-#     touched it. In qualify mode the list is the candidate list, which must be
+#     of the file without the sha256 key), it names the qualification run it was
+#     selected from (observe, certify, recheck), and at most one commit since
+#     the tag touched it (HEAD's ancestry only: analyze.sh's rerun of select.sh on
+#     the qualification run's records is what binds the sample). In qualify mode the list is the candidate list, which must be
 #     identical to the tag's.
 #  5. Every fix entry: fixOf names a chart in the frozen list (charts and
 #     reserves), its cause is a key of causes.json or a new key with a complete
@@ -62,11 +70,11 @@ die() {
 
 cmd="${1:-}"
 case "$cmd" in
-  check | plan) ;;
-  *) echo "usage: guard.sh check | guard.sh plan OUTDIR" >&2; exit 2 ;;
+  check | plan | freeze) ;;
+  *) echo "usage: guard.sh check | guard.sh plan OUTDIR | guard.sh freeze [SHA]" >&2; exit 2 ;;
 esac
 outdir="${2:-}"
-[[ "$cmd" == check || -n "$outdir" ]] || { echo "usage: guard.sh plan OUTDIR" >&2; exit 2; }
+[[ "$cmd" != plan || -n "$outdir" ]] || { echo "usage: guard.sh plan OUTDIR" >&2; exit 2; }
 
 command -v jq >/dev/null || die "jq is needed"
 root="${GUARD_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null)}"
@@ -98,6 +106,81 @@ safe_path() { # path prefix suffix-regex label
   [[ "$p" =~ $suffix ]] || die "$label '$p' has the wrong file type"
   [[ -f "$root/$p" && ! -L "$root/$p" ]] || die "$label '$p' is not a regular file"
 }
+
+# Paths whose bytes must equal the tag's: the whole instrument (docs/compat-experiment.md
+# section 5). Data stays outside it: ledger.json, patches/, fix entries (fixes/, ignore/) and
+# the frozen chart list, which has its own rule below (one commit since the tag).
+frozen=(
+  hack/compat-exp/frame
+  hack/compat-exp/frame/exclusions.json
+  hack/compat-exp/qualify.sh
+  hack/compat-exp/select.sh
+  hack/compat-exp/static.sh
+  hack/compat-exp/analyze.sh
+  hack/compat-exp/guard.sh
+  hack/compat-exp/causes.json
+  hack/compat-exp/classification-prompt.md
+  hack/compat-exp/staticcheck
+  hack/compat-exp/ledger
+  hack/compat-exp/crossrun
+  hack/compat-exp/candidates.json
+  hack/compat-exp/candidates-charts.json
+  hack/compat-pilot/observe.sh
+  hack/compat-pilot/render-args.sh
+  hack/compat-pilot/world.sh
+  hack/compat-pilot/difftable
+  .github/workflows/compat-exp.yml
+  docs/compat-experiment.md
+  go.mod
+  go.sum
+)
+# Must exist in the tag, or the freeze is incomplete. candidates.json and
+# candidates-charts.json are checked where they are used (qualify mode).
+required_at_tag=(
+  hack/compat-exp/frame hack/compat-exp/frame/exclusions.json
+  hack/compat-exp/qualify.sh hack/compat-exp/select.sh hack/compat-exp/static.sh hack/compat-exp/analyze.sh
+  hack/compat-exp/guard.sh hack/compat-exp/causes.json hack/compat-exp/classification-prompt.md
+  hack/compat-exp/staticcheck hack/compat-exp/ledger hack/compat-exp/crossrun
+  hack/compat-pilot/observe.sh hack/compat-pilot/render-args.sh hack/compat-pilot/world.sh hack/compat-pilot/difftable
+  .github/workflows/compat-exp.yml docs/compat-experiment.md
+)
+
+
+# check_freeze [SHA] [WHY]: the tag exists, TARGET (HEAD with the working tree, or
+# the commit SHA) is the tag or a descendant, the instrument is complete at the
+# tag, and every frozen file equals the tag's.
+check_freeze() {
+  local target="${1:-}" why="${2:-}" tagc
+  tagc="$(git_ rev-parse -q --verify "refs/tags/$tag^{commit}")" ||
+    die "tag $tag does not exist${why:+; $why}"
+  if [[ -n "$target" ]]; then
+    [[ "$target" =~ ^[0-9a-f]{40}$ ]] || die "'$target' is not a full commit sha"
+    git_ cat-file -e "$target^{commit}" 2>/dev/null || die "commit $target is not in this repository (git fetch it first)"
+    git_ merge-base --is-ancestor "$tagc" "$target" || die "commit $target is not tag $tag or a descendant of it"
+  else
+    git_ merge-base --is-ancestor "$tagc" HEAD || die "HEAD is not tag $tag or a descendant of it"
+  fi
+  local p
+  for p in "${required_at_tag[@]}"; do
+    git_ cat-file -e "$tagc:$p" 2>/dev/null || die "$p is not in tag $tag; the freeze is incomplete"
+  done
+  if [[ -n "$target" ]]; then
+    git_ diff --quiet "$tagc" "$target" -- "${frozen[@]}" ||
+      die "frozen instrument files at $target differ from tag $tag: $(git_ diff --name-only "$tagc" "$target" -- "${frozen[@]}" | head -5 | tr '\n' ' ')"
+  else
+    git_ diff --quiet "$tagc" -- "${frozen[@]}" ||
+      die "frozen instrument files differ from tag $tag: $(git_ diff --name-only "$tagc" -- "${frozen[@]}" | head -5 | tr '\n' ' ')"
+    [[ -z "$(git_ ls-files --others --exclude-standard -- "${frozen[@]}")" ]] ||
+      die "untracked files among the frozen instrument paths"
+  fi
+}
+
+if [[ "$cmd" == freeze ]]; then
+  [[ -z "$outdir" || "$outdir" != -* ]] || { echo "usage: guard.sh freeze [SHA]" >&2; exit 2; }
+  check_freeze "$outdir" ""
+  echo "guard: freeze ok: ${outdir:-HEAD} descends from $tag, frozen files unchanged" >&2
+  exit 0
+fi
 
 # --- 1. inputs -----------------------------------------------------------------------
 
@@ -140,56 +223,8 @@ fi
 
 # --- 3. the freeze -----------------------------------------------------------------------
 
-# Paths whose bytes must equal the tag's: the whole instrument (docs/compat-experiment.md
-# section 5). Data stays outside it: ledger.json, patches/, fix entries (fixes/, ignore/) and
-# the frozen chart list, which has its own rule below (one commit since the tag).
-frozen=(
-  hack/compat-exp/frame
-  hack/compat-exp/frame/exclusions.json
-  hack/compat-exp/qualify.sh
-  hack/compat-exp/select.sh
-  hack/compat-exp/static.sh
-  hack/compat-exp/analyze.sh
-  hack/compat-exp/guard.sh
-  hack/compat-exp/causes.json
-  hack/compat-exp/classification-prompt.md
-  hack/compat-exp/staticcheck
-  hack/compat-exp/ledger
-  hack/compat-exp/crossrun
-  hack/compat-exp/candidates.json
-  hack/compat-exp/candidates-charts.json
-  hack/compat-pilot/observe.sh
-  hack/compat-pilot/render-args.sh
-  hack/compat-pilot/world.sh
-  hack/compat-pilot/difftable
-  .github/workflows/compat-exp.yml
-  docs/compat-experiment.md
-  go.mod
-  go.sum
-)
-# Must exist in the tag, or the freeze is incomplete. candidates.json and
-# candidates-charts.json are checked where they are used (qualify mode).
-required_at_tag=(
-  hack/compat-exp/frame hack/compat-exp/frame/exclusions.json
-  hack/compat-exp/qualify.sh hack/compat-exp/select.sh hack/compat-exp/static.sh hack/compat-exp/analyze.sh
-  hack/compat-exp/guard.sh hack/compat-exp/causes.json hack/compat-exp/classification-prompt.md
-  hack/compat-exp/staticcheck hack/compat-exp/ledger hack/compat-exp/crossrun
-  hack/compat-pilot/observe.sh hack/compat-pilot/render-args.sh hack/compat-pilot/world.sh hack/compat-pilot/difftable
-  .github/workflows/compat-exp.yml docs/compat-experiment.md
-)
-
 if [[ "$mode" != acceptance ]]; then
-  git_ rev-parse -q --verify "refs/tags/$tag^{commit}" >/dev/null ||
-    die "tag $tag does not exist; mode $mode refuses to run before the freeze (only acceptance may)"
-  git_ merge-base --is-ancestor "refs/tags/$tag^{commit}" HEAD ||
-    die "HEAD is not tag $tag or a descendant of it"
-  for p in "${required_at_tag[@]}"; do
-    git_ cat-file -e "refs/tags/$tag^{commit}:$p" 2>/dev/null || die "$p is not in tag $tag; the freeze is incomplete"
-  done
-  git_ diff --quiet "refs/tags/$tag^{commit}" -- "${frozen[@]}" ||
-    die "frozen instrument files differ from tag $tag: $(git_ diff --name-only "refs/tags/$tag^{commit}" -- "${frozen[@]}" | head -5 | tr '\n' ' ')"
-  [[ -z "$(git_ ls-files --others --exclude-standard -- "${frozen[@]}")" ]] ||
-    die "untracked files among the frozen instrument paths"
+  check_freeze "" "mode $mode refuses to run before the freeze (only acceptance may)"
 fi
 
 # --- 4. the chart list ----------------------------------------------------------------------
@@ -214,6 +249,18 @@ case "$mode" in
   *)
     jq -e 'type == "object" and (.charts | type == "array") and (.reserves | type == "array") and (.sha256 | type == "string")' \
       "$chart_file" >/dev/null || die "$charts_in must be a charts-exp.json (charts, reserves, sha256)"
+    # The qualification run id (select.sh writes it with the hashes of the
+    # candidates and the records it chose from). Without it the list could have
+    # been chosen after data existed. This check only demands that the origin
+    # is stated; what protects the sample is analyze.sh, which downloads that
+    # run's records, reruns select.sh on them and refuses to go on unless the
+    # result is byte-identical to this list. The one-commit rule below counts
+    # commits on HEAD's ancestry only, so it cannot see a list that was
+    # committed on another branch first.
+    jq -e '(.qualification | type == "object") and (.qualification.run | type == "string" and test("^[0-9]{1,20}$"))
+        and (.qualification.candidatesSha256 | type == "string" and test("^[0-9a-f]{64}$"))
+        and (.qualification.recordsSha256 | type == "string" and test("^[0-9a-f]{64}$"))' "$chart_file" >/dev/null ||
+      die "$charts_in has no qualification run id (qualification.run, candidatesSha256, recordsSha256): a frozen list names the qualification run it was selected from"
     stored="$(jq -r .sha256 "$chart_file")"
     actual="$(jq -S -c 'del(.sha256)' "$chart_file" | sha)"
     [[ "$stored" == "$actual" ]] ||

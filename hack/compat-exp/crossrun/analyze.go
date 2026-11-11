@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -132,6 +133,9 @@ type StaticKey struct {
 	// NoCheck: the key has no static check (staticCheck null in causes.json),
 	// so it cannot be in S.
 	NoCheck bool `json:"noStaticCheck,omitempty"`
+	// NoCheckReason says why: NoCheckNull for a frozen key whose staticCheck is
+	// null, NoCheckAfterFreeze for a key admitted after the freeze.
+	NoCheckReason string `json:"noStaticCheckReason,omitempty"`
 	// NotApplicable lists counted findings in a world the check does not apply
 	// to. A check that cannot look at a world cannot flag a finding there, so
 	// the key does not qualify (and the cell is not reported as "not flagged").
@@ -161,12 +165,38 @@ type Futility struct {
 	PrevalenceCertificatesOff bool     `json:"prevalenceCertificatesSkipped"`
 }
 
+// The two readings of "over 15% of cells undecided" (section 7), see
+// INTERPRETATIONS.md 14.
+const (
+	ReadingCells       = "cells"
+	ReadingChartWorlds = "chart-worlds"
+)
+
+// UndecidedStop names the reading that drives the stop. The maintainer chooses;
+// both readings are always reported.
+const UndecidedStop = ReadingCells
+
+// Share is one reading of the undecided share.
+type Share struct {
+	Undecided int  `json:"undecided"`
+	Of        int  `json:"of"`
+	Over      bool `json:"overFifteenPercent"`
+}
+
 // UndecidedShare is the 15% stop.
 type UndecidedShare struct {
-	Undecided   int    `json:"undecidedCells"`
-	Cells       int    `json:"cells"`
-	Over        bool   `json:"overFifteenPercent"`
-	NoteAfterRR string `json:"note"`
+	// Undecided, Cells and Over are the cell reading (undecided cells over all
+	// cells), kept under their first names.
+	Undecided int  `json:"undecidedCells"`
+	Cells     int  `json:"cells"`
+	Over      bool `json:"overFifteenPercent"`
+	// Drives is the reading Over is taken from: the constant UndecidedStop.
+	Drives string `json:"drivesTheStop"`
+	// ByCells is undecided cells over all cells. ByChartWorlds is undecided
+	// chart-worlds over compared chart-worlds.
+	ByCells       Share  `json:"cellsReading"`
+	ByChartWorlds Share  `json:"chartWorldsReading"`
+	NoteAfterRR   string `json:"note"`
 }
 
 // Hypothetical is the region if all open cells counted.
@@ -176,14 +206,30 @@ type Hypothetical struct {
 	Region  RegionRow `json:"region"`
 }
 
+// SampleInfo is the chart set the numbers are over: the frame's primary charts
+// with the replacements applied.
+type SampleInfo struct {
+	Charts       []string      `json:"charts"`
+	Replacements []Replacement `json:"replacements"`
+}
+
 // Result is crossrun's whole output.
 type Result struct {
-	Schema         int              `json:"schema"`
-	Run1           string           `json:"run1"`
-	Run2           string           `json:"run2,omitempty"`
-	GapHours       float64          `json:"gapHours,omitempty"`
-	GapOK          bool             `json:"gapOk"`
+	Schema int `json:"schema"`
+	// TestMode is true when analyze.sh ran with its test overrides: the result
+	// is not valid and says so. Provenance is what analyze.sh recorded about the
+	// freeze, the runs and the files read, carried through unread.
+	TestMode   bool            `json:"testMode,omitempty"`
+	Provenance json.RawMessage `json:"provenance,omitempty"`
+	Run1       string          `json:"run1"`
+	Run2       string          `json:"run2,omitempty"`
+	GapHours   float64         `json:"gapHours,omitempty"`
+	GapOK      bool            `json:"gapOk"`
+	// Final is false for run 1 only: that output serves the futility check
+	// after run 1 and declares no region.
+	Final          bool             `json:"final"`
 	Warnings       []string         `json:"warnings"`
+	Sample         SampleInfo       `json:"sample"`
 	Cells          []CellResult     `json:"cells"`
 	Universal      []UniversalRow   `json:"worldUniversal"`
 	OptOut         []OptOutEvidence `json:"optOutEvidence"`
@@ -254,14 +300,14 @@ func worldKind(w WorldReport) string {
 	return ledger.ReasonUndecided
 }
 
-func buildView(name string, rep *Report, in *Inputs) (*runView, []UndecidedWorld, error) {
+func buildView(name string, rep *Report, in *Inputs, sample *Sample) (*runView, []UndecidedWorld, error) {
 	v := &runView{
 		states: map[ledger.Cell]cellState{}, present: map[chartWorld]bool{}, verdict: map[chartWorld]string{},
 		classes: map[chartWorld]map[string]bool{}, charts: map[string]bool{}, keyCls: map[ledger.Cell]string{},
 	}
 	var uw []UndecidedWorld
 	for _, ch := range rep.Charts {
-		if ch.FixOf != "" {
+		if ch.FixOf != "" || sample.Replaced[ch.Chart] {
 			continue
 		}
 		if _, ok := in.Publisher[ch.Chart]; !ok {
@@ -322,6 +368,7 @@ func (v *runView) isCell(c ledger.Cell) bool {
 
 type analysis struct {
 	in       *Inputs
+	sample   *Sample
 	views    []*runView
 	rowOf    map[ledger.Cell]*ledger.Row
 	cells    []*CellResult
@@ -343,7 +390,7 @@ func rowLabel(i int, r ledger.Row) string {
 // returns an error naming every ledger row that disagrees with the reports.
 func Analyze(in *Inputs) (*Result, error) {
 	a := &analysis{in: in, rowOf: map[ledger.Cell]*ledger.Row{}, byCell: map[ledger.Cell]*CellResult{}}
-	res := &Result{Schema: 1, Warnings: []string{}}
+	res := &Result{Schema: 1, Warnings: []string{}, TestMode: in.TestMode, Provenance: in.Provenance}
 	if len(in.Runs) < 1 {
 		return nil, fmt.Errorf("no run given")
 	}
@@ -362,17 +409,34 @@ func Analyze(in *Inputs) (*Result, error) {
 	if len(in.Runs) == 2 {
 		gap := in.Runs[1].Started.Sub(in.Runs[0].Ended)
 		res.GapHours = gap.Hours()
-		a.gapOK = gap >= GapHours*time.Hour
-		if !a.gapOK {
-			res.Warnings = append(res.Warnings, fmt.Sprintf(
-				"run 2 started %.2f h after run 1 ended, rule 1 needs at least %d h: no cell holds in both runs under rule 1", gap.Hours(), GapHours))
+		// A short gap is an operator slip, not a result: no region, no futility
+		// verdict (INTERPRETATIONS.md 2).
+		if gap < GapHours*time.Hour {
+			return nil, fmt.Errorf("run 2 (%s) started at %s, only %.2f h after run 1 (%s) ended at %s; rule 1 needs at least %d h. "+
+				"This is not a result (no region, no futility verdict): run the sample again at least %d h after run 1 ended",
+				in.Runs[1].ID, in.Runs[1].Started.Format(time.RFC3339), gap.Hours(), in.Runs[0].ID, in.Runs[0].Ended.Format(time.RFC3339), GapHours, GapHours)
 		}
+		a.gapOK = true
 	}
+	res.Final = len(in.Runs) == 2
 	res.GapOK = a.gapOK
+
+	sample, err := buildSample(in)
+	if err != nil {
+		return nil, err
+	}
+	a.sample = sample
+	res.Sample = SampleInfo{Charts: append([]string{}, sample.Active...), Replacements: append([]Replacement{}, in.Replacements...)}
+	sort.Strings(res.Sample.Charts)
+	sampleWarnings, err := checkComplete(sample, in.Runs)
+	if err != nil {
+		return nil, err
+	}
+	res.Warnings = append(res.Warnings, sampleWarnings...)
 
 	var uworlds []UndecidedWorld
 	for i, r := range in.Runs {
-		v, uw, err := buildView(fmt.Sprintf("%d (%s)", i+1, r.ID), r.Report, in)
+		v, uw, err := buildView(fmt.Sprintf("%d (%s)", i+1, r.ID), r.Report, in, sample)
 		if err != nil {
 			return nil, err
 		}
@@ -466,9 +530,6 @@ func (a *analysis) enumerate() {
 			cr.Status = StExcluded
 		case allFinding && len(states) == 1:
 			cr.Status = StAwaitRun2
-		case allFinding && !a.gapOK:
-			cr.Status = StNotReproduce
-			cr.Detail = fmt.Sprintf("run 2 started less than %d h after run 1 ended (rule 1)", GapHours)
 		case allFinding:
 			cr.Status = StUnresolved // refined in assignStatus
 		default:
@@ -513,7 +574,7 @@ func (a *analysis) compared(chart, world string) bool {
 
 func (a *analysis) qualifiedCharts() []string {
 	var out []string
-	for _, id := range a.in.FrameOrder {
+	for _, id := range a.sample.Active {
 		if !a.in.Qualified[id] {
 			continue
 		}
@@ -663,15 +724,26 @@ func (c *CellResult) classKey() string {
 	return c.Class
 }
 
-// checkID is the id of the key's static check. ok is false for a frozen key
-// whose causes.json entry has staticCheck null. A key outside causes.json (a
-// new key) uses its own name as the check id.
-func (a *analysis) checkID(key string) (id string, ok bool) {
-	if a.in.Causes.Has(key) {
-		id, ok = a.in.Causes.Static[key]
-		return id, ok
+// Why a key has no static check.
+const (
+	NoCheckNull        = "no static check: staticCheck is null in causes.json"
+	NoCheckAfterFreeze = "no static check: admitted after the freeze"
+)
+
+// checkID is the id of the key's static check. ok is false, with the reason,
+// for a frozen key whose causes.json entry has staticCheck null and for a key
+// outside causes.json: a key admitted after the freeze has no check in the
+// frozen instrument, so it never earns S and static results are not required
+// for it.
+func (a *analysis) checkID(key string) (id string, ok bool, why string) {
+	if !a.in.Causes.Has(key) {
+		return "", false, NoCheckAfterFreeze
 	}
-	return key, true
+	id, ok = a.in.Causes.Static[key]
+	if !ok {
+		return "", false, NoCheckNull
+	}
+	return id, true, ""
 }
 
 // staticRow finds the static result for a chart, world and check. applicable

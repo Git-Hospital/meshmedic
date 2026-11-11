@@ -59,6 +59,10 @@ container named `istio-proxy`; native is an init container with
 restartPolicy Always), `ambientRedirection` (value of the
 `ambient.istio.io/redirection` annotation, "" when not reported).
 
+`podMesh` is the pod list taken after the settle and before `helm test`, so the
+pods of a chart's test hooks are in it only if they exist at that moment; crossrun's
+c-optout check needs them (crossrun/INTERPRETATIONS.md 9).
+
 ## Observation keys (`obs`)
 
 The part before the first colon is the observation class. Values are strings.

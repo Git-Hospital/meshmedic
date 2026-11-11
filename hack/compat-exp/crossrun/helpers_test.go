@@ -84,7 +84,20 @@ func uw(world, kind string, keys ...KeyReport) WorldReport {
 	return w
 }
 
+// chart is a chart report; a required world the caller did not give is added
+// as a world without keys (the sample must be complete, sample.go).
 func chart(name string, worlds ...WorldReport) ChartReport {
+	for _, req := range requiredWorlds {
+		have := false
+		for _, w := range worlds {
+			if w.World == req {
+				have = true
+			}
+		}
+		if !have {
+			worlds = append(worlds, wr(req))
+		}
+	}
 	return ChartReport{Chart: name, ChartVersion: "1.0.0", Worlds: worlds}
 }
 

@@ -106,8 +106,13 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 	}
 	res.Metrics, _ = metricsOf(cs, sFn)
 	sort.Slice(res.Static, func(i, j int) bool { return res.Static[i].Key < res.Static[j].Key })
-	res.Region = Region(res.Metrics)
-	res.Trace = Trace(res.Metrics)
+	if res.Final {
+		res.Region = Region(res.Metrics)
+		res.Trace = Trace(res.Metrics)
+	} else {
+		res.Trace = []RowTrace{}
+		res.Region = RegionRow{Region: "none", Condition: "run 1 only", Outcome: "run 1 only: no final region; the futility bound below is the only verdict"}
+	}
 
 	// open cells
 	pendingPubs := map[string]bool{}
@@ -163,9 +168,32 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 	f.PrevalenceCertificatesOff = !contains(f.Reachable, "A")
 	res.Futility = f
 
-	// undecided share
-	res.Undecided = UndecidedShare{Undecided: undecided, Cells: len(a.cells),
-		Over:        undecided*100 > UndecidedPercent*len(a.cells),
+	// undecided share, under both readings; UndecidedStop picks the one that
+	// drives the stop
+	cwCompared, cwUndecided := 0, 0
+	for _, id := range a.sample.Active {
+		for _, w := range requiredWorlds {
+			cw := chartWorld{id, w}
+			if !a.compared(id, w) {
+				continue
+			}
+			cwCompared++
+			for _, v := range a.views {
+				if v.verdict[cw] == "undecided" {
+					cwUndecided++
+					break
+				}
+			}
+		}
+	}
+	byCells := Share{Undecided: undecided, Of: len(a.cells), Over: undecided*100 > UndecidedPercent*len(a.cells)}
+	byCW := Share{Undecided: cwUndecided, Of: cwCompared, Over: cwUndecided*100 > UndecidedPercent*cwCompared}
+	driver := byCells
+	if UndecidedStop == ReadingChartWorlds {
+		driver = byCW
+	}
+	res.Undecided = UndecidedShare{Undecided: undecided, Cells: len(a.cells), Over: driver.Over, Drives: UndecidedStop,
+		ByCells: byCells, ByChartWorlds: byCW,
 		NoteAfterRR: "the stop applies after one rerun; crossrun reports the share of this input only"}
 
 	// if all open cells counted
@@ -195,6 +223,9 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 	}
 	hm, _ := metricsOf(hyp, hsFn)
 	res.IfAllCounted = Hypothetical{Cells: len(open), Metrics: hm, Region: Region(hm)}
+	if !res.Final {
+		res.IfAllCounted.Region = RegionRow{Region: "none", Condition: "run 1 only", Outcome: "run 1 only: no final region"}
+	}
 
 	// results
 	for _, cr := range a.cells {
@@ -254,7 +285,7 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 		}
 	}
 	if res.Run2 == "" {
-		res.Warnings = append(res.Warnings, "only run 1 given: no cell can hold under rule 1 yet; cells are awaiting run 2")
+		res.Warnings = append(res.Warnings, "run 1 only: no cell can hold under rule 1 yet and no region is final; cells are awaiting run 2, and differing cells count as pending toward N_max and P_max")
 	}
 	if res.Warnings == nil {
 		res.Warnings = []string{}
@@ -263,7 +294,7 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 
 // staticKey runs the S test for one key over its counted cells.
 func (a *analysis) staticKey(key string, cells []counted) StaticKey {
-	check, hasCheck := a.checkID(key)
+	check, hasCheck, why := a.checkID(key)
 	sk := StaticKey{Key: key, Check: check, FlagsAll: true, Qualifies: true, Worlds: []StaticWorld{}, CountedFor: []ledger.Cell{}}
 	worlds := map[string]bool{}
 	for _, c := range cells {
@@ -272,7 +303,7 @@ func (a *analysis) staticKey(key string, cells []counted) StaticKey {
 	}
 	sort.Slice(sk.CountedFor, func(i, j int) bool { return cellLess(sk.CountedFor[i], sk.CountedFor[j]) })
 	if !hasCheck {
-		sk.NoCheck, sk.FlagsAll, sk.Qualifies = true, false, false
+		sk.NoCheck, sk.NoCheckReason, sk.FlagsAll, sk.Qualifies = true, why, false, false
 		return sk
 	}
 	naWorld := map[string]bool{}

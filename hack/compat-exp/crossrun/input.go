@@ -138,6 +138,13 @@ type Manifest struct {
 	Ledger        string         `json:"ledger"`
 	Frame         string         `json:"frame"`
 	Static        string         `json:"static"`
+	// Replacements is the optional data file of section 4 replacements.
+	Replacements string `json:"replacements"`
+	// Provenance is what analyze.sh records about the freeze, the runs and the
+	// files read; crossrun carries it into the result unread.
+	Provenance json.RawMessage `json:"provenance"`
+	// TestMode marks a run made with analyze.sh's test overrides.
+	TestMode bool `json:"testMode"`
 }
 
 // ManifestRun is run 1 or run 2 of the sample.
@@ -184,8 +191,14 @@ type Inputs struct {
 	Publisher     map[string]string
 	Qualified     map[string]bool
 	FrameOrder    []string
-	Static        []StaticResult
-	StaticGiven   bool
+	// Reserves are the frame's reserves, in list order; the primary charts are
+	// the other entries of FrameOrder.
+	Reserves     []string
+	Replacements []Replacement
+	Provenance   json.RawMessage
+	TestMode     bool
+	Static       []StaticResult
+	StaticGiven  bool
 }
 
 func strictDecode(data []byte, v any) error {
@@ -335,6 +348,12 @@ func LoadInputs(manifestPath string) (*Inputs, error) {
 	if err := loadFrame(rel(m.Frame), in); err != nil {
 		return nil, err
 	}
+	in.Provenance, in.TestMode = m.Provenance, m.TestMode
+	if m.Replacements != "" {
+		if in.Replacements, err = LoadReplacements(rel(m.Replacements)); err != nil {
+			return nil, err
+		}
+	}
 	if m.Static != "" {
 		data, err := os.ReadFile(rel(m.Static))
 		if err != nil {
@@ -383,6 +402,9 @@ func loadFrame(path string, in *Inputs) error {
 		in.Publisher[c.ID] = c.Publisher
 		in.Qualified[c.ID] = *c.Qualified
 		in.FrameOrder = append(in.FrameOrder, c.ID)
+		if i >= len(doc.Charts) {
+			in.Reserves = append(in.Reserves, c.ID)
+		}
 	}
 	return nil
 }

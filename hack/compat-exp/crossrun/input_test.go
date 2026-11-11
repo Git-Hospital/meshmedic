@@ -24,10 +24,10 @@ func TestRealCausesFile(t *testing.T) {
 		{"protocol", "protocol-declared", true},
 		{"startup-order", "classic-sidecar-startup", true},
 		{"bind-address", "", false},
-		{"brand-new-key", "brand-new-key", true},
+		{"brand-new-key", "", false},
 	}
 	for _, tc := range cases {
-		if id, ok := a.checkID(tc.key); id != tc.check || ok != tc.has {
+		if id, ok, _ := a.checkID(tc.key); id != tc.check || ok != tc.has {
 			t.Errorf("%s: %q %v", tc.key, id, ok)
 		}
 	}

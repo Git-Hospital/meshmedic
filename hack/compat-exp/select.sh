@@ -11,11 +11,25 @@
 # easier to audit than a second implementation.
 #
 # Usage:
-#   hack/compat-exp/select.sh CANDIDATES_JSON RECORDS_DIR OUT
+#   hack/compat-exp/select.sh CANDIDATES_JSON RECORDS_DIR OUT [QUALIFICATION_RUN_ID]
 #
 #   CANDIDATES_JSON  frame build's candidates.json (rank order)
 #   RECORDS_DIR      holds ID.qualify.json files written by qualify.sh
 #   OUT              charts-exp.json to write
+#   QUALIFICATION_RUN_ID  the workflow run id of the qualification run the
+#                    records came from (digits); default $GITHUB_RUN_ID, which
+#                    the select job of the workflow has. Required: a list
+#                    without it is refused (exit 2).
+#
+# The list records where it came from, inside the hashed content:
+#   qualification: {run, candidatesSha256, recordsSha256}
+# run is the qualification run id; candidatesSha256 is the sha256 of
+# `jq -S -c .` of CANDIDATES_JSON; recordsSha256 is the sha256 of
+# `jq -S -c -s 'sort_by(.id)'` over every *.qualify.json in RECORDS_DIR. This is
+# what binds the sample to the qualification run: analyze.sh downloads that run's
+# records, runs this script again and refuses to go on unless the result is
+# byte-identical to the committed list, so a list chosen after data exists, or
+# from other records, does not reproduce.
 #
 # Entries carry the publisher (from candidates.json) and `qualified: true` (every
 # listed chart qualified), because crossrun reads this file as its frame.
@@ -46,12 +60,15 @@
 # the pre-registration) it is "exceeds". A share of 0 against a share above 0
 # is an unbounded gap and exceeds.
 #
-# Exit codes: 0 written, 1 infeasible, 2 usage or unreadable input, 4 incomplete.
+# Exit codes: 0 written, 1 infeasible, 2 usage, a missing run id or unreadable input,
+# 4 incomplete.
 set -uo pipefail
 
-cand="${1:?usage: select.sh CANDIDATES_JSON RECORDS_DIR OUT}"
+cand="${1:?usage: select.sh CANDIDATES_JSON RECORDS_DIR OUT [QUALIFICATION_RUN_ID]}"
 dir="${2:?records dir}"
 out="${3:?output file}"
+qual_run="${4:-${GITHUB_RUN_ID:-}}"
+[[ "$qual_run" =~ ^[0-9]{1,20}$ ]] || { echo "select.sh: the qualification run id (4th argument or GITHUB_RUN_ID) must be digits, got '$qual_run'" >&2; exit 2; }
 
 first=50
 reserves=15
@@ -160,7 +177,10 @@ case "$status" in
     ;;
 esac
 
-jq -S '.file' "$tmp/result.json" >"$tmp/body.json"
+cand_sha="$(jq -S -c . "$cand" | sha)"
+recs_sha="$(jq -S -c 'sort_by(.id)' "$tmp/records.json" | sha)"
+jq -S --arg run "$qual_run" --arg c "$cand_sha" --arg r "$recs_sha" \
+  '.file + {qualification: {run: $run, candidatesSha256: $c, recordsSha256: $r}}' "$tmp/result.json" >"$tmp/body.json"
 hash="$(jq -S -c . "$tmp/body.json" | sha)"
 jq -S --arg sha "$hash" '. + {sha256: $sha}' "$tmp/body.json" >"$out"
 echo "wrote $out: $(jq -r '"\(.counts.charts) charts, \(.counts.reserves) reserves, deadline \(.installDeadlineSeconds) s, bias gap above 1.5x: \(.bias.anyGapAbove1_5x)"' "$out"), sha256 $hash"

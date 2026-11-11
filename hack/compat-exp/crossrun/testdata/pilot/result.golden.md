@@ -4,6 +4,8 @@ Run 1 40109270484, run 2 40119399052, gap 13.88 h (at least 12 h).
 
 - WARNING: no static check results given: S is 0 and regions B and E are decided without it (S is a lower bound)
 
+Sample: 10 charts of the frozen list, 0 replaced by reserves.
+
 ## Decision
 
 N_new=0 P_new=0 D=0 P_D=0 S=0
@@ -29,7 +31,11 @@ N_max 0, P_max 0 (0 cells neither credited nor excluded, 0 new publishers among 
 
 Region A is unreachable: prevalence certificates are skipped.
 
-Undecided cells: 0 of 10 (not over the 15% stop).
+Undecided share (the 15% stop, section 7), under both readings:
+
+- cells reading: 0 of 10 undecided cells over all cells (not over 15%)
+- chart-worlds reading: 0 of 20 undecided chart-worlds over compared chart-worlds (not over 15%)
+- drives the stop: cells (the constant UndecidedStop in analyze.go)
 
 ## ambient-np prevalence
 
@@ -64,7 +70,7 @@ Undecided cells: 0 of 10 (not over the 15% stop).
 
 ## C-optout evidence (podMesh)
 
-Mechanised: the records show a non-client pod of the chart in that world with the world's opt-out metadata. Not mechanised: that every failing caller is such a pod; the ledger row asserts it.
+Mechanised, for an asserted row: the key is helm:test, and in every record of both runs each caller the row names is a pod in podMesh that is not the instrument's client and carries the opt-out metadata of that world. Not mechanised: that the named callers are all the failing callers; the ledger row and its reviewer verdict assert that. The pods below are every pod with effective opt-out, for context only.
 
 - podinfo W1: 12 pod(s) with effective opt-out, ledger asserts it: true
   - podinfo-grpc-test-x1 (Pod/podinfo-grpc-test-x1) annotation sidecar.istio.io/inject=false, in 6 record(s)

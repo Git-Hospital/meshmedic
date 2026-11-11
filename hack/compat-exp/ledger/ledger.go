@@ -150,6 +150,19 @@ type Upstream struct {
 type Exclusion struct {
 	Reason   string `json:"reason"`
 	Evidence string `json:"evidence"`
+	// Callers is for c-optout only: the failing callers, each a pod name or a
+	// pod-name prefix as recorded in podMesh. A pod matches an entry when its
+	// name equals the entry or starts with the entry and a dash (CallerMatches).
+	Callers []string `json:"callers,omitempty"`
+}
+
+var podNameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+
+// CallerMatches reports whether a pod name is the caller entry: equal to it, or
+// the entry followed by a dash and a suffix (a generated name such as
+// podinfo-grpc-test-x1 for the entry podinfo-grpc-test).
+func CallerMatches(entry, pod string) bool {
+	return pod == entry || strings.HasPrefix(pod, entry+"-")
 }
 
 // Reviewer is the fresh reviewer's verdict.
@@ -442,6 +455,9 @@ func Check(f *File, causes *Causes) []Problem {
 			} else if strings.TrimSpace(r.Exclusion.Evidence) == "" {
 				add(w, "excluded row needs exclusion.evidence")
 			}
+			if r.Exclusion != nil {
+				checkExclusion(w, r, add)
+			}
 		default:
 			if r.Exclusion != nil {
 				add(w, "status %s but exclusion is set", r.Status)
@@ -454,6 +470,36 @@ func Check(f *File, causes *Causes) []Problem {
 
 	sort.SliceStable(ps, func(a, b int) bool { return ps[a].Where < ps[b].Where })
 	return ps
+}
+
+// checkExclusion holds the rules for the two excluded reasons that rest on a
+// judgment and not on the reports: c-optout (names its callers) and
+// world-universal. Both need a reviewer verdict agree, like counted rows.
+func checkExclusion(w string, r Row, add func(string, string, ...any)) {
+	x := r.Exclusion
+	if x.Reason != ReasonCOptout && len(x.Callers) > 0 {
+		add(w, "exclusion.callers is only for c-optout")
+	}
+	if x.Reason == ReasonCOptout {
+		if len(x.Callers) == 0 {
+			add(w, "c-optout needs exclusion.callers: the failing caller pods, by name or name prefix as recorded in podMesh")
+		}
+		seen := map[string]bool{}
+		for _, c := range x.Callers {
+			if !podNameRe.MatchString(c) {
+				add(w, "exclusion.callers entry %q is not a pod name", c)
+			}
+			if seen[c] {
+				add(w, "exclusion.callers entry %q listed twice", c)
+			}
+			seen[c] = true
+		}
+	}
+	if x.Reason == ReasonCOptout || x.Reason == ReasonWorldUniversal {
+		if r.Reviewer == nil || r.Reviewer.Run == "" || r.Reviewer.Verdict != VerdictAgree {
+			add(w, "a %s exclusion needs reviewer verdict agree and reviewer.run (section 2)", x.Reason)
+		}
+	}
 }
 
 func checkCounted(w string, r Row, add func(string, string, ...any)) {

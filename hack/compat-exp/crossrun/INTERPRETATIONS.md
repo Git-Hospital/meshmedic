@@ -17,8 +17,10 @@ where the maintainer may want the other reading before the freeze.
 
 - Sentence: rule 1, "the second started at least 12 h after the first ended".
 - Ambiguity: the reports carry no times, and what happens when the gap is short is not said.
-- Reading: the manifest gives `started` and `ended` per run (RFC 3339); a gap under 12 h (exactly 12 h passes) makes no cell hold under rule 1, status `not-reproduced`, with a prominent warning. It is not an error.
-- Alternative: stop with an error, since the instrument was run wrongly.
+- Reading: the manifest gives `started` and `ended` per run (RFC 3339). With run 2 given, a gap under 12 h (exactly 12 h passes; a run 2 that starts before run 1 ended is a gap under 12 h) is an error: crossrun exits 1 naming both times and writes no result, so no region and no futility verdict. An operator slip must not read as "Drop" (every cell not reproduced, N_max 0, region E).
+- Which times: analyze.sh takes them conservatively against workflow reruns. End of run 1 is the latest `completedAt` of any job in any attempt (`gh run view ID --attempt N --json jobs` for every attempt 1..`attempt`, N from `gh run view ID --json attempt`). Start of run 2 is the earliest `startedAt` of any job in any attempt, and not later than the run's own `startedAt`. Jobs with no real time (skipped jobs report a zero time) are ignored. A run that is not completed is refused.
+- Run 1 only (analyze.sh without --run2, the futility check "after run 1"): cells that differ in run 1 are `awaiting-run-2` and count as pending toward N_max and P_max. No region is final: the result has `final: false`, the region is "none", the markdown starts with "RUN 1 ONLY" and prints no region or first-match table. The stop flag `stopDrop` is then only a statement about the bounds.
+- Alternative: warn and report region E (the first implementation).
 
 ## 3. "Differs in two workflow runs", "W0 3 of 3 in both"
 
@@ -58,8 +60,13 @@ where the maintainer may want the other reading before the freeze.
 ## 9. C-optout: how far it is mechanised
 
 - Sentence: "every failing caller carries the chart's own mesh opt-out".
-- Reading: the ledger row asserts c-optout; crossrun requires records (podMesh) for the sample runs and at least one non-client pod of that chart and world with the world's opt-out metadata (`sidecar.istio.io/inject=false` in a sidecar world, `istio.io/dataplane-mode=none` in W3, the only ambient world, a constant in the code). It prints every such pod. It cannot know which pods were the failing callers, or that no other caller failed: that stays the ledger's judgment. For open cells it prints the same evidence when opted-out pods exist, without asserting.
-- Alternative: derive the callers from helm:test keys and test-pod names, which the report does not carry.
+- Reading: the ledger row asserts c-optout and names the failing callers in `exclusion.callers`: a list of pod names or pod-name prefixes as recorded in `podMesh` (a pod matches an entry when its name equals it or starts with it and a dash, so `podinfo-grpc-test` matches `podinfo-grpc-test-x1`; generated suffixes differ between installs). crossrun accepts the exclusion only when all of these hold:
+  1. the key is `helm:test`. The helm test is the one observation whose caller is a pod of the chart; ports are called by the instrument's client, workloads and jobs are not calls, `apiserver:` keys are called by kube-apiserver, `late:` keys are workload state. For any other key the assertion is an error.
+  2. in both runs, in every record of that chart and world, each named caller matches at least one pod in `podMesh`, every matching pod is not the instrument's own client pod (`client: true`), and carries the opt-out metadata that applies to the world (`sidecar.istio.io/inject=false` in a sidecar world, `istio.io/dataplane-mode=none` in W3, the only ambient world, a constant in the code).
+  3. the ledger row has a reviewer verdict `agree` (the ledger check enforces it; world-universal rows too). Mechanical exclusions (pull-failure, capacity, flaky, undecided, world-universal without a row) need no row and no reviewer.
+  A pod that merely carries opt-out metadata but is not a named caller proves nothing: the audit's Prometheus port finding was excluded because an unrelated admission Job pod was opted out; that case is now an error.
+- Known gap: `observe.sh` takes the `podMesh` list before it runs `helm test`, so helm test pods are in it only if they exist at that moment (a pod of a test hook that has not run yet is not created, and a hook-delete-policy removes finished ones). In real records they are therefore normally absent, and then a c-optout assertion is an error naming the missing caller; the rule is not loosened to accept it. Pilot 1's podinfo case passes only on the hand-built fixture, whose pod names were added to the records by hand. Recording the helm test pods needs a change in `observe.sh` (a second pod list after `helm test`), which is the workflow builder's and frozen.
+- Alternative: any non-client pod of the chart with the opt-out (the first implementation).
 
 ## 10. Rule 3 credit
 
@@ -76,7 +83,7 @@ where the maintainer may want the other reading before the freeze.
 ## 12. S
 
 - Sentence: "flags every counted finding of its key and at most 10% of charts that were 'same' in that world".
-- Reading: the check id is the `staticCheck` of the key's causes.json entry (a key outside causes.json, a new key, uses its own name). A key whose `staticCheck` is null has no check and is never in S. For each world holding counted findings of the key: every counted cell is flagged, and flagged * 100 <= 10 * same, where same is the qualified charts whose world verdict is `same` in every given run. A missing static result for a counted cell or a same chart stops with an error. Without a static file S is 0 and a warning says so. The 10% test is per world, not pooled; zero same charts passes.
+- Reading: the check id is the `staticCheck` of the key's causes.json entry. A key whose `staticCheck` is null has no check and is never in S. A key outside causes.json (a new key admitted after the freeze) has no static check either: the frozen static.sh cannot render a check that did not exist at the freeze, so the key never earns S, no static row is required for it, and the S table says "no static check: admitted after the freeze". This narrows section 1's wording for S ("or for a new key at its admission from its reproduction only"): the reproduction-only route is not implemented, so a new key can only lower the chance of region B (it counts in N_new and P_new). For each world holding counted findings of the key: every counted cell is flagged, and flagged * 100 <= 10 * same, where same is the qualified charts whose world verdict is `same` in every given run. A missing static result for a counted cell or a same chart stops with an error. Without a static file S is 0 and a warning says so. The 10% test is per world, not pooled; zero same charts passes.
 - Not applicable: a check "applies" to a world when static.sh says so and, for a frozen key, the world is in the key's `worlds`. A counted finding in a world the check does not apply to is reported as `notApplicableFindings`, not as unflagged, and the key does not qualify (a check that cannot look at a world cannot flag a finding there; "flags every counted finding" is not met). That world has no 10% test (`notApplicable`), so no chart is counted as flagged or not flagged there. In practice a key's counted findings lie in its own worlds, so this fires only when a ledger credits a cell to a key outside its worlds.
 - Alternative: pool the worlds; treat missing results as not flagged; treat a finding outside the check's worlds as out of the key's scope instead of a miss.
 
@@ -89,7 +96,8 @@ where the maintainer may want the other reading before the freeze.
 ## 14. The undecided share
 
 - Sentence: "Over 15% of cells undecided after one rerun".
-- Reading: undecided cells (primary reason undecided) over all cells listed in the result (including excluded and not-reproduced ones); over means strictly more than 15%; 3 of 20 is not over. "After one rerun" is a procedure, not an input: crossrun reports the share of the reports it is given.
+- Ambiguity: "cells" can mean the cells of the result, or the chart-worlds the instrument compares.
+- Reading: both are computed and printed, labelled. Cells reading: undecided cells (primary reason undecided) over all cells listed in the result (including excluded and not-reproduced ones). Chart-worlds reading: chart-worlds with an `undecided` verdict in any run over the chart-worlds of the sample compared in every run (W1 and W3 per chart). Over means strictly more than 15% in either reading; 3 of 20 is not over. Which reading drives `overFifteenPercent` (the stop) is one named constant, `UndecidedStop` in analyze.go, set to the cells reading as first implemented; the output names it (`drivesTheStop`). The maintainer chooses. "After one rerun" is a procedure, not an input: crossrun reports the share of the reports it is given.
 - Alternative: count pull-failure and capacity cells as undecided too, or use findings only as the denominator.
 
 ## 15. "The region they would reach if all counted"
@@ -102,10 +110,13 @@ where the maintainer may want the other reading before the freeze.
 - Reading: against the reports it checks the run ids, that the cell is held in both runs, that each certification run id is in the manifest, the fix entry's `fixOf` equals the cell's chart, its certificate is earned, lists the cell's world in `cellWorlds` and `cleared`, does not ignore the cell and does not pass the world uncompared, in each of two distinct runs; the recheck report (when given) shows the cell differing; the mechanical exclusion reasons. It takes on trust: helm lint, the patch sha256 and its 40-line limit, the merged-upstream check, the reviewer verdicts, the recheck when no recheck report is given (a warning counts those rows), and the type basis. "A fix whose fixOf is unknown" is read as: the fix entry is not in the certification report, or its `fixOf` is not the cell's chart.
 - Alternative: fail rows whose unverifiable fields are unchecked.
 
-## 17. Frame input
+## 17. Frame input, the sample and replacements
 
-- Reading: the frame is the frozen chart list select.sh writes (charts-exp.json): `charts` then `reserves`, each with `id`, `publisher` and `qualified` (select.sh takes the publisher from candidates.json and writes `qualified` true for every listed chart, since only qualified ones are listed). Publisher is the frame's, per rule "Publisher". A chart in a report but not in the frame, or marked not qualified, stops the run. Reserves replaced in both runs are the frame's concern.
-- Alternative: take publishers from the ledger only.
+- Sentence: section 4, "the first 50 plus 15 reserves frozen in `charts-exp.json` by sha256; a chart whose W0 fails later is replaced by the next reserve in both runs".
+- Reading: the frame is the frozen chart list select.sh writes (charts-exp.json): `charts` (primary), then `reserves`, each with `id`, `publisher` and `qualified`. Publisher is the frame's, per rule "Publisher". The sample is the primary charts with the replacements applied. Every chart of the sample must be in both reports (run 1 only: in that report), with W0 records and with W1 and W3; anything missing is an error naming run, chart and world, never a smaller denominator. A report chart that is neither in the sample nor replaced is an error too (it would let the sample be chosen after the fact). A sample chart whose W0 was not 3 of 3 and that is not replaced is a warning (its cells are undecided).
+- Replacements are a data file (`hack/compat-exp/replacements.json`, manifest field `replacements`; schema 1, `replacements[]` of `chart`, `reserve`, `reason`, `run`). crossrun checks each: the replaced chart is in the sample at that point (a primary chart or a reserve taken earlier), the reserve is the next unused reserve in the frame's list order, the evidence run is a run of the manifest, and its report shows the replaced chart with W0 not 3 of 3 in some world (no report of the chart in that run: error, since the failure cannot be verified). The replaced chart's cells are dropped in both runs and the reserve must be complete in both runs. The file is data, committed like the ledger; analyze.sh refuses it uncommitted.
+- Not checked by crossrun: that the frame is the one select.sh produces from the qualification run's records. analyze.sh checks that (INTERPRETATIONS 21).
+- Alternative: take whatever charts the reports share (the first implementation), which lets a missing chart shrink the denominators.
 
 ## 18. Rule 4 and rule 2 failures
 
@@ -117,3 +128,21 @@ where the maintainer may want the other reading before the freeze.
 - Sentence: section 3, "a fresh reviewer ... checks all three and that no existing key covers it; a tie merges".
 - Reading: the ledger's new-key reviewer verdict is `admit`, `merge` or `reject`; only `admit` passes the check. The order of `newKeys` is the rank among new keys.
 - Alternative: reuse agree, disagree-type, disagree-other, which do not fit.
+
+## 20. P_D leaves out ambient-np
+
+- Sentence: section 1, "P_D: publishers with a counted defect finding"; "`ambient-np` charts found again are reported as prevalence, never in N_new, P_new, D or S".
+- Ambiguity: the second sentence lists N_new, P_new, D and S but not P_D.
+- Reading: the code leaves ambient-np findings out of P_D as well (they are skipped before any metric is computed, in `metricsOf`), so a publisher whose only counted defect finding is ambient-np is not a P_D publisher. The list in section 1 omits P_D by oversight; leaving it out is the only reading under which pilot 1's class cannot supply the "beyond pilot 1" the experiment asks for.
+- Alternative: count ambient-np defect findings toward P_D, which would let a sibling of pilot 1's class lift region A.
+
+## 21. What binds the analysis to the freeze
+
+- Sentence: section 5, "crossrun and the ledger are frozen with the rest and only read records"; section 2, the result "quotes that SHA".
+- Gap: crossrun reads whatever files the manifest names, so it could be run on other runs, other tools or another sample.
+- Reading: analyze.sh is the only supported way to produce a result, and it refuses unless: the tag exists, HEAD descends from it, frozen files equal the tag's (working tree included), and the data files are committed; every run id was a `compat-exp` `workflow_dispatch` run on a head commit that descends from the tag with equal frozen files, of the mode and Istio version its role needs; the chart list reproduces from the qualification run's records and the frozen `candidates.json`; the tools are built from the tree. The result records the tag commit, HEAD, every run (headSha, mode, Istio, times) and the sha256 of the chart list, ledger, causes and replacements. crossrun itself checks none of this: run by hand it gives a result without provenance, which is not a result of the experiment.
+- Times: run end is the latest job `completedAt` in any attempt, run start the earliest job `startedAt` in any attempt (`gh run view --attempt N --json jobs`).
+- Needs from the workflow: `run-meta-<id>.json` (README.md, step 13), because `gh run view` does not return the dispatch inputs.
+- Test mode (`MMC_ANALYZE_TEST=1`) allows the tool and file overrides and marks every output not valid.
+- Alternative: trust the manifest.
+

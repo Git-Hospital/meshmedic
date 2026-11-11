@@ -324,7 +324,7 @@ scenario() {
 }
 sel() { # dir; sets rc, writes dir/out.json
   rc=0
-  "$select_sh" "$1/cands.json" "$1/recs" "$1/out.json" >"$1/stdout" 2>"$1/stderr" || rc=$?
+  "$select_sh" "$1/cands.json" "$1/recs" "$1/out.json" 7001 >"$1/stdout" 2>"$1/stderr" || rc=$?
 }
 
 scenario "$tmp/s1" 80 '$i % 8 != 0'
@@ -365,6 +365,26 @@ if cmp -s "$tmp/s1/first.json" "$tmp/s1b/out.json"; then ok "select: determinist
 mkrec "$tmp/s1b/recs" chart2 true 999 0000
 sel "$tmp/s1b"
 [[ "$(jq -r .sha256 "$tmp/s1b/out.json")" != "$stored" ]] && ok "select: hash follows the content" || fail "select: hash did not change"
+
+# the list records its origin: qualification run, candidates and records (F6)
+eq "select: qualification run id is in the list" "$(jq -r .qualification.run "$tmp/s1/out.json")" 7001
+eq "select: candidates hash" "$(jq -r .qualification.candidatesSha256 "$tmp/s1/out.json")" "$(jq -S -c . "$tmp/s1/cands.json" | shasum -a 256 | cut -d' ' -f1)"
+eq "select: records hash" "$(jq -r .qualification.recordsSha256 "$tmp/s1/out.json")" "$(jq -S -c -s 'sort_by(.id)' "$tmp/s1"/recs/*.qualify.json | shasum -a 256 | cut -d' ' -f1)"
+r0="$(jq -r .qualification.recordsSha256 "$tmp/s1/out.json")"
+mkrec "$tmp/s1/recs" chart79 true 4001 0000   # a record outside the list still changes the origin hash
+sel "$tmp/s1"
+[[ "$(jq -r .qualification.recordsSha256 "$tmp/s1/out.json")" != "$r0" ]] && ok "select: records hash follows every record" || fail "select: records hash did not change"
+cp "$tmp/s1/cands.json" "$tmp/s1/cands.orig"
+jq '.candidates[70].stars += 1' "$tmp/s1/cands.orig" >"$tmp/s1/cands.json"
+sel "$tmp/s1"
+[[ "$(jq -r .qualification.candidatesSha256 "$tmp/s1/out.json")" != "$(jq -S -c . "$tmp/s1/cands.orig" | shasum -a 256 | cut -d' ' -f1)" ]] && ok "select: candidates hash follows the file" || fail "select: candidates hash did not change"
+cp "$tmp/s1/cands.orig" "$tmp/s1/cands.json"
+rc=0; "$select_sh" "$tmp/s1/cands.json" "$tmp/s1/recs" "$tmp/s1/x.json" >/dev/null 2>"$tmp/s1/err" || rc=$?
+eq "select: no run id is refused (exit 2)" "$rc" 2
+rc=0; env GITHUB_RUN_ID=8002 "$select_sh" "$tmp/s1/cands.json" "$tmp/s1/recs" "$tmp/s1/x.json" >/dev/null 2>&1 || rc=$?
+eq "select: GITHUB_RUN_ID is the default" "$rc.$(jq -r .qualification.run "$tmp/s1/x.json")" "0.8002"
+rc=0; "$select_sh" "$tmp/s1/cands.json" "$tmp/s1/recs" "$tmp/s1/y.json" '12;id' >/dev/null 2>&1 || rc=$?
+eq "select: a run id that is not digits is refused" "$rc" 2
 
 # boundaries of the selection
 scenario "$tmp/s65" 70 '$i <= 65'

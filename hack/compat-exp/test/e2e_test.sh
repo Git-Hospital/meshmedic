@@ -71,7 +71,7 @@ jq -r '.[].id' "$T/frame/candidates-charts.json" | while read -r id; do
     installs: [{n:1,durationSeconds:120,ready:true,helmRc:0},{n:2,durationSeconds:118,ready:true,helmRc:0},{n:3,durationSeconds:119,ready:true,helmRc:0}],
     bias: {hasStatefulSet: false, hasNetworkPolicy: false, hasNonHttpPort: false, hasHeadlessService: false}}' >"$T/qual/$id.qualify.json"
 done
-must "select.sh" "$repo/hack/compat-exp/select.sh" "$T/frame/candidates.json" "$T/qual" "$T/charts-exp.json"
+must "select.sh" "$repo/hack/compat-exp/select.sh" "$T/frame/candidates.json" "$T/qual" "$T/charts-exp.json" 7001
 eq "select: 50 charts and 5 reserves" "$(jq -c '[(.charts | length), (.reserves | length)]' "$T/charts-exp.json")" "[50,5]"
 eq "ids: frame charts and select.sh agree, in order" "$(jq -c '[.charts[].id, .reserves[].id]' "$T/charts-exp.json")" "$(jq -c '.[0:55] | map(.id)' "$T/frame/candidates-charts.json")"
 eq "ids: the duplicate package is <repository>-<name> in both" "$(jq -c '.charts[3:5] | map(.id)' "$T/charts-exp.json")" '["repo4-dup","repo5-dup"]'
@@ -85,6 +85,8 @@ R="$T/repo"
 mkdir -p "$R/docs" "$R/.github"
 cp -R "$repo/hack" "$R/hack"
 cp -R "$repo/.github/workflows" "$R/.github/workflows"
+# the recheck version is decided in the freeze commit (the workflow's marked line)
+sed -i.bak 's/"recheck-version-undecided"/"1.32.0"/' "$R/.github/workflows/compat-exp.yml" && rm -f "$R/.github/workflows/compat-exp.yml.bak"
 cp "$repo/docs/compat-experiment.md" "$R/docs/"
 cp "$repo/go.mod" "$repo/go.sum" "$R/"
 cp "$T/frame/candidates.json" "$R/hack/compat-exp/candidates.json"
@@ -174,12 +176,19 @@ observe_set() {
 observe_set "$T/res-1001" "$T/plan-observe/charts.json" 1.31.3 $id1 $id2 $id3 && ok "observe.sh: 3 charts x 3 worlds x 3 runs"
 eq "records: 27 files named <id>.<world>.run<N>.json" "$(find "$T/res-1001" -name "app-[123].W[013].run[123].json" | wc -l | tr -d " ")" 27
 eq "ids: the record's chart field is the list's id" "$(jq -s -c 'map(.chart) | unique' "$T/res-1001"/*.json)" '["app-1","app-2","app-3"]'
+# hand-made: the sample is the 50 primary charts (crossrun refuses a smaller one), so the other 47 get
+# copies of app-1's records under their own ids; the stub cluster has no behaviour that differs per chart.
+for id in $(jq -r '.charts[3:][].id' "$T/charts-exp.json"); do
+  for f in "$T/res-1001"/app-1.*.json; do
+    jq --arg id "$id" '.chart = $id' "$f" >"$T/res-1001/$id.${f#*/app-1.}"
+  done
+done
 cp -R "$T/res-1001" "$T/res-1002"   # hand-made: a second run with the same stub behaviour
 for r in 1001 1002; do
   "$B/difftable" -json -worlds W1,W3 "$T/res-$r" >"$T/report-$r.json" 2>"$T/dt.err" && ok "difftable -json run $r" || { bad "difftable -json run $r"; head -3 "$T/dt.err"; }
 done
-eq "ids: the report's charts are the records' charts" "$(jq -c '[.charts[].chart]' "$T/report-1001.json")" '["app-1","app-2","app-3"]'
-eq "run 1: app-2 differs in W3 only" "$(jq -c '[.charts[] | {c: .chart, w: [.worlds[] | {(.world): .verdict}] | add}]' "$T/report-1001.json")" \
+eq "ids: the report's charts are the records' charts" "$(jq -c '[.charts[].chart] | sort == ([$l[0].charts[].id] | sort)' --slurpfile l "$T/charts-exp.json" "$T/report-1001.json")" true
+eq "run 1: app-2 differs in W3 only" "$(jq -c '[.charts[] | select(.chart | IN("app-1","app-2","app-3")) | {c: .chart, w: [.worlds[] | {(.world): .verdict}] | add}] | sort_by(.c)' "$T/report-1001.json")" \
   '[{"c":"app-1","w":{"W1":"same","W3":"same"}},{"c":"app-2","w":{"W1":"same","W3":"differs"}},{"c":"app-3","w":{"W1":"same","W3":"same"}}]'
 keys="$(jq -c '[.charts[] | select(.chart == "app-2") | .worlds[] | select(.world == "W3") | .keys[] | select(.verdict == "differs") | .key]' "$T/report-1001.json")"
 eq "run 1: two findings, the same not-ready workload at install and in the late snapshot" "$keys" '["late:workload:Deployment/app-2:ready","workload:Deployment/app-2:ready"]'
@@ -220,19 +229,63 @@ jq -n --arg c "$id2" --argjson ks "$keys" --arg p "$pub2" '{schema: 1, newKeys: 
   status: "counted", publisher: $p}]}' >"$T/ledger.json"
 "$B/ledger" check -ledger "$T/ledger.json" -causes "$repo/hack/compat-exp/causes.json" >"$T/lc.out" 2>&1 && ok "ledger check on the real causes.json" || { bad "ledger check"; cat "$T/lc.out"; }
 
-# --- 9. analyze.sh with a gh stub: download, ledger check, static.sh, crossrun --------------------------------------
+# --- 9. analyze.sh with a gh stub: freeze, runs, qualification, download, ledger check, static.sh, crossrun ----------
+
+# the ledger and the data files are committed, as analyze.sh demands
+cp "$T/ledger.json" "$R/hack/compat-exp/ledger.json"
+echo '{"schema":1,"rows":[],"newKeys":[]}' >"$R/hack/compat-exp/ledger-run1.json"   # for the check after run 1, before any ledger row
+git -C "$R" add hack/compat-exp/ledger.json hack/compat-exp/ledger-run1.json && git -C "$R" commit -q -m "ledger rows"
+tagsha="$(git -C "$R" rev-parse compat-exp-freeze)"
+headsha="$(git -C "$R" rev-parse HEAD)"
 
 G="$T/gh"
-for r in 1001 1002 1003 1004 1005; do
+mkdir -p "$G"
+# artifact of a workflow run: the report, its records, and the run metadata the workflow uploads
+mkartifact() { # ID MODE ISTIO
+  local r="$1" mode="$2" istio="$3"
   mkdir -p "$G/$r"
   cp "$T/report-$r.json" "$G/$r/report-$r.json"
   "$B/difftable" -worlds W1,W3 "$T/res-$r" >"$G/$r/table.md" 2>/dev/null
   cp -R "$T/res-$r" "$G/$r/results"
-done
-# run metadata: run 2 starts 13 h after run 1 ended
-echo '{"status":"completed","conclusion":"success","startedAt":"2026-11-20T08:00:00Z","updatedAt":"2026-11-20T09:10:00Z"}' >"$G/1001.view.json"
-echo '{"status":"completed","conclusion":"success","startedAt":"2026-11-20T22:10:00Z","updatedAt":"2026-11-20T23:20:00Z"}' >"$G/1002.view.json"
-for r in 1003 1004 1005; do echo '{"status":"completed","conclusion":"success","startedAt":"2026-11-21T08:00:00Z","updatedAt":"2026-11-21T08:30:00Z"}' >"$G/$r.view.json"; done
+  echo "compat-exp-report-$r" >"$G/$r.artifact"
+  jq -n --arg id "$r" --arg sha "$headsha" --arg mode "$mode" --arg istio "$istio" \
+    '{schema: 1, runId: $id, runAttempt: 1, sha: $sha, workflowRef: "Git-Hospital/meshmedic/.github/workflows/compat-exp.yml@refs/heads/main",
+      eventName: "workflow_dispatch", mode: $mode, istio: $istio, chartsFile: "", fixesFile: "", chartIds: "", fixId: ""}' >"$G/$r/run-meta-$r.json"
+}
+mkartifact 1001 observe 1.31.3
+mkartifact 1002 observe 1.31.3
+mkartifact 1003 certify 1.31.3
+mkartifact 1004 certify 1.31.3
+mkartifact 1005 recheck 1.32.0
+# the qualification run: its records and the list it wrote
+mkdir -p "$G/7001/qual" "$G/7001/out"
+cp "$T/qual"/*.qualify.json "$G/7001/qual/"
+cp "$T/charts-exp.json" "$G/7001/out/"
+echo "charts-exp-7001" >"$G/7001.artifact"
+jq -n --arg sha "$headsha" '{schema: 1, runId: "7001", runAttempt: 1, sha: $sha, workflowRef: "Git-Hospital/meshmedic/.github/workflows/compat-exp.yml@refs/heads/main",
+  eventName: "workflow_dispatch", mode: "qualify", istio: "1.31.3", chartsFile: "", fixesFile: "", chartIds: "", fixId: ""}' >"$G/7001/run-meta-7001.json"
+
+# gh run view JSON: latest attempt's view, and the jobs of every attempt (the times come from the jobs)
+mkview() { # ID ATTEMPTS FIRST_JOB_START FIRST_JOB_END LAST_JOB_START LAST_JOB_END
+  local id="$1" n="$2"
+  jq -n --arg id "$id" --arg sha "$headsha" --argjson n "$n" --arg s1 "$3" --arg e1 "$4" --arg s2 "$5" --arg e2 "$6" '
+    def view($jobs): {attempt: $n, conclusion: "success", databaseId: ($id | tonumber), event: "workflow_dispatch", headSha: $sha,
+      startedAt: $jobs[0].startedAt, status: "completed", updatedAt: ($jobs[-1].completedAt), workflowName: "compat-exp", jobs: $jobs};
+    [{name: "observe", startedAt: $s1, completedAt: $e1}] as $a1
+    | [{name: "observe", startedAt: $s2, completedAt: $e2}] as $a2
+    | (if $n == 1 then view($a1) else view($a2) end),
+      view($a1)' -c >"$T/views.$id"
+  sed -n 1p "$T/views.$id" >"$G/$id.view.json"
+  sed -n 2p "$T/views.$id" >"$G/$id.attempt-1.json"
+  [[ "$n" -lt 2 ]] || sed -n 1p "$T/views.$id" >"$G/$id.attempt-2.json"
+}
+# run 1: first attempt 08:00-09:10, a rerun 09:30-10:20 (the run ends at 10:20, not 09:10)
+mkview 1001 2 2026-11-20T08:00:00Z 2026-11-20T09:10:00Z 2026-11-20T09:30:00Z 2026-11-20T10:20:00Z
+# run 2: starts 22:30 (12 h 10 min after 10:20), rerun later
+mkview 1002 2 2026-11-20T22:30:00Z 2026-11-20T23:20:00Z 2026-11-21T00:10:00Z 2026-11-21T01:00:00Z
+for r in 1003 1004 1005; do mkview "$r" 1 2026-11-21T08:00:00Z 2026-11-21T08:30:00Z 2026-11-21T08:00:00Z 2026-11-21T08:30:00Z; done
+mkview 7001 1 2026-11-01T08:00:00Z 2026-11-01T09:00:00Z 2026-11-01T08:00:00Z 2026-11-01T09:00:00Z
+
 cat >"$T/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "gh $*" >>"$GH_LOG"
@@ -240,10 +293,12 @@ echo "gh $*" >>"$GH_LOG"
 id="$3"
 if [[ "$2" == download ]]; then
   while [[ $# -gt 0 ]]; do case "$1" in -D) dir="$2"; shift 2 ;; -n) name="$2"; shift 2 ;; *) shift ;; esac; done
-  [[ "$name" == "compat-exp-report-$id" && -d "$GH_FIX/$id" ]] || { echo "no artifact $name" >&2; exit 1; }
+  [[ -d "$GH_FIX/$id" && "$name" == "$(cat "$GH_FIX/$id.artifact")" ]] || { echo "no artifact $name" >&2; exit 1; }
   cp -R "$GH_FIX/$id/." "$dir/"
 else
-  cat "$GH_FIX/$id.view.json"
+  att=""
+  while [[ $# -gt 0 ]]; do case "$1" in --attempt) att="$2"; shift 2 ;; *) shift ;; esac; done
+  if [[ -n "$att" && -f "$GH_FIX/$id.attempt-$att.json" ]]; then cat "$GH_FIX/$id.attempt-$att.json"; else cat "$GH_FIX/$id.view.json"; fi
 fi
 STUB
 chmod +x "$T/bin/gh"
@@ -252,33 +307,88 @@ cp "$repo/hack/compat-exp/staticcheck/testdata/protocol-consistent.yaml" "$S/ren
 cp "$repo/hack/compat-exp/staticcheck/testdata/l7-routes.yaml" "$S/render/app-2.yaml"
 
 export GH_LOG="$T/gh.log" GH_FIX="$G"
-: >"$GH_LOG"
-env PATH="$T/bin:$PATH" CROSSRUN="$B/crossrun" LEDGER="$B/ledger" STATICCHECK="$B/staticcheck" MMC_STATE="$T/state" \
-  "$repo/hack/compat-exp/analyze.sh" --out "$T/analysis" --run1 1001 --run2 1002 --cert 1003 --cert 1004 --recheck 1005 \
-  --charts "$T/charts-exp.json" --ledger "$T/ledger.json" >"$T/analyze.out" 2>"$T/analyze.err"
+analyze() { # OUTDIR [extra args]: the real thing, tools built from the checked tree, run from the throwaway repository
+  local o="$1"; shift
+  : >"$GH_LOG"
+  env PATH="$T/bin:$PATH" MMC_STATE="$T/state" "$R/hack/compat-exp/analyze.sh" --out "$o" "$@" >"$T/analyze.out" 2>"$T/analyze.err"
+}
+analyze "$T/analysis" --run1 1001 --run2 1002 --cert 1003 --cert 1004 --recheck 1005
 arc=$?
-eq "analyze.sh exits 0" "$arc" 0
+eq "analyze.sh exits 0 (tools built from the checked tree, no overrides)" "$arc" 0
 [[ $arc -eq 0 ]] || head -10 "$T/analyze.err"
 eq "gh was used for run download and run view only" "$(grep -cv '^gh run \(download\|view\) ' "$GH_LOG")" 0
 res="$T/analysis/result.json"
-eq "manifest: run times come from gh run view" "$(jq -c '[.runs[] | {id, started, ended}]' "$T/analysis/inputs.json")" \
-  '[{"id":"1001","started":"2026-11-20T08:00:00Z","ended":"2026-11-20T09:10:00Z"},{"id":"1002","started":"2026-11-20T22:10:00Z","ended":"2026-11-20T23:20:00Z"}]'
-eq "manifest: recheck istio comes from the records" "$(jq -c '.recheck | {id, istio}' "$T/analysis/inputs.json")" '{"id":"1005","istio":"1.32.0"}'
-eq "static.json: rows for the 3 charts x 2 worlds x the checks" "$(jq length "$T/analysis/static.json")" "$((3 * 2 * 8))"
+eq "manifest: run 1 ends with its rerun (latest completion of any job in any attempt)" "$(jq -c '.runs[0] | {id, started, ended}' "$T/analysis/inputs.json")" \
+  '{"id":"1001","started":"2026-11-20T08:00:00Z","ended":"2026-11-20T10:20:00Z"}'
+eq "manifest: run 2 starts with its earliest job in any attempt" "$(jq -c '.runs[1] | {id, started}' "$T/analysis/inputs.json")" '{"id":"1002","started":"2026-11-20T22:30:00Z"}'
+eq "manifest: recheck istio is the run's metadata, not a guess" "$(jq -c '.recheck | {id, istio}' "$T/analysis/inputs.json")" '{"id":"1005","istio":"1.32.0"}'
+eq "static.json: rows for the 50 charts x 2 worlds x the checks" "$(jq length "$T/analysis/static.json")" "$((50 * 2 * 8))"
 eq "static: only app-2 is flagged by the L7 check, in W3" "$(jq -c '[.[] | select(.flagged)] | map([.chart, .world, .check])' "$T/analysis/static.json")" '[["app-2","W3","l7-without-waypoint"]]'
 eq "static: the L7 check is not applicable to W1 (not 'not flagged')" "$(jq -c '.[] | select(.chart == "app-2" and .world == "W1" and .check == "l7-without-waypoint") | {applicable, flagged}' "$T/analysis/static.json")" '{"applicable":false,"flagged":false}'
 eq "crossrun: two cells of one chart, both counted and credited to ambient-l7" "$(jq -c '[.cells[] | select(.status == "counted") | {chart, world, credit}]' "$res")" '[{"chart":"app-2","world":"W3","credit":"ambient-l7"},{"chart":"app-2","world":"W3","credit":"ambient-l7"}]'
 eq "crossrun: metrics" "$(jq -c '.metrics' "$res")" '{"nNew":1,"pNew":1,"d":1,"pD":1,"s":1}'
 eq "crossrun: S was computed from static.json" "$(jq -c '[.sComputed, (.staticChecks[0] | {key, check, flagsEveryCountedFinding, qualifies})]' "$res")" '[true,{"key":"ambient-l7","check":"l7-without-waypoint","flagsEveryCountedFinding":true,"qualifies":true}]'
 eq "crossrun: region E (N_new 1)" "$(jq -r '.region.region' "$res")" E
-eq "crossrun: run gap is 14 h and fine" "$(jq -c '[.gapOk, .gapHours]' "$res")" '[true,13]'
+eq "crossrun: the result is final, the gap is 12 h 10 min" "$(jq -c '[.final, .gapOk, (.gapHours * 6 | round)]' "$res")" '[true,true,73]'
+eq "crossrun: the sample is the 50 primary charts, nothing replaced" "$(jq -c '[(.sample.charts | length), (.sample.replacements | length)]' "$res")" '[50,0]'
 eq "ids: every cell's chart is a chart of the frozen list" "$(jq -r --slurpfile l "$T/charts-exp.json" '[.cells[].chart] | unique - ([$l[0].charts[].id, $l[0].reserves[].id]) | length' "$res")" 0
 eq "crossrun: no warnings" "$(jq -c '.warnings' "$res")" '[]'
+eq "crossrun: undecided share under both readings" "$(jq -c '.undecidedShare | [.cellsReading.undecided, .chartWorldsReading.undecided, .drivesTheStop]' "$res")" '[0,0,"cells"]'
 must "result.md written" test -s "$T/analysis/result.md"
+# provenance: the freeze, HEAD, every run, the files read
+eq "provenance: freeze commit and HEAD" "$(jq -c '.provenance | [.freezeCommit, .head]' "$res")" "[\"$tagsha\",\"$headsha\"]"
+eq "provenance: every run id with headSha, mode, Istio and times" "$(jq -c '[.provenance.runs[] | {role, id, mode, istio, ok: (.headSha | length == 40)}]' "$res")" \
+  '[{"role":"qualification","id":"7001","mode":"qualify","istio":"1.31.3","ok":true},{"role":"run1","id":"1001","mode":"observe","istio":"1.31.3","ok":true},{"role":"run2","id":"1002","mode":"observe","istio":"1.31.3","ok":true},{"role":"certification","id":"1003","mode":"certify","istio":"1.31.3","ok":true},{"role":"certification","id":"1004","mode":"certify","istio":"1.31.3","ok":true},{"role":"recheck","id":"1005","mode":"recheck","istio":"1.32.0","ok":true}]'
+eq "provenance: run 1 times" "$(jq -c '.provenance.runs[1] | {started, ended, attempts}' "$res")" '{"started":"2026-11-20T08:00:00Z","ended":"2026-11-20T10:20:00Z","attempts":2}'
+eq "provenance: sha256 of the chart list, ledger and causes that were read" "$(jq -c '.provenance.files | [.chartList.sha256, .ledger.sha256, .causes.sha256]' "$res")" \
+  "[\"$(shasum -a 256 "$R/hack/compat-exp/charts-exp.json" | cut -d' ' -f1)\",\"$(shasum -a 256 "$R/hack/compat-exp/ledger.json" | cut -d' ' -f1)\",\"$(shasum -a 256 "$R/hack/compat-exp/causes.json" | cut -d' ' -f1)\"]"
+eq "provenance: a valid run carries no testMode" "$(jq -c '[has("testMode"), (.provenance | has("testMode"))]' "$res")" '[false,false]'
+[[ "$(head -c 20 "$T/analysis/result.md")" != "**THIS RESULT IS NOT"* ]] && ok "result.md does not say it is invalid" || bad "result.md says it is invalid"
+
+# test mode: the overrides work, and every output says so
+env PATH="$T/bin:$PATH" MMC_STATE="$T/state" MMC_ANALYZE_TEST=1 CROSSRUN="$B/crossrun" LEDGER="$B/ledger" STATICCHECK="$B/staticcheck" \
+  "$R/hack/compat-exp/analyze.sh" --out "$T/analysis-t2" --run1 1001 --run2 1002 --cert 1003 --cert 1004 --recheck 1005 >"$T/analyze2.out" 2>"$T/analyze2.err"
+eq "test mode with the tools given: exit 0" "$?" 0
+eq "test mode: result.json, inputs.json, provenance.json and the static meta say testMode" "$(for f in result.json inputs.json provenance.json static.json.meta.json; do jq -r '.testMode' "$T/analysis-t2/$f"; done | tr '\n' ' ')" "true true true true "
+eq "test mode: the markdown starts with the not-valid line" "$(head -c 26 "$T/analysis-t2/result.md")" "**THIS RESULT IS NOT VALID"
+[[ -f "$T/analysis-t2/NOT-VALID-TEST-MODE.txt" ]] && ok "test mode: a marker file is written" || bad "test mode: a marker file is written"
+env PATH="$T/bin:$PATH" CROSSRUN="$B/crossrun" "$R/hack/compat-exp/analyze.sh" --out "$T/analysis-t3" --run1 1001 >/dev/null 2>&1
+eq "a CROSSRUN override outside test mode is refused (exit 2)" "$?" 2
+
+# run 1 only: the futility check after run 1
+analyze "$T/analysis-r1" --run1 1001 --ledger "$R/hack/compat-exp/ledger-run1.json"
+r1rc=$?
+eq "analyze.sh with run 1 only: exit 0" "$r1rc" 0
+[[ $r1rc -eq 0 ]] || tail -3 "$T/analyze.err"
+eq "run 1 only: not final, no region, the output says so" "$(jq -c '[.final, .region.region]' "$T/analysis-r1/result.json")" '[false,"none"]'
+grep -q "RUN 1 ONLY" "$T/analysis-r1/result.md" && ok "run 1 only: the markdown says run 1 only" || bad "run 1 only: the markdown says run 1 only"
+eq "run 1 only: app-2's two findings are pending toward N_max and P_max" "$(jq -c '.futility | [.nMax, .pMax, .cellsNeitherCreditedNorExcluded]' "$T/analysis-r1/result.json")" '[2,1,2]'
+grep -q "run 1 only" "$T/analyze.out" && ok "run 1 only: analyze.sh says so" || bad "run 1 only: analyze.sh says so"
+
+# a run 2 that started too early is an error, not a Drop: its first attempt started 11 h 30 min after run 1 ended,
+# although the rerun that the latest-attempt view shows started much later
+mkview 1002 2 2026-11-20T21:50:00Z 2026-11-20T23:20:00Z 2026-11-21T00:10:00Z 2026-11-21T01:00:00Z
+analyze "$T/analysis-early" --run1 1001 --run2 1002 --cert 1003 --cert 1004 --recheck 1005
+eq "a run 2 whose first attempt started under 12 h after run 1 ended: analyze.sh fails" "$?" 1
+grep -q "12 h" "$T/analyze.err" && ok "  and the error names the gap" || bad "  and the error names the gap: $(tail -2 "$T/analyze.err")"
+grep -q "2026-11-20T21:50:00Z" "$T/analyze.err" && grep -q "2026-11-20T10:20:00Z" "$T/analyze.err" && ok "  and both times" || bad "  and both times"
+[[ ! -e "$T/analysis-early/result.json" ]] && ok "  and no result file (no region, no futility verdict)" || bad "  and no result file"
+mkview 1002 2 2026-11-20T22:30:00Z 2026-11-20T23:20:00Z 2026-11-21T00:10:00Z 2026-11-21T01:00:00Z
+
+# the sample must be complete: a chart missing from run 2 is an error naming chart and world
+rm "$G/1002/results/app-6."*.json
+jq '.charts |= map(select(.chart != "app-6"))' "$G/1002/report-1002.json" >"$T/x" && mv "$T/x" "$G/1002/report-1002.json"
+analyze "$T/analysis-missing" --run1 1001 --run2 1002 --cert 1003 --cert 1004 --recheck 1005
+mrc=$?
+eq "a chart missing from run 2: analyze.sh fails" "$mrc" 1
+[[ $mrc -ne 0 ]] || tail -3 "$T/analyze.out"
+grep -q 'run 1002: chart "app-6" is missing' "$T/analyze.err" && ok "  and names the run and the chart" || bad "  and names the run and the chart: $(tail -3 "$T/analyze.err")"
+cp "$T/report-1002.json" "$G/1002/report-1002.json"
+cp "$T"/res-1002/app-6.*.json "$G/1002/results/"
 
 # analyze.sh refuses a bad run id before it calls gh
 : >"$GH_LOG"
-env PATH="$T/bin:$PATH" "$repo/hack/compat-exp/analyze.sh" --out "$T/a2" --run1 '10;id' --run2 1002 >/dev/null 2>&1
+env PATH="$T/bin:$PATH" "$R/hack/compat-exp/analyze.sh" --out "$T/a2" --run1 '10;id' --run2 1002 >/dev/null 2>&1
 eq "a run id with a metacharacter is refused (exit 2)" "$?" 2
 eq "and gh is not called" "$(wc -l <"$GH_LOG" | tr -d ' ')" 0
 

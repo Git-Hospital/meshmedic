@@ -139,7 +139,7 @@ func (a *analysis) checkExcluded(w string, r *ledger.Row, cr *CellResult) {
 	reason := r.Exclusion.Reason
 	switch reason {
 	case ledger.ReasonCOptout:
-		if _, err := a.optOutEvidence(r.Chart, r.World, true); err != nil {
+		if err := a.checkCallers(r); err != nil {
 			a.errf("%s: c-optout asserted but %v", w, err)
 		}
 	default:
@@ -164,6 +164,70 @@ func isOptOut(world, key, value string) bool {
 		return key == "istio.io/dataplane-mode" && value == "none"
 	}
 	return key == "sidecar.istio.io/inject" && value == "false"
+}
+
+// COptoutKey is the one observation key a c-optout exclusion may be accepted
+// for: the helm test, whose callers are pods of the chart. The callers of the
+// other keys are the instrument's own client (ports), nobody (workloads, jobs,
+// late) or kube-apiserver (apiserver); none of them is "the chart's own pod
+// with the chart's own opt-out" (section 2, rule 5).
+const COptoutKey = "helm:test"
+
+// checkCallers verifies a c-optout row against the records of both sample
+// runs: the key is helm:test, every run has records for the chart and world,
+// and in every record each caller the row names matches at least one pod of
+// the chart, every matching pod is not the instrument's client and carries
+// the opt-out metadata that applies to the world. A pod that merely carries
+// opt-out metadata but is not a named caller proves nothing.
+func (a *analysis) checkCallers(r *ledger.Row) error {
+	if r.Key != COptoutKey {
+		return fmt.Errorf("c-optout is accepted for the observation key %s only (its callers are pods of the chart); the callers of %s are not", COptoutKey, r.Key)
+	}
+	callers := r.Exclusion.Callers
+	if len(callers) == 0 {
+		return fmt.Errorf("the row names no callers")
+	}
+	for _, run := range a.in.Runs {
+		if !run.HasRecords {
+			return fmt.Errorf("no records directory is given for run %s, so podMesh cannot be read", run.ID)
+		}
+		n := 0
+		for _, rec := range run.Records {
+			if rec.Chart != r.Chart || rec.World != r.World {
+				continue
+			}
+			n++
+			for _, c := range callers {
+				matched := 0
+				for _, p := range rec.PodMesh {
+					if !ledger.CallerMatches(c, p.Pod) {
+						continue
+					}
+					matched++
+					if p.Client {
+						return fmt.Errorf("caller %q matches %s, the instrument's own client pod, in run %s record run%d", c, p.Pod, run.ID, rec.Run)
+					}
+					opted := false
+					for _, m := range p.MeshMetadata {
+						if isOptOut(r.World, m.Key, m.Value) {
+							opted = true
+						}
+					}
+					if !opted {
+						return fmt.Errorf("caller %q matches %s, which does not carry the opt-out that applies in %s, in run %s record run%d", c, p.Pod, r.World, run.ID, rec.Run)
+					}
+				}
+				if matched == 0 {
+					return fmt.Errorf("caller %q is not in podMesh of %s %s in run %s record run%d (podMesh is the pod list taken before helm test, so test pods that do not exist then are not recorded)",
+						c, r.Chart, r.World, run.ID, rec.Run)
+				}
+			}
+		}
+		if n == 0 {
+			return fmt.Errorf("run %s has no record for %s in %s, so podMesh cannot be read", run.ID, r.Chart, r.World)
+		}
+	}
+	return nil
 }
 
 // optOutEvidence reads podMesh from the sample runs' records for a chart and
