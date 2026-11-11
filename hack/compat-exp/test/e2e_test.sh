@@ -120,6 +120,12 @@ case "$1" in
     f="$STUB_RENDER/$2.yaml"
     [[ -f "$f" ]] || f="$STUB_RENDER/default.yaml"
     cat "$f" ;;
+  get) [[ -z "${STUB_HOOKS:-}" ]] || echo "helm.sh/hook: test" ;;
+  test)
+    # helm test ran: the next pod listings (two if it failed: the log listing, then
+    # the instrument's capture; one if it passed) show the pods it created
+    [[ -z "${STUB_PODS_AFTER:-}" ]] || echo "$([[ "${STUB_TEST_RC:-0}" == 0 ]] && echo 1 || echo 2)" >"$STUB_PODS_AFTER.left"
+    exit "${STUB_TEST_RC:-0}" ;;
 esac
 exit 0
 STUB
@@ -128,7 +134,12 @@ cat >"$T/bin/kubectl" <<'STUB'
 a=" $* "
 case "$a" in
   *" config get-contexts "*) echo "$STUB_CONTEXT" ;;
-  *" get pods -o json "*) cat "$STUB_PODS" ;;
+  *" get pods -o json "*)
+    if [[ -n "${STUB_PODS_AFTER:-}" && -f "$STUB_PODS_AFTER.left" ]]; then
+      left="$(cat "$STUB_PODS_AFTER.left")"
+      if [[ "$left" -le 1 ]]; then rm -f "$STUB_PODS_AFTER.left"; else echo $((left - 1)) >"$STUB_PODS_AFTER.left"; fi
+      cat "$STUB_PODS_AFTER"
+    else cat "$STUB_PODS"; fi ;;
   *" get "*" -o json "*) echo '{"items":[]}' ;;
   *" get --raw "*) echo "Error from server (NotFound): no stub" >&2; exit 1 ;;
   *" apply "*) cat >/dev/null ;;
@@ -165,13 +176,34 @@ observe_set() {
       [[ "$id" == app-2 && "$w" == W3 ]] && ready=false
       mkpods "$ready" "${id%-fix}" >"$S/pods.json"
       for run in 1 2 3; do
-        env PATH="$T/bin:$PATH" STUB_CONTEXT="kind-mmc-$(tr '[:upper:]' '[:lower:]' <<<"$w")" STUB_PODS="$S/pods.json" \
-          MMC_STATE="$T/state" MMC_SETTLE=0 MMC_LATE=0 CHARTS_FILE="$cf" \
-          bash "$repo/hack/compat-pilot/observe.sh" "$w" "$id" "$run" "$dir" >/dev/null 2>"$T/observe.err" || {
-          bad "observe.sh $w $id run$run"; head -3 "$T/observe.err"; return 1; }
+        observe_run "$dir" "$cf" "$id" "$w" "$run" "${TEST_POD:-auto}" || return 1
       done
     done
   done
+}
+# observe_run DIR CHARTS_FILE ID WORLD RUN TEST_POD: one observe.sh run on the stub cluster, pods in $S/pods.json.
+# The chart app-3 has a helm test hook; in W1 its test fails and the test pod it creates carries the sidecar opt-out
+# label (TEST_POD auto or optout), carries none (plain), or is gone when the instrument looks (gone). In the other
+# worlds the test passes and leaves no pod.
+observe_run() {
+  local dir="$1" cf="$2" id="$3" w="$4" run="$5" tp="$6" extra=()
+  rm -f "$S/pods-after.json" "$S/pods-after.json.left"
+  if [[ "$id" == app-3 ]]; then
+    extra+=(STUB_HOOKS=1)
+    if [[ "$w" == W1 ]]; then
+      extra+=(STUB_TEST_RC=1 STUB_PODS_AFTER="$S/pods-after.json")
+      case "$tp" in auto | optout) lbl='{"sidecar.istio.io/inject":"false"}' ;; *) lbl='{}' ;; esac
+      jq --argjson l "$lbl" --argjson gone "$([[ "$tp" == gone ]] && echo true || echo false)" '.items += (if $gone then [] else [{
+          metadata: {name: "app-3-test", labels: $l, annotations: {"helm.sh/hook": "test", "helm.sh/hook-weight": "0"}},
+          spec: {containers: [{name: "test"}]},
+          status: {phase: "Failed", conditions: [{type: "Ready", status: "False"}],
+                   containerStatuses: [{name: "test", image: "img:1", ready: false, restartCount: 0, state: {terminated: {exitCode: 1, reason: "Error"}}}]}}] end)' "$S/pods.json" >"$S/pods-after.json"
+    fi
+  fi
+  env PATH="$T/bin:$PATH" STUB_CONTEXT="kind-mmc-$(tr '[:upper:]' '[:lower:]' <<<"$w")" STUB_PODS="$S/pods.json" ${extra[@]+"${extra[@]}"} \
+    MMC_STATE="$T/state" MMC_SETTLE=0 MMC_LATE=0 CHARTS_FILE="$cf" \
+    bash "$repo/hack/compat-pilot/observe.sh" "$w" "$id" "$run" "$dir" >/dev/null 2>"$T/observe.err" || {
+    bad "observe.sh $w $id run$run"; head -3 "$T/observe.err"; return 1; }
 }
 
 # --- 5. run 1 and run 2 -----------------------------------------------------------------------------
@@ -191,8 +223,8 @@ for r in 1001 1002; do
   "$B/difftable" -json -worlds W1,W3 "$T/res-$r" >"$T/report-$r.json" 2>"$T/dt.err" && ok "difftable -json run $r" || { bad "difftable -json run $r"; head -3 "$T/dt.err"; }
 done
 eq "ids: the report's charts are the records' charts" "$(jq -c '[.charts[].chart] | sort == ([$l[0].charts[].id] | sort)' --slurpfile l "$T/charts-exp.json" "$T/report-1001.json")" true
-eq "run 1: app-2 differs in W3 only" "$(jq -c '[.charts[] | select(.chart | IN("app-1","app-2","app-3")) | {c: .chart, w: [.worlds[] | {(.world): .verdict}] | add}] | sort_by(.c)' "$T/report-1001.json")" \
-  '[{"c":"app-1","w":{"W1":"same","W3":"same"}},{"c":"app-2","w":{"W1":"same","W3":"differs"}},{"c":"app-3","w":{"W1":"same","W3":"same"}}]'
+eq "run 1: app-2 differs in W3 only, app-3 (a failing helm test pod) in W1 only" "$(jq -c '[.charts[] | select(.chart | IN("app-1","app-2","app-3")) | {c: .chart, w: [.worlds[] | {(.world): .verdict}] | add}] | sort_by(.c)' "$T/report-1001.json")" \
+  '[{"c":"app-1","w":{"W1":"same","W3":"same"}},{"c":"app-2","w":{"W1":"same","W3":"differs"}},{"c":"app-3","w":{"W1":"differs","W3":"same"}}]'
 keys="$(jq -c '[.charts[] | select(.chart == "app-2") | .worlds[] | select(.world == "W3") | .keys[] | select(.verdict == "differs") | .key]' "$T/report-1001.json")"
 eq "run 1: two findings, the same not-ready workload at install and in the late snapshot" "$keys" '["late:workload:Deployment/app-2:ready","workload:Deployment/app-2:ready"]'
 
@@ -230,6 +262,12 @@ jq -n --arg c "$id2" --argjson ks "$keys" --arg p "$pub2" '{schema: 1, newKeys: 
   recheck: {version: "1.32.0", result: "reproduces-3of3", run: "1005"},
   upstream: {merged: false}, reviewer: {verdict: "agree", run: "9001"},
   status: "counted", publisher: $p}]}' >"$T/ledger.json"
+# app-3: its helm test fails in W1; the failing caller is the chart's own test pod, which carries the sidecar opt-out
+# label (a judgment a person writes; crossrun checks it against testPodMesh in the records observe.sh wrote)
+pub3="$(jq -r --arg id "$id3" '.charts[] | select(.id == $id) | .publisher' "$T/charts-exp.json")"
+jq --arg p "$pub3" '.rows += [{chart: "app-3", world: "W1", key: "helm:test", status: "excluded", publisher: $p,
+  exclusion: {reason: "c-optout", evidence: "the chart documents the test pod and sets sidecar.istio.io/inject=false on it", callers: ["app-3-test"]},
+  reviewer: {verdict: "agree", run: "9001"}}]' "$T/ledger.json" >"$T/x" && mv "$T/x" "$T/ledger.json"
 "$B/ledger" check -ledger "$T/ledger.json" -causes "$repo/hack/compat-exp/causes.json" >"$T/lc.out" 2>&1 && ok "ledger check on the real causes.json" || { bad "ledger check"; cat "$T/lc.out"; }
 
 # --- 9. analyze.sh with a gh stub: freeze, runs, qualification, download, ledger check, static.sh, crossrun ----------
@@ -352,6 +390,32 @@ eq "provenance: sha256 of the chart list, ledger and causes that were read" "$(j
 eq "provenance: a valid run carries no testMode" "$(jq -c '[has("testMode"), (.provenance | has("testMode"))]' "$res")" '[false,false]'
 [[ "$(head -c 20 "$T/analysis/result.md")" != "**THIS RESULT IS NOT"* ]] && ok "result.md does not say it is invalid" || bad "result.md says it is invalid"
 
+# seam: the helm test pod is in the record observe.sh wrote (testPodMesh), and crossrun's c-optout check reads it there
+rec3="$T/res-1001/app-3.W1.run1.json"
+eq "record: podMesh is the snapshot before helm test (no test pod), testPodMesh holds the test pod" \
+  "$(jq -c '[([.podMesh[].pod] | index("app-3-test")), (.testPodMesh | map(.pod)), .testPodMeshStatus, .obs["helm:test"]]' "$rec3")" '[null,["app-3-test"],"listed","fail"]'
+eq "record: the test pod carries the opt-out label and its Helm hook annotations" \
+  "$(jq -c '.testPodMesh[0] | [.meshMetadata, .testHook, .helmHooks]' "$rec3")" '[[{"kind":"label","key":"sidecar.istio.io/inject","value":"false"}],true,{"helm.sh/hook":"test","helm.sh/hook-weight":"0"}]'
+eq "crossrun: app-3's helm:test cell in W1 is excluded as c-optout" "$(jq -c '[.cells[] | select(.chart == "app-3") | {world, key, status, reason: .exclusionReasons[0]}]' "$res")" \
+  '[{"world":"W1","key":"helm:test","status":"excluded","reason":"c-optout"}]'
+eq "crossrun: the opt-out evidence names the test pod" "$(jq -c '[.optOutEvidence[]? | select(.chart == "app-3") | .pods[] | select(.testPod) | {pod, effectiveOptOut}] | unique' "$res")" '[{"pod":"app-3-test","effectiveOptOut":true}]'
+
+# the same chart without the opt-out label on its test pod, and with the test pod gone: the exclusion is refused.
+# Records are real observe.sh runs of app-3 in W1 (3 per sample run), the rest is run 1's records.
+for variant in plain gone; do
+  for r in 1001 1002; do
+    rm -rf "$T/v-$variant-$r"; cp -R "$T/res-$r" "$T/v-$variant-$r"
+    mkpods true app-3 >"$S/pods.json"
+    for n in 1 2 3; do observe_run "$T/v-$variant-$r" "$T/plan-observe/charts.json" app-3 W1 "$n" "$variant" || break; done
+  done
+  jq --arg a "$T/v-$variant-1001" --arg b "$T/v-$variant-1002" '.runs[0].records = $a | .runs[1].records = $b' "$T/analysis/inputs.json" >"$T/inputs-$variant.json"
+  "$B/crossrun" -inputs "$T/inputs-$variant.json" -json "$T/r-$variant.json" -md "$T/r-$variant.md" >"$T/cr-$variant.out" 2>&1
+  eq "crossrun, test pod $variant: the c-optout exclusion is refused (exit 1)" "$?" 1
+done
+grep -q "does not carry the opt-out" "$T/cr-plain.out" && ok "  plain: the error says the pod does not carry the opt-out" || bad "  plain: error text: $(head -3 "$T/cr-plain.out")"
+grep -q 'testPodMeshStatus "no-new-pods"' "$T/cr-gone.out" && ok "  gone: the error says the test pod could not be recorded" || bad "  gone: error text: $(head -3 "$T/cr-gone.out")"
+eq "  gone: the record says helm test ran and its pods could not be listed" "$(jq -c '[.testPodMesh, .testPodMeshStatus, .obs["helm:test"]]' "$T/v-gone-1001/app-3.W1.run1.json")" '[[],"no-new-pods","fail"]'
+
 # test mode: the overrides work, and every output says so
 env PATH="$T/bin:$PATH" MMC_STATE="$T/state" MMC_ANALYZE_TEST=1 CROSSRUN="$B/crossrun" LEDGER="$B/ledger" STATICCHECK="$B/staticcheck" \
   "$R/hack/compat-exp/analyze.sh" --out "$T/analysis-t2" --run1 1001 --run2 1002 --cert 1003 --cert 1004 --recheck 1005 >"$T/analyze2.out" 2>"$T/analyze2.err"
@@ -369,7 +433,7 @@ eq "analyze.sh with run 1 only: exit 0" "$r1rc" 0
 [[ $r1rc -eq 0 ]] || tail -3 "$T/analyze.err"
 eq "run 1 only: not final, no region, the output says so" "$(jq -c '[.final, .region.region]' "$T/analysis-r1/result.json")" '[false,"none"]'
 grep -q "RUN 1 ONLY" "$T/analysis-r1/result.md" && ok "run 1 only: the markdown says run 1 only" || bad "run 1 only: the markdown says run 1 only"
-eq "run 1 only: app-2's two findings are pending toward N_max and P_max" "$(jq -c '.futility | [.nMax, .pMax, .cellsNeitherCreditedNorExcluded]' "$T/analysis-r1/result.json")" '[2,1,2]'
+eq "run 1 only: app-2's two findings and app-3's failing helm test are pending toward N_max and P_max" "$(jq -c '.futility | [.nMax, .pMax, .cellsNeitherCreditedNorExcluded]' "$T/analysis-r1/result.json")" '[3,2,3]'
 grep -q "run 1 only" "$T/analyze.out" && ok "run 1 only: analyze.sh says so" || bad "run 1 only: analyze.sh says so"
 
 # a run 2 that started too early is an error, not a Drop: its first attempt started 11 h 30 min after run 1 ended,

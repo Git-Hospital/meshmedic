@@ -70,7 +70,7 @@ Undecided share (the 15% stop, section 7), under both readings:
 
 ## C-optout evidence (podMesh)
 
-Mechanised, for an asserted row: the key is helm:test, and in every record of both runs each caller the row names is a pod in podMesh that is not the instrument's client and carries the opt-out metadata of that world. Not mechanised: that the named callers are all the failing callers; the ledger row and its reviewer verdict assert that. The pods below are every pod with effective opt-out, for context only.
+Mechanised, for an asserted row: the key is helm:test, and in every record of both runs each caller the row names is a pod in podMesh or testPodMesh (the pods `helm test` created) that is not the instrument's client and carries the opt-out metadata of that world. Not mechanised: that the named callers are all the failing callers; the ledger row and its reviewer verdict assert that. The pods below are every pod with effective opt-out, for context only.
 
 - podinfo W1: 12 pod(s) with effective opt-out, ledger asserts it: true
   - podinfo-grpc-test-x1 (Pod/podinfo-grpc-test-x1) annotation sidecar.istio.io/inject=false, in 6 record(s)

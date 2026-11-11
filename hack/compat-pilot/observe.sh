@@ -245,8 +245,8 @@ jq '[.items[]
 # reported for it (the annotation ztunnel's CNI sets). This is what lets a
 # failing caller be classed as opted out by the chart itself. Nothing here is
 # an observation key; it is evidence read after the fact.
-jq '[.items[]
-  | (.metadata.ownerReferences[0] // {}) as $o
+# shellcheck disable=SC2016 # a jq program, not shell
+podmesh_entry='def podmesh_entry: (.metadata.ownerReferences[0] // {}) as $o
   | {
       pod: .metadata.name,
       client: (.metadata.labels["mmc-client"] != null),
@@ -260,7 +260,8 @@ jq '[.items[]
         native: ((.spec.initContainers // []) | any(.name == "istio-proxy" and .restartPolicy == "Always"))
       },
       ambientRedirection: ((.metadata.annotations // {})["ambient.istio.io/redirection"] // "")
-    }]' "$tmp/pods.json" >"$tmp/podmesh.json" || undecided "could not read pods"
+    };'
+jq "$podmesh_entry [.items[] | podmesh_entry]" "$tmp/pods.json" >"$tmp/podmesh.json" || undecided "could not read pods"
 
 # Pods the scheduler could not place for want of CPU or memory. Such a run
 # measured the cluster's size, not the chart, and is marked like a pull
@@ -290,10 +291,12 @@ kubectl -n "$ns" get jobs -o json | jq '[.items[] | {
 # --- helm test --------------------------------------------------------------
 
 test_result=none
+test_ran=0
 : >"$tmp/test.log"
 # The hook key is often quoted ("helm.sh/hook": test) and can hold a list.
 if [[ $helm_rc -eq 0 ]] && helm get hooks "$release" -n "$ns" 2>/dev/null |
   grep -Eq 'helm\.sh/hook"?:[[:space:]]*"?([a-z-]+,)*test(-success)?([,"[:space:]]|$)'; then
+  test_ran=1
   if helm test "$release" -n "$ns" --timeout 5m >"$tmp/test.log" 2>&1; then
     test_result=pass
   else
@@ -308,6 +311,33 @@ if [[ $helm_rc -eq 0 ]] && helm get hooks "$release" -n "$ns" 2>/dev/null |
         echo "--- $pod"
         kubectl -n "$ns" logs "$pod" --all-containers --tail=20 2>&1
       done >>"$tmp/test.log"
+  fi
+fi
+
+# The pods `helm test` created. The snapshot above was taken before it, so a
+# chart's test pods are not in podMesh. This second capture is additive: the
+# pods that exist now and were not in the first snapshot, with the same fields
+# as podMesh plus the Helm hook annotations, so a test pod can be told from a
+# pod that merely appeared. A test pod removed by a hook delete policy cannot be
+# listed: the status says so (no-new-pods) and nothing is guessed. Not a source
+# of observation keys.
+testpod_status=not-run
+echo '[]' >"$tmp/testpodmesh.json"
+if [[ $test_ran -eq 1 ]]; then
+  if kubectl -n "$ns" get pods -o json >"$tmp/pods-test.json" 2>/dev/null && jq -e '.items | type == "array"' "$tmp/pods-test.json" >/dev/null 2>&1; then
+    # shellcheck disable=SC2016 # a jq program, not shell
+    jq --slurpfile first "$tmp/pods.json" "$podmesh_entry"'
+      ($first[0].items | map(.metadata.name)) as $before
+      | [.items[] | select(.metadata.name as $n | $before | index($n) | not)
+         | (.metadata.annotations // {}) as $an
+         | podmesh_entry + {
+             testHook: (($an["helm.sh/hook"] // "") | test("(^|,)[[:space:]]*test(-success)?[[:space:]]*(,|$)")),
+             helmHooks: ($an | with_entries(select(.key | startswith("helm.sh/"))))
+           }]' "$tmp/pods-test.json" >"$tmp/testpodmesh.json.new" || undecided "could not read pods"
+    mv "$tmp/testpodmesh.json.new" "$tmp/testpodmesh.json"
+    if [[ "$(jq length "$tmp/testpodmesh.json")" -gt 0 ]]; then testpod_status=listed; else testpod_status=no-new-pods; fi
+  else
+    testpod_status=list-failed
   fi
 fi
 
@@ -446,7 +476,7 @@ jq -n \
   --slurpfile workloads "$tmp/workloads.json" --slurpfile jobs "$tmp/jobs.json" \
   --slurpfile ports "$tmp/ports.json" --slurpfile analyze "$tmp/analyze.json" \
   --slurpfile events "$tmp/events.json" --slurpfile pulls "$tmp/pullfailures.json" \
-  --slurpfile podmesh "$tmp/podmesh.json" --slurpfile capacity "$tmp/capacity.json" \
+  --slurpfile podmesh "$tmp/podmesh.json" --slurpfile testpodmesh "$tmp/testpodmesh.json" --arg testpodstatus "$testpod_status" --slurpfile capacity "$tmp/capacity.json" \
   --slurpfile late "$tmp/late.json" --slurpfile apisvc "$tmp/apiserver.json" \
   --slurpfile apiaps "$tmp/apiservices-available.json" \
   --arg fixof "$fixof" --arg patch_path "$patch_rel" --arg patch_sha "$patch_sha" \
@@ -461,6 +491,8 @@ jq -n \
     pullFailures: $pulls[0],
     capacityPending: $capacity[0],
     podMesh: $podmesh[0],
+    testPodMesh: $testpodmesh[0],
+    testPodMeshStatus: $testpodstatus,
     lateWorkloads: $late[0],
     apiserver: {services: $apisvc[0], apiServices: $apiaps[0]},
     patch: (if $patch_path == "" then null

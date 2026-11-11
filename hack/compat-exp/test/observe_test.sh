@@ -44,6 +44,7 @@ case "$1" in
     mkdir -p "$dir" && cp -R "$STUB_DIR/fixture-chart" "$dir/fixture-chart" ;;
   lint) exit "${STUB_LINT_RC:-0}" ;;
   install) exit "${STUB_INSTALL_RC:-0}" ;;
+  test) exit "${STUB_TEST_RC:-0}" ;;
   get) cat "$STUB_DIR/hooks.txt" 2>/dev/null ;;
 esac
 exit 0
@@ -64,6 +65,7 @@ case "$a" in
   *" config get-contexts "*) echo "${STUB_CONTEXT:-kind-mmc-w0}" ;;
   *" get pods -o json "*)
     n=$(($(cat "$d/pods.n" 2>/dev/null || echo 0) + 1)); echo "$n" >"$d/pods.n"
+    [[ "$n" != "${STUB_PODS_FAIL_AT:-}" ]] || { echo "the server is gone" >&2; exit 1; }
     if [[ -f "$d/pods.$n.json" ]]; then cat "$d/pods.$n.json"; else serve pods.json; fi ;;
   *" get events "*) echo '{"items":[]}' ;;
   *" get jobs "*) serve jobs.json ;;
@@ -91,7 +93,7 @@ reset() {
   rm -rf "$T/stub" "$T/out" "$T/patches-made"
   mkdir -p "$T/stub/raw" "$T/out"
   rm -f "$T/repo/hack/compat-exp/patches/"*
-  unset STUB_INSTALL_RC STUB_LINT_RC
+  unset STUB_INSTALL_RC STUB_LINT_RC STUB_TEST_RC STUB_PODS_FAIL_AT
 }
 
 # world_files WORLD: what world.sh would have left behind.
@@ -417,6 +419,54 @@ TEST_LATE=2 run_observe "$T/c5.json" W0 app 1
 t1=$(date +%s)
 [[ $rc -eq 0 && $((t1 - t0)) -ge 2 ]] && ok "E2 waits until install + MMC_LATE" || bad "E2 wait (rc=$rc, took $((t1 - t0))s)"
 
+# --- helm test pods: testPodMesh --------------------------------------------------
+
+echo "# helm test pods"
+charts_one "$T/c6.json" '{"id":"app","chart":"oci://example/app","version":"1.0.0"}'
+web_pods() { # the pods before helm test: a workload and the client
+  pods_file "$T/stub/pods.1.json" "$(pod web-7d9f-abc ReplicaSet web-7d9f)" "$(pod mmc-client Pod mmc-client '.metadata.labels["mmc-client"] = "true"')"
+}
+test_pod='pod app-test Pod app-test ".metadata.annotations[\"helm.sh/hook\"] = \"test\" | .metadata.annotations[\"helm.sh/hook-delete-policy\"] = \"before-hook-creation\" | .metadata.labels[\"sidecar.istio.io/inject\"] = \"false\" | .status.phase = \"Failed\""'
+after_test() { # the pods after helm test: the same two and the test pod
+  pods_file "$1" "$(pod web-7d9f-abc ReplicaSet web-7d9f)" "$(pod mmc-client Pod mmc-client '.metadata.labels["mmc-client"] = "true"')" "$(eval "$test_pod")"
+}
+reset; web_pods; after_test "$T/stub/pods.2.json"
+echo 'helm.sh/hook: test' >"$T/stub/hooks.txt"
+run_observe "$T/c6.json" W1 app 1
+[[ $rc -eq 0 ]] || bad "helm test pods run (rc=$rc: $(cat "$T/stderr"))"
+jqok "testPodMesh: the pod helm test created, same shape as podMesh, with its opt-out" "$rec" \
+  '(.testPodMesh | length) == 1 and .testPodMesh[0].pod == "app-test" and .testPodMesh[0].client == false and .testPodMesh[0].owner == "Pod/app-test"
+   and .testPodMesh[0].meshMetadata == [{kind: "label", key: "sidecar.istio.io/inject", value: "false"}]
+   and .testPodMesh[0].istioProxy == {container: false, initContainer: false, native: false} and .testPodMesh[0].ambientRedirection == ""'
+jqok "testPodMesh: the Helm hook annotations identify it as a test pod" "$rec" \
+  '.testPodMesh[0].testHook == true and .testPodMesh[0].helmHooks == {"helm.sh/hook": "test", "helm.sh/hook-delete-policy": "before-hook-creation"} and .testPodMeshStatus == "listed"'
+jqok "podMesh is the snapshot before helm test: it does not hold the test pod" "$rec" '([.podMesh[].pod] | sort) == ["mmc-client", "web-7d9f-abc"]'
+jqok "helm test ran and its result is the same key as before" "$rec" '.obs["helm:test"] == "pass" and (.obs | has("workload:Pod/app-test:ready") | not)'
+
+# helm test failed: the failure path lists pods once more for the logs, the capture is the next listing
+reset; web_pods; after_test "$T/stub/pods.2.json"; after_test "$T/stub/pods.3.json"
+echo 'helm.sh/hook: test' >"$T/stub/hooks.txt"
+STUB_TEST_RC=1 run_observe "$T/c6.json" W1 app 1
+jqok "a failed helm test: the test pod is captured too" "$rec" '.obs["helm:test"] == "fail" and (.testPodMesh | map(.pod)) == ["app-test"] and .testPodMeshStatus == "listed"'
+
+# the test pod is already gone (hook delete policy): recorded as not listable, nothing guessed
+reset; web_pods; pods_file "$T/stub/pods.2.json" "$(pod web-7d9f-abc ReplicaSet web-7d9f)" "$(pod mmc-client Pod mmc-client '.metadata.labels["mmc-client"] = "true"')"
+echo 'helm.sh/hook: test' >"$T/stub/hooks.txt"
+run_observe "$T/c6.json" W1 app 1
+jqok "test pod already deleted: helm test ran, no pod listed, status says so" "$rec" '.obs["helm:test"] == "pass" and .testPodMesh == [] and .testPodMeshStatus == "no-new-pods"'
+
+# the listing itself fails
+reset; web_pods
+echo 'helm.sh/hook: test' >"$T/stub/hooks.txt"
+STUB_PODS_FAIL_AT=2 run_observe "$T/c6.json" W1 app 1
+jqok "pods could not be listed after helm test: status list-failed, empty list" "$rec" '.testPodMesh == [] and .testPodMeshStatus == "list-failed" and .obs["helm:test"] == "pass"'
+
+# no test hook: nothing ran, nothing to list, and no extra listing
+reset; web_pods
+run_observe "$T/c6.json" W1 app 1
+jqok "no test hook: testPodMesh empty, status not-run" "$rec" '.testPodMesh == [] and .testPodMeshStatus == "not-run" and .obs["helm:test"] == "none"'
+check "no test hook: pods are listed twice as before (snapshot and late)" test "$(grep -c 'get pods -o json' "$T/stub/kubectl.log")" -eq 2
+
 # --- the pilot's observe.sh and this one agree on everything that existed ----------
 
 echo "# compatibility with the pilot instrument"
@@ -428,7 +478,7 @@ echo "# compatibility with the pilot instrument"
 base="${COMPAT_BASE:-origin/main}"
 if git -C "$repo" show "$base:hack/compat-pilot/observe.sh" >"$T/observe.old.sh" 2>/dev/null &&
   ! grep -q CHARTS_FILE "$T/observe.old.sh"; then
-  norm='del(.helm.durationSeconds, .patch, .podMesh, .capacityPending, .lateWorkloads, .apiserver)
+  norm='del(.helm.durationSeconds, .patch, .podMesh, .testPodMesh, .testPodMeshStatus, .capacityPending, .lateWorkloads, .apiserver)
         | .obs |= with_entries(select(.key | test("^(apiserver|late):") | not))'
   for world in W0 W1 W3; do
     reset

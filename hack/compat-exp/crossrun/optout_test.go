@@ -107,3 +107,46 @@ func TestCOptoutCallersAreChecked(t *testing.T) {
 		}
 	})
 }
+
+// The callers of helm:test are the pods helm test creates, which observe.sh records
+// in testPodMesh (a second listing after helm test), not in podMesh.
+func TestCOptoutCallersInTestPodMesh(t *testing.T) {
+	const k = "helm:test"
+	main := PodMesh{Pod: "prom-0", Owner: "StatefulSet/prom"}
+	client := PodMesh{Pod: "mmc-client", Client: true, MeshMetadata: optedOut("W1")}
+	testPod := PodMesh{Pod: "prom-test-x1", Owner: "Pod/prom-test-x1", MeshMetadata: optedOut("W1")}
+	plain := PodMesh{Pod: "prom-test-x1", Owner: "Pod/prom-test-x1"}
+	mk := func(pm, tpm []PodMesh, status string) *fixture {
+		f := optFixture(k, []string{"prom-test"}, pm...)
+		for i := range f.in.Runs {
+			for j := range f.in.Runs[i].Records {
+				f.in.Runs[i].Records[j].TestPodMesh = tpm
+				f.in.Runs[i].Records[j].TestPodMeshStatus = status
+			}
+		}
+		return f
+	}
+	t.Run("caller only in testPodMesh, opted out: accepted", func(t *testing.T) {
+		res := mk([]PodMesh{main, client}, []PodMesh{testPod}, "listed").analyze(t)
+		if c := cellOf(t, res, "prom", "W1", k); c.Status != StExcluded || c.Reasons[0] != ledger.ReasonCOptout {
+			t.Fatalf("%+v", c)
+		}
+	})
+	t.Run("caller in testPodMesh without the opt-out: refused", func(t *testing.T) {
+		if msg := mk([]PodMesh{main, client}, []PodMesh{plain}, "listed").analyzeErr(t); !strings.Contains(msg, "does not carry the opt-out") {
+			t.Fatal(msg)
+		}
+	})
+	t.Run("caller in neither list: refused, the status is in the message", func(t *testing.T) {
+		msg := mk([]PodMesh{main, client}, nil, "no-new-pods").analyzeErr(t)
+		if !strings.Contains(msg, `caller "prom-test" is not in podMesh or testPodMesh`) || !strings.Contains(msg, "no-new-pods") {
+			t.Fatal(msg)
+		}
+	})
+	t.Run("a matching pod in either list must be opted out", func(t *testing.T) {
+		optedMain := PodMesh{Pod: "prom-test-x1", Owner: "Pod/prom-test-x1", MeshMetadata: optedOut("W1")}
+		if msg := mk([]PodMesh{optedMain, client}, []PodMesh{plain}, "listed").analyzeErr(t); !strings.Contains(msg, "does not carry the opt-out") {
+			t.Fatal(msg)
+		}
+	})
+}

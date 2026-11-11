@@ -149,6 +149,13 @@ func (a *analysis) checkExcluded(w string, r *ledger.Row, cr *CellResult) {
 	}
 }
 
+func statusOrNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
+}
+
 func listOrNone(l []string) string {
 	if len(l) == 0 {
 		return "none"
@@ -177,7 +184,8 @@ const COptoutKey = "helm:test"
 // runs: the key is helm:test, every run has records for the chart and world,
 // and in every record each caller the row names matches at least one pod of
 // the chart, every matching pod is not the instrument's client and carries
-// the opt-out metadata that applies to the world. A pod that merely carries
+// the opt-out metadata that applies to the world. The callers are looked for in
+// podMesh and in testPodMesh (the pods helm test created). A pod that merely carries
 // opt-out metadata but is not a named caller proves nothing.
 func (a *analysis) checkCallers(r *ledger.Row) error {
 	if r.Key != COptoutKey {
@@ -189,7 +197,7 @@ func (a *analysis) checkCallers(r *ledger.Row) error {
 	}
 	for _, run := range a.in.Runs {
 		if !run.HasRecords {
-			return fmt.Errorf("no records directory is given for run %s, so podMesh cannot be read", run.ID)
+			return fmt.Errorf("no records directory is given for run %s, so podMesh and testPodMesh cannot be read", run.ID)
 		}
 		n := 0
 		for _, rec := range run.Records {
@@ -199,7 +207,7 @@ func (a *analysis) checkCallers(r *ledger.Row) error {
 			n++
 			for _, c := range callers {
 				matched := 0
-				for _, p := range rec.PodMesh {
+				for _, p := range rec.callerPods() {
 					if !ledger.CallerMatches(c, p.Pod) {
 						continue
 					}
@@ -218,19 +226,19 @@ func (a *analysis) checkCallers(r *ledger.Row) error {
 					}
 				}
 				if matched == 0 {
-					return fmt.Errorf("caller %q is not in podMesh of %s %s in run %s record run%d (podMesh is the pod list taken before helm test, so test pods that do not exist then are not recorded)",
-						c, r.Chart, r.World, run.ID, rec.Run)
+					return fmt.Errorf("caller %q is not in podMesh or testPodMesh of %s %s in run %s record run%d (testPodMeshStatus %q: a test pod removed by a hook delete policy cannot be recorded)",
+						c, r.Chart, r.World, run.ID, rec.Run, statusOrNone(rec.TestPodMeshStatus))
 				}
 			}
 		}
 		if n == 0 {
-			return fmt.Errorf("run %s has no record for %s in %s, so podMesh cannot be read", run.ID, r.Chart, r.World)
+			return fmt.Errorf("run %s has no record for %s in %s, so podMesh and testPodMesh cannot be read", run.ID, r.Chart, r.World)
 		}
 	}
 	return nil
 }
 
-// optOutEvidence reads podMesh from the sample runs' records for a chart and
+// optOutEvidence reads podMesh and testPodMesh from the sample runs' records for a chart and
 // world. With require, it errors unless a non-client pod carries an effective
 // opt-out.
 func (a *analysis) optOutEvidence(chart, world string, require bool) (*OptOutEvidence, error) {
@@ -245,8 +253,8 @@ func (a *analysis) optOutEvidence(chart, world string, require bool) (*OptOutEvi
 			if rec.Chart != chart || rec.World != world {
 				continue
 			}
-			for _, p := range rec.PodMesh {
-				op := OptOutPod{Run: fmt.Sprintf("%s run%d", run.ID, rec.Run), Pod: p.Pod, Owner: p.Owner, Client: p.Client,
+			for i, p := range rec.callerPods() {
+				op := OptOutPod{Test: i >= len(rec.PodMesh), Run: fmt.Sprintf("%s run%d", run.ID, rec.Run), Pod: p.Pod, Owner: p.Owner, Client: p.Client,
 					Proxy: p.IstioProxy.Container || p.IstioProxy.InitContainer, Redirect: p.AmbientRedirection, Metadata: []string{}}
 				for _, m := range p.MeshMetadata {
 					op.Metadata = append(op.Metadata, fmt.Sprintf("%s %s=%s", m.Kind, m.Key, m.Value))
@@ -269,7 +277,7 @@ func (a *analysis) optOutEvidence(chart, world string, require bool) (*OptOutEvi
 	})
 	if require {
 		if !have {
-			return nil, fmt.Errorf("no records directory is given for any sample run, so podMesh cannot be read")
+			return nil, fmt.Errorf("no records directory is given for any sample run, so podMesh and testPodMesh cannot be read")
 		}
 		if len(ev.Pods) == 0 {
 			return nil, fmt.Errorf("the records hold no podMesh for %s in %s", chart, world)

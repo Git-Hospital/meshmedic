@@ -107,6 +107,19 @@ type Record struct {
 	Chart   string    `json:"chart"`
 	Run     int       `json:"run"`
 	PodMesh []PodMesh `json:"podMesh"`
+	// TestPodMesh holds the pods that existed after `helm test` and not in the
+	// first snapshot (hack/compat-exp/RECORD.md), in the shape of PodMesh. The
+	// c-optout check looks for the named callers here as well as in PodMesh.
+	TestPodMesh       []PodMesh `json:"testPodMesh"`
+	TestPodMeshStatus string    `json:"testPodMeshStatus"`
+}
+
+// callerPods is every pod a c-optout caller can name: podMesh (the snapshot
+// before helm test) and testPodMesh (the pods helm test created).
+func (r Record) callerPods() []PodMesh {
+	all := make([]PodMesh, 0, len(r.PodMesh)+len(r.TestPodMesh))
+	all = append(all, r.PodMesh...)
+	return append(all, r.TestPodMesh...)
 }
 
 // StaticResult is one row of the static-check input file, which

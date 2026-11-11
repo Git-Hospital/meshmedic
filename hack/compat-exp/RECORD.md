@@ -47,6 +47,8 @@ version, then `helm lint` runs, then the chart installs from that directory
 | `capacityPending` (new) | array | `{pod, message}` for every pod that is Pending with PodScheduled False, reason Unschedulable and a message naming "Insufficient cpu" or "Insufficient memory". Same level and type as `pullFailures`; empty means false. Taken from the first snapshot |
 | `patch` (new) | object or null | null unless the entry has a patch: `path`, `sha256` of the file, `lines` (wc -l of the file), `changedLines` |
 | `podMesh` (new) | array | one entry per pod including the client (`client: true`), see below |
+| `testPodMesh` (new) | array | the pods `helm test` created: entries in the shape of `podMesh`, see below |
+| `testPodMeshStatus` (new) | string | `not-run`, `listed`, `no-new-pods` or `list-failed`, see below |
 | `lateWorkloads` (new) | array | the `workloads` program run again at install + `MMC_LATE` (E2) |
 | `apiserver` (new) | object | `services`: `{service, port, reachable}`; `apiServices`: `{name, available}` (E1) |
 | `obs` | object | flat map of string to string, see below. This is what difftable compares |
@@ -60,8 +62,31 @@ restartPolicy Always), `ambientRedirection` (value of the
 `ambient.istio.io/redirection` annotation, "" when not reported).
 
 `podMesh` is the pod list taken after the settle and before `helm test`, so the
-pods of a chart's test hooks are in it only if they exist at that moment; crossrun's
-c-optout check needs them (crossrun/INTERPRETATIONS.md 9).
+pods of a chart's test hooks are not in it. They are in `testPodMesh`.
+
+`testPodMesh` is a second, additive capture taken right after `helm test` has run: a
+`kubectl get pods` of the namespace, then every pod that exists then and was not in
+the first snapshot (by name; the client and the chart's own pods are in `podMesh`
+already). Each entry has every field of a `podMesh` entry and two more: `testHook`
+(true when the pod's `helm.sh/hook` annotation lists `test` or `test-success`) and
+`helmHooks` (an object with every annotation whose key starts with `helm.sh/`:
+`helm.sh/hook`, `helm.sh/hook-weight`, `helm.sh/hook-delete-policy`), so a test pod can
+be told from a pod that merely appeared in between. Nothing in `obs` comes from it.
+
+`testPodMeshStatus` says what the capture could see:
+
+| value | meaning |
+|---|---|
+| `not-run` | helm test did not run (no test hook, or the install failed); `testPodMesh` is `[]` |
+| `listed` | helm test ran and at least one new pod was listed |
+| `no-new-pods` | helm test ran and no pod new since the first snapshot exists any more: the chart's hook delete policy removed its test pods (or it created none). The pods cannot be listed and nothing is guessed; `testPodMesh` is `[]` |
+| `list-failed` | helm test ran and the pod listing failed; `testPodMesh` is `[]` |
+
+crossrun's c-optout check looks for the callers a ledger row names in `podMesh` and
+in `testPodMesh` (crossrun/INTERPRETATIONS.md 9). With `no-new-pods` or `list-failed`
+a named test pod is not found and the exclusion is refused, as it always was for a pod
+that is not recorded. The failure path of observe.sh reads failed test pods' logs with
+its own listing; that listing is not recorded.
 
 ## Observation keys (`obs`)
 

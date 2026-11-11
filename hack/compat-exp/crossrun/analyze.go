@@ -95,6 +95,7 @@ type OptOutPod struct {
 	Effective bool     `json:"effectiveOptOut"`
 	Proxy     bool     `json:"istioProxy"`
 	Redirect  string   `json:"ambientRedirection,omitempty"`
+	Test      bool     `json:"testPod,omitempty"` // from testPodMesh (created by helm test)
 }
 
 // OptOutEvidence is the podMesh evidence for a (chart, world).
