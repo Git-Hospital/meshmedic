@@ -82,11 +82,11 @@ be told from a pod that merely appeared in between. Nothing in `obs` comes from 
 | `no-new-pods` | helm test ran and no pod new since the first snapshot exists any more: the chart's hook delete policy removed its test pods (or it created none). The pods cannot be listed and nothing is guessed; `testPodMesh` is `[]` |
 | `list-failed` | helm test ran and the pod listing failed; `testPodMesh` is `[]` |
 
-crossrun's c-optout check looks for the callers a ledger row names in `podMesh` and
-in `testPodMesh` (crossrun/INTERPRETATIONS.md 9). With `no-new-pods` or `list-failed`
-a named test pod is not found and the exclusion is refused, as it always was for a pod
-that is not recorded. The failure path of observe.sh reads failed test pods' logs with
-its own listing; that listing is not recorded.
+crossrun's c-optout check computes the callers from `testPodMesh`: every entry with
+`testHook` true, and only when the status is `listed`; the row's callers must equal that
+set (crossrun/INTERPRETATIONS.md 9). With `no-new-pods`, `list-failed` or `not-run` the
+callers are not known and the exclusion is refused. The failure path of observe.sh reads
+failed test pods' logs with its own listing; that listing is not recorded.
 
 ## Where the records are
 

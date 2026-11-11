@@ -249,7 +249,8 @@
             "annotation sidecar.istio.io/inject=false"
           ],
           "effectiveOptOut": true,
-          "istioProxy": false
+          "istioProxy": false,
+          "testPod": true
         },
         {
           "run": "40109270484 run1",
@@ -260,7 +261,8 @@
             "annotation sidecar.istio.io/inject=false"
           ],
           "effectiveOptOut": true,
-          "istioProxy": false
+          "istioProxy": false,
+          "testPod": true
         },
         {
           "run": "40109270484 run2",
@@ -289,7 +291,8 @@
             "annotation sidecar.istio.io/inject=false"
           ],
           "effectiveOptOut": true,
-          "istioProxy": false
+          "istioProxy": false,
+          "testPod": true
         },
         {
           "run": "40109270484 run2",
@@ -300,7 +303,8 @@
             "annotation sidecar.istio.io/inject=false"
           ],
           "effectiveOptOut": true,
-          "istioProxy": false
+          "istioProxy": false,
+          "testPod": true
         },
         {
           "run": "40109270484 run3",
@@ -329,7 +333,8 @@
             "annotation sidecar.istio.io/inject=false"
           ],
           "effectiveOptOut": true,
-          "istioProxy": false
+          "istioProxy": false,
+          "testPod": true
         },
         {
           "run": "40109270484 run3",
@@ -340,7 +345,8 @@
             "annotation sidecar.istio.io/inject=false"
           ],
           "effectiveOptOut": true,
-          "istioProxy": false
+          "istioProxy": false,
+          "testPod": true
         },
         {
           "run": "40119399052 run1",
@@ -369,7 +375,8 @@
             "annotation sidecar.istio.io/inject=false"
           ],
           "effectiveOptOut": true,
-          "istioProxy": false
+          "istioProxy": false,
+          "testPod": true
         },
         {
           "run": "40119399052 run1",
@@ -380,7 +387,8 @@
             "annotation sidecar.istio.io/inject=false"
           ],
           "effectiveOptOut": true,
-          "istioProxy": false
+          "istioProxy": false,
+          "testPod": true
         },
         {
           "run": "40119399052 run2",
@@ -409,7 +417,8 @@
             "annotation sidecar.istio.io/inject=false"
           ],
           "effectiveOptOut": true,
-          "istioProxy": false
+          "istioProxy": false,
+          "testPod": true
         },
         {
           "run": "40119399052 run2",
@@ -420,7 +429,8 @@
             "annotation sidecar.istio.io/inject=false"
           ],
           "effectiveOptOut": true,
-          "istioProxy": false
+          "istioProxy": false,
+          "testPod": true
         },
         {
           "run": "40119399052 run3",
@@ -449,7 +459,8 @@
             "annotation sidecar.istio.io/inject=false"
           ],
           "effectiveOptOut": true,
-          "istioProxy": false
+          "istioProxy": false,
+          "testPod": true
         },
         {
           "run": "40119399052 run3",
@@ -460,7 +471,8 @@
             "annotation sidecar.istio.io/inject=false"
           ],
           "effectiveOptOut": true,
-          "istioProxy": false
+          "istioProxy": false,
+          "testPod": true
         }
       ]
     }

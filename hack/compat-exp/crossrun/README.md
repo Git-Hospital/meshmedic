@@ -26,7 +26,7 @@ Output is deterministic: the same inputs give the same bytes.
 
 - `runs`: run 1, then run 2 once it exists (with run 1 only, cells wait for run 2 and the futility bound still works). `started` and `ended` are RFC 3339; the 12 h gap comes from them; a gap under 12 h is an error, not a result. With run 1 only the output says "run 1 only", has `final: false` and declares no region.
 - `report`: `difftable -json` output of one workflow run's records (hack/compat-exp/DIFFTABLE-JSON.md). Certification and recheck runs use the same shape; a certification report holds the fix entries with their `certificate`.
-- `records`: the observation records of that run (hack/compat-exp/RECORD.md); only `podMesh` is read, for c-optout evidence.
+- `records`: the observation records of that run (hack/compat-exp/RECORD.md); `podMesh` and `testPodMesh` are read, for c-optout evidence.
 - `causes`: hack/compat-exp/causes.json, the real file: an object whose list is under `keys`, in rank order, each entry with `key`, `worlds` and `staticCheck` (a check id, or null for a key without a static check). No other shape is read.
 - `ledger`: hack/compat-exp/ledger.json; it must pass `ledger check`. See hack/compat-exp/ledger/README.md.
 - `frame`: the frozen chart list `charts-exp.json` that select.sh writes (`charts`, then `reserves`; each entry has `id`, `publisher` and `qualified`, which select.sh carries from candidates.json and the qualification records).
@@ -45,14 +45,14 @@ static-check detail, the region with the first-match trace; N_max, P_max, the
 reachable regions, the stop flags; the undecided share against 15% under both readings (cells; chart-worlds), with the constant that picks the one driving the stop; the open
 cells and the region they would reach if all counted.
 
-How far c-optout is mechanised: the ledger row names the failing callers
-(`exclusion.callers`, pod names or prefixes as in `podMesh`). crossrun accepts
-the exclusion for the key `helm:test` only, and only when, in every record of
-both runs, each named caller is a pod in `podMesh`, is not the instrument's
-client and carries the opt-out metadata of that world. That the named callers
-are all the failing callers is a judgment: the row's reviewer verdict (agree) asserts it.
-Helm test pods are normally not in `podMesh` (it is taken before `helm test`),
-so on real records the exclusion fails; see INTERPRETATIONS.md 9.
+How far c-optout is mechanised: crossrun computes the failing callers itself.
+For the key `helm:test` only, in every record of both runs, `testPodMeshStatus`
+must be `listed`, the callers are all the pods of `testPodMesh` with `testHook`
+true, each must be opted out in that world and not the client, and the ledger
+row's `exclusion.callers` (pod names or prefixes) must equal that set. A test pod
+left in the mesh refuses the exclusion even if the row names only the others.
+That the opted-out calls are the failure is still a judgment: the reviewer
+verdict (agree). See INTERPRETATIONS.md 9.
 
 crossrun does not check that its inputs are the frozen instrument's: analyze.sh does, and records the freeze commit, HEAD, the runs and the files read in the manifest's `provenance`, which the result carries (INTERPRETATIONS.md 21). A manifest with `testMode: true` gives a result that says it is not valid.
 

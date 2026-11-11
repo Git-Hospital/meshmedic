@@ -26,7 +26,7 @@ Unknown fields are rejected at every level. Row fields:
 | `runs` | `run1`, `run2`, `certification` (workflow run ids, at least two distinct for a counted row) |
 | `recheck` | `version`, `result` (`reproduces-3of3` or `not-reproduced`), `run` |
 | `upstream` | `merged` and `link` (link required when merged) |
-| `exclusion` | `reason` (pull-failure, capacity, flaky, undecided, c-optout, world-universal), `evidence`, and for c-optout `callers`: the failing caller pods, each a pod name or a pod-name prefix as recorded in `podMesh` (matches the name itself or the prefix plus a dash) |
+| `exclusion` | `reason` (pull-failure, capacity, flaky, undecided, c-optout, world-universal), `evidence`, and for c-optout `callers`: the failing caller pods, each a pod name or a pod-name prefix (matches the name itself or the prefix plus a dash); crossrun requires the set to equal the helm test hook pods of `testPodMesh` |
 | `reviewer` | `verdict` (agree, disagree-type, disagree-other) and `run` |
 | `status` | counted, excluded, unexplained, unresolved |
 | `publisher`, `note` | |

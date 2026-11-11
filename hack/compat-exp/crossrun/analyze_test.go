@@ -288,7 +288,7 @@ func TestCOptout(t *testing.T) {
 		f := newFixture(r, r, nil)
 		f.pad(9)
 		if recs {
-			pm := PodMesh{Pod: "podinfo-test", Owner: "Pod/podinfo-test"}
+			pm := PodMesh{Pod: "podinfo-test", Owner: "Pod/podinfo-test", TestHook: true}
 			if meta != "" {
 				pm.MeshMetadata = []struct {
 					Kind  string `json:"kind"`
@@ -298,7 +298,7 @@ func TestCOptout(t *testing.T) {
 			}
 			client := PodMesh{Pod: "client", Client: true}
 			f.in.Runs[0].HasRecords, f.in.Runs[1].HasRecords = true, true
-			f.in.Runs[0].Records = []Record{{World: "W1", Chart: "podinfo", Run: 1, PodMesh: []PodMesh{pm, client}}}
+			f.in.Runs[0].Records = []Record{{World: "W1", Chart: "podinfo", Run: 1, PodMesh: []PodMesh{client}, TestPodMesh: []PodMesh{pm}, TestPodMeshStatus: "listed"}}
 			f.in.Runs[1].Records = f.in.Runs[0].Records
 		}
 		if asserted {

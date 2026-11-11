@@ -16,6 +16,20 @@
       "ambientRedirection": ""
     },
     {
+      "pod": "mmc-client",
+      "client": true,
+      "owner": "Pod/mmc-client",
+      "meshMetadata": [],
+      "istioProxy": {
+        "container": true,
+        "initContainer": false,
+        "native": true
+      },
+      "ambientRedirection": ""
+    }
+  ],
+  "testPodMesh": [
+    {
       "pod": "podinfo-grpc-test-x1",
       "client": false,
       "owner": "Pod/podinfo-grpc-test-x1",
@@ -31,7 +45,11 @@
         "initContainer": false,
         "native": false
       },
-      "ambientRedirection": ""
+      "ambientRedirection": "",
+      "testHook": true,
+      "helmHooks": {
+        "helm.sh/hook": "test"
+      }
     },
     {
       "pod": "podinfo-jwt-test-x2",
@@ -49,19 +67,12 @@
         "initContainer": false,
         "native": false
       },
-      "ambientRedirection": ""
-    },
-    {
-      "pod": "mmc-client",
-      "client": true,
-      "owner": "Pod/mmc-client",
-      "meshMetadata": [],
-      "istioProxy": {
-        "container": true,
-        "initContainer": false,
-        "native": true
-      },
-      "ambientRedirection": ""
+      "ambientRedirection": "",
+      "testHook": true,
+      "helmHooks": {
+        "helm.sh/hook": "test"
+      }
     }
-  ]
+  ],
+  "testPodMeshStatus": "listed"
 }

@@ -230,7 +230,8 @@ observe_set() {
 }
 # observe_job RUN_ID DIR CHARTS_FILE ID WORLD TEST_POD: one observe job on the stub cluster, pods in $S/pods.json.
 # The chart app-3 has a helm test hook; in W1 its test fails and the test pod it creates carries the sidecar opt-out
-# label (TEST_POD auto or optout), carries none (plain), or is gone when the instrument looks (gone). In the other
+# label (TEST_POD auto or optout), carries none (plain), is gone when the instrument looks (gone), or is joined by a second
+# test pod without the label, app-3-test-grpc (two). In the other
 # worlds the test passes and leaves no pod.
 observe_job() {
   local runid="$1" dir="$2" cf="$3" id="$4" w="$5" tp="$6" extra=()
@@ -239,12 +240,16 @@ observe_job() {
     extra+=(STUB_HOOKS=1)
     if [[ "$w" == W1 ]]; then
       extra+=(STUB_TEST_RC=1 STUB_PODS_AFTER="$S/pods-after.json")
-      case "$tp" in auto | optout) lbl='{"sidecar.istio.io/inject":"false"}' ;; *) lbl='{}' ;; esac
-      jq --argjson l "$lbl" --argjson gone "$([[ "$tp" == gone ]] && echo true || echo false)" '.items += (if $gone then [] else [{
+      case "$tp" in auto | optout | two) lbl='{"sidecar.istio.io/inject":"false"}' ;; *) lbl='{}' ;; esac
+      jq --argjson l "$lbl" --argjson gone "$([[ "$tp" == gone ]] && echo true || echo false)" --argjson two "$([[ "$tp" == two ]] && echo true || echo false)" '.items += (if $gone then [] else [{
           metadata: {name: "app-3-test", labels: $l, annotations: {"helm.sh/hook": "test", "helm.sh/hook-weight": "0"}},
           spec: {containers: [{name: "test"}]},
           status: {phase: "Failed", conditions: [{type: "Ready", status: "False"}],
-                   containerStatuses: [{name: "test", image: "img:1", ready: false, restartCount: 0, state: {terminated: {exitCode: 1, reason: "Error"}}}]}}] end)' "$S/pods.json" >"$S/pods-after.json"
+                   containerStatuses: [{name: "test", image: "img:1", ready: false, restartCount: 0, state: {terminated: {exitCode: 1, reason: "Error"}}}]}}] end)
+          | if $two then .items += [{metadata: {name: "app-3-test-grpc", labels: {}, annotations: {"helm.sh/hook": "test", "helm.sh/hook-weight": "1"}},
+              spec: {containers: [{name: "test"}]},
+              status: {phase: "Failed", conditions: [{type: "Ready", status: "False"}],
+                       containerStatuses: [{name: "test", image: "img:1", ready: false, restartCount: 0, state: {terminated: {exitCode: 1, reason: "Error"}}}]}}] else . end' "$S/pods.json" >"$S/pods-after.json"
     fi
   fi
   rm -rf "$OBS/results"
@@ -482,9 +487,10 @@ eq "crossrun: app-3's helm:test cell in W1 is excluded as c-optout" "$(jq -c '[.
   '[{"world":"W1","key":"helm:test","status":"excluded","reason":"c-optout"}]'
 eq "crossrun: the opt-out evidence names the test pod" "$(jq -c '[.optOutEvidence[]? | select(.chart == "app-3") | .pods[] | select(.testPod) | {pod, effectiveOptOut}] | unique' "$res")" '[{"pod":"app-3-test","effectiveOptOut":true}]'
 
-# the same chart without the opt-out label on its test pod, and with the test pod gone: the exclusion is refused.
+# the same chart without the opt-out label on its test pod, with the test pod gone, and with a second test pod left in the
+# mesh (the row names only the opted-out one): the exclusion is refused.
 # Records are a real observe job of app-3 in W1 (3 runs per sample run) in place of the artifact's own, the rest as downloaded.
-for variant in plain gone; do
+for variant in plain gone two; do
   for r in 1001 1002; do
     rm -rf "$T/v-$variant-$r"; cp -R "$T/analysis/run-$r/results" "$T/v-$variant-$r"
     mkpods true app-3 >"$S/pods.json"
@@ -495,7 +501,9 @@ for variant in plain gone; do
   eq "crossrun, test pod $variant: the c-optout exclusion is refused (exit 1)" "$?" 1
 done
 grep -q "does not carry the opt-out" "$T/cr-plain.out" && ok "  plain: the error says the pod does not carry the opt-out" || bad "  plain: error text: $(head -3 "$T/cr-plain.out")"
-grep -q 'testPodMeshStatus "no-new-pods"' "$T/cr-gone.out" && ok "  gone: the error says the test pod could not be recorded" || bad "  gone: error text: $(head -3 "$T/cr-gone.out")"
+grep -q 'testPodMeshStatus is "no-new-pods"' "$T/cr-gone.out" && ok "  gone: the error says the test pod could not be recorded" || bad "  gone: error text: $(head -3 "$T/cr-gone.out")"
+grep -q "app-3-test-grpc does not carry the opt-out" "$T/cr-two.out" && ok "  two: the error names the second test pod, which the ledger row does not name and which is in the mesh" || bad "  two: error text: $(head -3 "$T/cr-two.out")"
+eq "  two: the record holds both test pods" "$(jq -c '[.testPodMesh[].pod]' "$T/v-two-1001/exp-1001-app-3-W1/app-3.W1.run1.json")" '["app-3-test","app-3-test-grpc"]'
 eq "  gone: the record says helm test ran and its pods could not be listed" "$(jq -c '[.testPodMesh, .testPodMeshStatus, .obs["helm:test"]]' "$T/v-gone-1001/exp-1001-app-3-W1/app-3.W1.run1.json")" '[[],"no-new-pods","fail"]'
 
 # rule 3 with a combined fix (docs/compat-experiment.md section 2): app-2 needs two keys' fixes; the combined entry is

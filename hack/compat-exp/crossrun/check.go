@@ -206,22 +206,25 @@ const COptoutKey = "helm:test"
 
 // checkCallers verifies a c-optout row against the records of both sample
 // runs: the key is helm:test, every run has records for the chart and world,
-// and in every record each caller the row names matches at least one pod of
-// the chart, every matching pod is not the instrument's client and carries
-// the opt-out metadata that applies to the world. The callers are looked for in
-// podMesh and in testPodMesh (the pods helm test created). A pod that merely carries
-// opt-out metadata but is not a named caller proves nothing.
+// and in every record (a) testPodMeshStatus is "listed", so the pods helm test
+// created were captured, (b) the callers are ALL the pods of testPodMesh that
+// are helm test hook pods (testHook true), not a list the analyst chooses; there
+// is at least one, and each carries the opt-out metadata that applies to the
+// world, and (c) the row's `callers` equals that set: every test hook pod is
+// named by an entry (a pod name, or a prefix before a dash) and every entry
+// names one. Pods of testPodMesh that are not test hook pods are not callers;
+// podMesh, the snapshot before helm test, holds no caller.
 func (a *analysis) checkCallers(r *ledger.Row) error {
 	if r.Key != COptoutKey {
 		return fmt.Errorf("c-optout is accepted for the observation key %s only (its callers are pods of the chart); the callers of %s are not", COptoutKey, r.Key)
 	}
-	callers := r.Exclusion.Callers
-	if len(callers) == 0 {
+	named := r.Exclusion.Callers
+	if len(named) == 0 {
 		return fmt.Errorf("the row names no callers")
 	}
 	for _, run := range a.in.Runs {
 		if !run.HasRecords {
-			return fmt.Errorf("no records directory is given for run %s, so podMesh and testPodMesh cannot be read", run.ID)
+			return fmt.Errorf("no records directory is given for run %s, so testPodMesh cannot be read", run.ID)
 		}
 		n := 0
 		for _, rec := range run.Records {
@@ -229,34 +232,51 @@ func (a *analysis) checkCallers(r *ledger.Row) error {
 				continue
 			}
 			n++
-			for _, c := range callers {
-				matched := 0
-				for _, p := range rec.callerPods() {
-					if !ledger.CallerMatches(c, p.Pod) {
-						continue
-					}
-					matched++
-					if p.Client {
-						return fmt.Errorf("caller %q matches %s, the instrument's own client pod, in run %s record run%d", c, p.Pod, run.ID, rec.Run)
-					}
-					opted := false
-					for _, m := range p.MeshMetadata {
-						if isOptOut(r.World, m.Key, m.Value) {
-							opted = true
-						}
-					}
-					if !opted {
-						return fmt.Errorf("caller %q matches %s, which does not carry the opt-out that applies in %s, in run %s record run%d", c, p.Pod, r.World, run.ID, rec.Run)
+			where := fmt.Sprintf("run %s record run%d", run.ID, rec.Run)
+			if rec.TestPodMeshStatus != "listed" {
+				return fmt.Errorf("testPodMeshStatus is %q in %s, not \"listed\": the pods helm test created were not captured (a test pod removed by a hook delete policy cannot be recorded), so the callers are not known", statusOrNone(rec.TestPodMeshStatus), where)
+			}
+			callers := rec.testHookPods()
+			if len(callers) == 0 {
+				return fmt.Errorf("testPodMesh of %s %s holds no helm test hook pod in %s, so there is no failing caller to be opted out", r.Chart, r.World, where)
+			}
+			for _, p := range callers {
+				if p.Client {
+					return fmt.Errorf("test hook pod %s is the instrument's own client pod, in %s", p.Pod, where)
+				}
+				opted := false
+				for _, m := range p.MeshMetadata {
+					if isOptOut(r.World, m.Key, m.Value) {
+						opted = true
 					}
 				}
-				if matched == 0 {
-					return fmt.Errorf("caller %q is not in podMesh or testPodMesh of %s %s in run %s record run%d (testPodMeshStatus %q: a test pod removed by a hook delete policy cannot be recorded)",
-						c, r.Chart, r.World, run.ID, rec.Run, statusOrNone(rec.TestPodMeshStatus))
+				if !opted {
+					return fmt.Errorf("test hook pod %s does not carry the opt-out that applies in %s, in %s: every helm test pod is a caller, whether the row names it or not", p.Pod, r.World, where)
+				}
+				matched := false
+				for _, c := range named {
+					if ledger.CallerMatches(c, p.Pod) {
+						matched = true
+					}
+				}
+				if !matched {
+					return fmt.Errorf("test hook pod %s is a caller the row does not name (callers %s), in %s: the callers are all the test hook pods of the chart, not a list the analyst chooses", p.Pod, strings.Join(named, ", "), where)
+				}
+			}
+			for _, c := range named {
+				matched := false
+				for _, p := range callers {
+					if ledger.CallerMatches(c, p.Pod) {
+						matched = true
+					}
+				}
+				if !matched {
+					return fmt.Errorf("caller %q is not a helm test hook pod of testPodMesh of %s %s in %s (pods that are not test hook pods are not callers)", c, r.Chart, r.World, where)
 				}
 			}
 		}
 		if n == 0 {
-			return fmt.Errorf("run %s has no record for %s in %s, so podMesh and testPodMesh cannot be read", run.ID, r.Chart, r.World)
+			return fmt.Errorf("run %s has no record for %s in %s, so testPodMesh cannot be read", run.ID, r.Chart, r.World)
 		}
 	}
 	return nil

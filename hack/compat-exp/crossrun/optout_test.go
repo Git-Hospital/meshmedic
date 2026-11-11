@@ -20,14 +20,26 @@ func optedOut(world string) []meta {
 	return []meta{{"annotation", "sidecar.istio.io/inject", "false"}}
 }
 
-// optFixture: chart "prom" in W1 with a finding of `key`, records with the given pods in both runs.
-func optFixture(key string, callers []string, pods ...PodMesh) *fixture {
+// testPod is a pod helm test created: a hook pod (testHook true), opted out
+// or not.
+func testPod(name string, optOut bool) PodMesh {
+	p := PodMesh{Pod: name, Owner: "Pod/" + name, TestHook: true}
+	if optOut {
+		p.MeshMetadata = optedOut("W1")
+	}
+	return p
+}
+
+// optFixture: chart "prom" in W1 with a finding of `key`; the records of both
+// runs hold podMesh `pods` (the snapshot before helm test) and testPodMesh
+// `testPods` with the given status.
+func optFixture(key string, callers []string, status string, pods []PodMesh, testPods ...PodMesh) *fixture {
 	r := []ChartReport{chart("prom", wr("W1", bad(key)))}
 	f := newFixture(r, r, nil)
 	f.pad(9)
 	recs := []Record{}
 	for run := 1; run <= 3; run++ {
-		recs = append(recs, Record{World: "W1", Chart: "prom", Run: run, PodMesh: pods})
+		recs = append(recs, Record{World: "W1", Chart: "prom", Run: run, PodMesh: pods, TestPodMesh: testPods, TestPodMeshStatus: status})
 	}
 	for i := range f.in.Runs {
 		f.in.Runs[i].HasRecords, f.in.Runs[i].Records = true, recs
@@ -43,7 +55,7 @@ func optFixture(key string, callers []string, pods ...PodMesh) *fixture {
 func TestCOptoutAuditScenarioPortFinding(t *testing.T) {
 	const portKey = "port:prom:9090:http"
 	job := PodMesh{Pod: "prom-admission-create-abcde", Owner: "Job/prom-admission-create", MeshMetadata: optedOut("W1")}
-	f := optFixture(portKey, []string{"prom-admission-create"}, job, PodMesh{Pod: "prom-0", Owner: "StatefulSet/prom"}, PodMesh{Pod: "mmc-client", Client: true})
+	f := optFixture(portKey, []string{"prom-admission-create"}, "listed", []PodMesh{job, {Pod: "prom-0", Owner: "StatefulSet/prom"}, {Pod: "mmc-client", Client: true}})
 	msg := f.analyzeErr(t)
 	if !strings.Contains(msg, "helm:test only") {
 		t.Fatal(msg)
@@ -56,30 +68,73 @@ func TestCOptoutAuditScenarioPortFinding(t *testing.T) {
 	}
 }
 
+// R5, the second audit's scenario: callers=[app-test-connection] (opted out)
+// while app-test-grpc, a test pod in the mesh with a sidecar, also exists. The
+// document says every failing caller carries the chart's own opt-out; the
+// callers are all the helm test hook pods, not the ones the analyst names.
+func TestCOptoutNamesOnlyOnePodOfTwo(t *testing.T) {
+	const k = "helm:test"
+	conn := testPod("app-test-connection", true)
+	grpc := testPod("app-test-grpc", false)
+	grpc.IstioProxy.Container = true
+	main := PodMesh{Pod: "app-0", Owner: "StatefulSet/app"}
+	t.Run("the unnamed in-mesh test pod refuses the exclusion", func(t *testing.T) {
+		f := optFixture(k, []string{"app-test-connection"}, "listed", []PodMesh{main}, conn, grpc)
+		msg := f.analyzeErr(t)
+		if !strings.Contains(msg, "app-test-grpc") || !strings.Contains(msg, "does not carry the opt-out") {
+			t.Fatal(msg)
+		}
+	})
+	t.Run("both opted out but only one named: the row must equal the computed set", func(t *testing.T) {
+		g2 := testPod("app-test-grpc", true)
+		f := optFixture(k, []string{"app-test-connection"}, "listed", []PodMesh{main}, conn, g2)
+		if msg := f.analyzeErr(t); !strings.Contains(msg, "a caller the row does not name") || !strings.Contains(msg, "app-test-grpc") {
+			t.Fatal(msg)
+		}
+	})
+	t.Run("all test pods opted out and all named: accepted", func(t *testing.T) {
+		g2 := testPod("app-test-grpc", true)
+		f := optFixture(k, []string{"app-test-connection", "app-test-grpc"}, "listed", []PodMesh{main}, conn, g2)
+		res := f.analyze(t)
+		if c := cellOf(t, res, "prom", "W1", k); c.Status != StExcluded || c.Reasons[0] != ledger.ReasonCOptout {
+			t.Fatalf("%+v", c)
+		}
+	})
+}
+
 func TestCOptoutCallersAreChecked(t *testing.T) {
 	const k = "helm:test"
-	test := PodMesh{Pod: "prom-test-x1", Owner: "Pod/prom-test-x1", MeshMetadata: optedOut("W1")}
+	test := testPod("prom-test-x1", true)
 	main := PodMesh{Pod: "prom-0", Owner: "StatefulSet/prom"}
 	job := PodMesh{Pod: "prom-admission-create-abcde", Owner: "Job/prom-admission-create", MeshMetadata: optedOut("W1")}
 	client := PodMesh{Pod: "mmc-client", Client: true, MeshMetadata: optedOut("W1")}
+	notHook := PodMesh{Pod: "prom-helper-x1", Owner: "Pod/prom-helper-x1"}
 	cases := []struct {
 		name    string
 		callers []string
+		status  string
 		pods    []PodMesh
+		tests   []PodMesh
 		want    string
 	}{
-		{"named caller opted out", []string{"prom-test"}, []PodMesh{test, main, client}, ""},
-		{"unrelated opted-out Job, caller not in podMesh", []string{"prom-test"}, []PodMesh{job, main, client}, `caller "prom-test" is not in podMesh`},
-		{"caller exists but is not opted out", []string{"prom"}, []PodMesh{test, main, client}, "does not carry the opt-out"},
-		{"caller is the instrument's own client", []string{"mmc-client"}, []PodMesh{test, main, client}, "instrument's own client"},
-		{"opt-out for the other world does not apply", []string{"prom-test"},
-			[]PodMesh{{Pod: "prom-test-x1", MeshMetadata: optedOut("W3")}, client}, "does not carry the opt-out"},
-		{"every named caller must exist", []string{"prom-test", "prom-other-test"}, []PodMesh{test, client}, `caller "prom-other-test" is not in podMesh`},
-		{"a prefix needs the dash boundary", []string{"prom-te"}, []PodMesh{test, client}, `caller "prom-te" is not in podMesh`},
+		{"named caller opted out", []string{"prom-test"}, "listed", []PodMesh{main, client}, []PodMesh{test}, ""},
+		{"a testPodMesh pod that is not a hook pod is not a caller", []string{"prom-test"}, "listed", []PodMesh{main, client}, []PodMesh{test, notHook}, ""},
+		{"naming a pod that is not a hook pod is refused", []string{"prom-test", "prom-helper"}, "listed", []PodMesh{main, client}, []PodMesh{test, notHook},
+			`caller "prom-helper" is not a helm test hook pod`},
+		{"unrelated opted-out Job, no test hook pod at all", []string{"prom-test"}, "listed", []PodMesh{job, main, client}, nil, "holds no helm test hook pod"},
+		{"caller exists but is not opted out", []string{"prom-test"}, "listed", []PodMesh{main, client}, []PodMesh{testPod("prom-test-x1", false)}, "does not carry the opt-out"},
+		{"opt-out for the other world does not apply", []string{"prom-test"}, "listed", []PodMesh{client},
+			[]PodMesh{{Pod: "prom-test-x1", TestHook: true, MeshMetadata: optedOut("W3")}}, "does not carry the opt-out"},
+		{"every named caller must be a hook pod", []string{"prom-test", "prom-other-test"}, "listed", []PodMesh{client}, []PodMesh{test}, `caller "prom-other-test" is not a helm test hook pod`},
+		{"a prefix needs the dash boundary", []string{"prom-te"}, "listed", []PodMesh{client}, []PodMesh{test}, "a caller the row does not name"},
+		{"a test pod listed in podMesh only is not a caller", []string{"prom-test"}, "listed", []PodMesh{test, client}, nil, "holds no helm test hook pod"},
+		{"status no-new-pods: refused", []string{"prom-test"}, "no-new-pods", []PodMesh{main, client}, nil, `testPodMeshStatus is "no-new-pods"`},
+		{"status not-run: refused", []string{"prom-test"}, "not-run", []PodMesh{main, client}, nil, `testPodMeshStatus is "not-run"`},
+		{"status missing: refused", []string{"prom-test"}, "", []PodMesh{main, client}, []PodMesh{test}, `testPodMeshStatus is "none"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			f := optFixture(k, tc.callers, tc.pods...)
+			f := optFixture(k, tc.callers, tc.status, tc.pods, tc.tests...)
 			if tc.want == "" {
 				res := f.analyze(t)
 				if c := cellOf(t, res, "prom", "W1", k); c.Status != StExcluded || c.Reasons[0] != ledger.ReasonCOptout {
@@ -93,59 +148,24 @@ func TestCOptoutCallersAreChecked(t *testing.T) {
 		})
 	}
 	t.Run("both runs are checked", func(t *testing.T) {
-		f := optFixture(k, []string{"prom-test"}, test, client)
-		f.in.Runs[1].Records = []Record{{World: "W1", Chart: "prom", Run: 1, PodMesh: []PodMesh{main, client}}}
-		if msg := f.analyzeErr(t); !strings.Contains(msg, "r2") || !strings.Contains(msg, `caller "prom-test"`) {
+		f := optFixture(k, []string{"prom-test"}, "listed", []PodMesh{main, client}, test)
+		f.in.Runs[1].Records = []Record{{World: "W1", Chart: "prom", Run: 1, PodMesh: []PodMesh{main, client}, TestPodMeshStatus: "listed"}}
+		if msg := f.analyzeErr(t); !strings.Contains(msg, "r2") || !strings.Contains(msg, "holds no helm test hook pod") {
+			t.Fatal(msg)
+		}
+	})
+	t.Run("every record is checked, not the first", func(t *testing.T) {
+		f := optFixture(k, []string{"prom-test"}, "listed", []PodMesh{main, client}, test)
+		f.in.Runs[0].Records = append([]Record{}, f.in.Runs[0].Records...)
+		f.in.Runs[0].Records[2].TestPodMesh = []PodMesh{test, testPod("prom-test-grpc-x2", false)}
+		if msg := f.analyzeErr(t); !strings.Contains(msg, "prom-test-grpc-x2") {
 			t.Fatal(msg)
 		}
 	})
 	t.Run("a run without records for the chart and world", func(t *testing.T) {
-		f := optFixture(k, []string{"prom-test"}, test, client)
+		f := optFixture(k, []string{"prom-test"}, "listed", []PodMesh{main, client}, test)
 		f.in.Runs[1].Records = nil
 		if msg := f.analyzeErr(t); !strings.Contains(msg, "no record") {
-			t.Fatal(msg)
-		}
-	})
-}
-
-// The callers of helm:test are the pods helm test creates, which observe.sh records
-// in testPodMesh (a second listing after helm test), not in podMesh.
-func TestCOptoutCallersInTestPodMesh(t *testing.T) {
-	const k = "helm:test"
-	main := PodMesh{Pod: "prom-0", Owner: "StatefulSet/prom"}
-	client := PodMesh{Pod: "mmc-client", Client: true, MeshMetadata: optedOut("W1")}
-	testPod := PodMesh{Pod: "prom-test-x1", Owner: "Pod/prom-test-x1", MeshMetadata: optedOut("W1")}
-	plain := PodMesh{Pod: "prom-test-x1", Owner: "Pod/prom-test-x1"}
-	mk := func(pm, tpm []PodMesh, status string) *fixture {
-		f := optFixture(k, []string{"prom-test"}, pm...)
-		for i := range f.in.Runs {
-			for j := range f.in.Runs[i].Records {
-				f.in.Runs[i].Records[j].TestPodMesh = tpm
-				f.in.Runs[i].Records[j].TestPodMeshStatus = status
-			}
-		}
-		return f
-	}
-	t.Run("caller only in testPodMesh, opted out: accepted", func(t *testing.T) {
-		res := mk([]PodMesh{main, client}, []PodMesh{testPod}, "listed").analyze(t)
-		if c := cellOf(t, res, "prom", "W1", k); c.Status != StExcluded || c.Reasons[0] != ledger.ReasonCOptout {
-			t.Fatalf("%+v", c)
-		}
-	})
-	t.Run("caller in testPodMesh without the opt-out: refused", func(t *testing.T) {
-		if msg := mk([]PodMesh{main, client}, []PodMesh{plain}, "listed").analyzeErr(t); !strings.Contains(msg, "does not carry the opt-out") {
-			t.Fatal(msg)
-		}
-	})
-	t.Run("caller in neither list: refused, the status is in the message", func(t *testing.T) {
-		msg := mk([]PodMesh{main, client}, nil, "no-new-pods").analyzeErr(t)
-		if !strings.Contains(msg, `caller "prom-test" is not in podMesh or testPodMesh`) || !strings.Contains(msg, "no-new-pods") {
-			t.Fatal(msg)
-		}
-	})
-	t.Run("a matching pod in either list must be opted out", func(t *testing.T) {
-		optedMain := PodMesh{Pod: "prom-test-x1", Owner: "Pod/prom-test-x1", MeshMetadata: optedOut("W1")}
-		if msg := mk([]PodMesh{optedMain, client}, []PodMesh{plain}, "listed").analyzeErr(t); !strings.Contains(msg, "does not carry the opt-out") {
 			t.Fatal(msg)
 		}
 	})

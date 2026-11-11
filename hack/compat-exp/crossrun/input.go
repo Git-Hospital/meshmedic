@@ -111,6 +111,9 @@ type PodMesh struct {
 		Native        bool `json:"native"`
 	} `json:"istioProxy"`
 	AmbientRedirection string `json:"ambientRedirection"`
+	// TestHook is true for a pod of testPodMesh that carries the helm.sh/hook
+	// annotation "test" (hack/compat-exp/RECORD.md): a helm test pod.
+	TestHook bool `json:"testHook"`
 }
 
 // Record is the part of an observation record crossrun reads.
@@ -126,8 +129,22 @@ type Record struct {
 	TestPodMeshStatus string    `json:"testPodMeshStatus"`
 }
 
-// callerPods is every pod a c-optout caller can name: podMesh (the snapshot
-// before helm test) and testPodMesh (the pods helm test created).
+// testHookPods are the callers of the helm test: the pods of testPodMesh that
+// are helm test hook pods. Pods of testPodMesh that are not (a Job a test
+// created, a pod that merely appeared) are not callers, and podMesh, the
+// snapshot before helm test, holds none.
+func (r Record) testHookPods() []PodMesh {
+	var out []PodMesh
+	for _, p := range r.TestPodMesh {
+		if p.TestHook {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// callerPods is every pod listed in the record's evidence: podMesh (the
+// snapshot before helm test) and testPodMesh (the pods helm test created).
 func (r Record) callerPods() []PodMesh {
 	all := make([]PodMesh, 0, len(r.PodMesh)+len(r.TestPodMesh))
 	all = append(all, r.PodMesh...)
