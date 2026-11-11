@@ -4,9 +4,11 @@ package catalog
 // detector can recognize and the patch that answers it. Catalog entries are
 // reviewed by humans; the engine never invents a remediation at runtime.
 type Scenario struct {
-	ID              string         `yaml:"id"`
-	Title           string         `yaml:"title"`
-	Severity        string         `yaml:"severity"`
+	ID    string `yaml:"id"`
+	Title string `yaml:"title"`
+	// Severity must be "critical" or "warning"; Validate rejects anything else.
+	Severity string `yaml:"severity"`
+	// Description must not be blank; Validate rejects an empty or whitespace-only value.
 	Description     string         `yaml:"description"`
 	Signal          Signal         `yaml:"signal"`
 	Evidence        []Query        `yaml:"evidence"`
@@ -15,7 +17,8 @@ type Scenario struct {
 	RolloutEvidence []RolloutQuery `yaml:"rolloutEvidence"`
 	Remediation     Remediation    `yaml:"remediation"`
 	Guardrails      Guardrails     `yaml:"guardrails"`
-	Rollback        string         `yaml:"rollback"`
+	// Rollback must not be blank; Validate rejects an empty or whitespace-only value.
+	Rollback string `yaml:"rollback"`
 
 	// Suppresses names scenarios that are symptoms of this one: while this
 	// scenario is in breach for a target, the listed scenarios stay quiet
@@ -112,6 +115,8 @@ type Target struct {
 
 // Guardrails bound what automation may do without a human in the loop.
 type Guardrails struct {
-	RequiresApproval  bool `yaml:"requiresApproval"`
-	MaxAppliesPerHour int  `yaml:"maxAppliesPerHour"`
+	RequiresApproval bool `yaml:"requiresApproval"`
+	// MaxAppliesPerHour must not be negative (Validate rejects it). Omitting
+	// it or setting 0 means no limit.
+	MaxAppliesPerHour int `yaml:"maxAppliesPerHour"`
 }

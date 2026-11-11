@@ -7,11 +7,16 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **Catalog validation now enforces the documented fields.** An entry with an
-  empty `description` or `rollback`, a `severity` other than `critical` or
-  `warning`, or a negative `guardrails.maxAppliesPerHour` no longer loads. All
-  18 shipped entries already satisfy this, so no entry or lock change. (closes
-  #15)
+- **Breaking for custom catalogs: Validate is stricter.** A catalog loaded
+  through `--catalog <dir>` or `$MESHMEDIC_CATALOG` goes through the same
+  Validate, so an entry that loaded before can now be refused. The rules are:
+  `description` must not be blank, `rollback` must not be blank, `severity`
+  must be `critical` or `warning`, and `guardrails.maxAppliesPerHour` must not
+  be negative. To fix an entry, fill in `description` and `rollback`, use
+  `critical` or `warning` as the severity, and omit `maxAppliesPerHour` or set
+  it to 0 for no limit (a negative value used to behave as no limit too, and
+  is now an error). All 18 shipped entries already satisfy this, so no entry
+  or lock change. (closes #15)
 
 - **Targets with unknown scenario IDs now fail startup.** `watch` and `check`
   name the target and unknown IDs before querying Prometheus. An empty scenario
