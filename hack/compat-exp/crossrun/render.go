@@ -24,6 +24,9 @@ func RenderMarkdown(r *Result) []byte {
 	var b strings.Builder
 	w := func(format string, a ...any) { fmt.Fprintf(&b, format, a...) }
 
+	if r.TestMode {
+		w("**THIS RESULT IS NOT VALID: it was made with test overrides (MMC_ANALYZE_TEST=1). It is not an analysis of the experiment.**\n\n")
+	}
 	w("# crossrun\n\n")
 	if r.Run2 != "" {
 		w("Run 1 %s, run 2 %s, gap %.2f h (at least 12 h).\n\n", r.Run1, r.Run2, r.GapHours)

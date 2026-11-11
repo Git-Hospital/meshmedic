@@ -96,3 +96,28 @@ func TestRunOneOnly(t *testing.T) {
 		t.Fatal("two runs must be final")
 	}
 }
+
+// F2: test mode and provenance reach the output files.
+func TestTestModeAndProvenanceAreCarried(t *testing.T) {
+	r := []ChartReport{chart("a", wr("W3", ok(wk)))}
+	f := newFixture(r, r, nil)
+	f.in.TestMode = true
+	f.in.Provenance = []byte(`{"head":"abc"}`)
+	res := f.analyze(t)
+	js, err := RenderJSON(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(js), `"testMode": true`) || !strings.Contains(string(js), `"head": "abc"`) {
+		t.Fatal(string(js))
+	}
+	if md := string(RenderMarkdown(res)); !strings.HasPrefix(md, "**THIS RESULT IS NOT VALID") {
+		t.Fatal(md)
+	}
+	// a normal result carries neither
+	res = newFixture(r, r, nil).analyze(t)
+	js, _ = RenderJSON(res)
+	if strings.Contains(string(js), "testMode") || strings.Contains(string(js), "provenance") {
+		t.Fatal(string(js))
+	}
+}

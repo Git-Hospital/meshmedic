@@ -52,6 +52,8 @@ are all the failing callers is a judgment: the row's reviewer verdict (agree) as
 Helm test pods are normally not in `podMesh` (it is taken before `helm test`),
 so on real records the exclusion fails; see INTERPRETATIONS.md 9.
 
+crossrun does not check that its inputs are the frozen instrument's: analyze.sh does, and records the freeze commit, HEAD, the runs and the files read in the manifest's `provenance`, which the result carries (INTERPRETATIONS.md 21). A manifest with `testMode: true` gives a result that says it is not valid.
+
 Every ambiguity of the pre-registration is listed with the reading chosen in
 INTERPRETATIONS.md.
 

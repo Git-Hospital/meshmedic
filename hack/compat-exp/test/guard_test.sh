@@ -108,6 +108,48 @@ refuses "acceptance runs on the primary version only" "runs on Istio"
 g "$r" acceptance GUARD_CHARTS_FILE=hack/compat-exp/charts-exp.json
 refuses "acceptance takes only its own list" "acceptance runs"
 
+# --- guard.sh freeze: the freeze alone, for analyze.sh ----------------------------------
+
+d="$tmp/fz"
+newrepo "$d"
+pre="$(git -C "$d" rev-parse HEAD)"
+CMD=freeze g "$d" observe
+refuses "freeze without the tag" "does not exist"
+echo "second" >"$d/hack/compat-exp/classification-prompt.md"; commit "$d" "before the tag"
+freeze "$d"
+tagsha="$(git -C "$d" rev-parse HEAD)"
+CMD=freeze g "$d" observe
+passes "freeze at the tag"
+echo "data" >"$d/hack/compat-exp/ledger.json"; commit "$d" "data only"
+CMD=freeze g "$d" observe
+passes "freeze at a descendant that changes data only"
+child="$(git -C "$d" rev-parse HEAD)"
+CMD=freeze OUT="$tagsha" g "$d" observe
+passes "freeze of a commit: the tag itself"
+CMD=freeze OUT="$child" g "$d" observe
+passes "freeze of a commit: a descendant with unchanged frozen files"
+CMD=freeze OUT="$pre" g "$d" observe
+refuses "freeze of a commit before the tag" "not tag compat-exp-freeze or a descendant"
+CMD=freeze OUT="HEAD" g "$d" observe
+refuses "freeze of a commit needs a full sha" "not a full commit sha"
+CMD=freeze OUT="$(printf 'a%.0s' $(seq 1 40))" g "$d" observe
+refuses "freeze of an unknown commit" "not in this repository"
+echo "tampered" >>"$d/hack/compat-exp/crossrun/main.go"
+CMD=freeze g "$d" observe
+refuses "freeze: an uncommitted change to a frozen file" "frozen instrument files differ"
+commit "$d" "change crossrun"
+CMD=freeze g "$d" observe
+refuses "freeze: a committed change to a frozen file" "frozen instrument files differ"
+CMD=freeze OUT="$(git -C "$d" rev-parse HEAD)" g "$d" observe
+refuses "freeze of a commit that changed a frozen file" "frozen instrument files at"
+CMD=freeze OUT="$child" g "$d" observe
+passes "freeze of the earlier commit is still fine"
+git -C "$d" reset -q --hard "$child"
+echo x >"$d/hack/compat-exp/crossrun/extra.go"
+CMD=freeze g "$d" observe
+refuses "freeze: an untracked file among the frozen paths" "untracked files"
+rm "$d/hack/compat-exp/crossrun/extra.go"
+
 # --- the real acceptance list passes the real guard --------------------------------
 
 rc=0

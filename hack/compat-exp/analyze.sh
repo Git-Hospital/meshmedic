@@ -2,54 +2,95 @@
 #
 # The analysis procedure (docs/compat-experiment.md sections 1, 2 and 7) as one
 # command, for a maintainer's machine after the workflow runs have finished:
-# download what the runs stored (read only), join it, check the ledger, run the
-# static checks and crossrun, and write the result files. The workflow needs no
-# extra permission for this: nothing here runs on Actions.
+# check that the analysis is bound to the freeze, download what the runs stored
+# (read only), join it, check the ledger, run the static checks and crossrun, and
+# write the result files. Nothing here runs on Actions.
 #
 # Usage:
 #   hack/compat-exp/analyze.sh --out DIR --run1 ID [--run2 ID] [--cert ID]... [--recheck ID]
 #                              [--repo OWNER/REPO] [--charts FILE] [--ledger FILE]
+#                              [--replacements FILE]
 #
 #   --out DIR     where everything goes; must not exist or be empty
 #   --run1, --run2  workflow run ids of the two observe runs (run 2 at least 12 h
-#                 after run 1 ended; crossrun checks the gap from the run times)
+#                 after run 1 ended; crossrun stops with an error otherwise). With
+#                 --run1 only the result is for the futility check after run 1: cells
+#                 wait for run 2, no region is final, the output says "run 1 only"
 #   --cert ID     a certify run id; repeat for each (a fix needs two)
 #   --recheck ID  the recheck run id
 #   --repo        OWNER/REPO for gh (default: gh's own, from the git remote)
-#   --charts      the frozen chart list, crossrun's frame and static.sh's list
-#                 (default hack/compat-exp/charts-exp.json)
-#   --ledger      default hack/compat-exp/ledger.json
+#   --charts      the frozen chart list (default hack/compat-exp/charts-exp.json);
+#                 must be a tracked, committed file of this repository that names
+#                 its qualification run (select.sh writes it); the acceptance list
+#                 is refused
+#   --ledger      default hack/compat-exp/ledger.json (tracked, committed)
+#   --replacements  default hack/compat-exp/replacements.json (tracked, committed)
 #
-# Run ids are digits only. gh is used for `gh run download` and `gh run view`
-# only. Per run it downloads the artifact compat-exp-report-ID (report-ID.json,
-# table.md, results/ with the observation records) into DIR/run-ID/.
+# Run ids are digits only. gh is used for `gh run view` and `gh run download` only.
 #
-# Steps, in order, each stopping the script when it fails:
-#   1. download the reports and records of every run id
-#   2. start and end time of each observe run (gh run view: startedAt, updatedAt of
-#      a completed run) and the Istio version of each certify/recheck run (from its
-#      records' environment)
-#   3. DIR/inputs.json, crossrun's manifest
-#   4. ledger check (hack/compat-exp/ledger), DIR/ledger-check.txt
-#   5. static.sh over the charts the reports hold, DIR/static.json
-#   6. crossrun: DIR/result.json and DIR/result.md
+# What the analysis is bound to (every check stops the script; nothing is skipped):
+#  1. The tag compat-exp-freeze exists locally, HEAD is the tag or a descendant, every
+#     frozen instrument file is byte-identical to the tag's (guard.sh's own check,
+#     taken from the tag's copy of guard.sh: `guard.sh freeze`), also in the working
+#     tree, and the data files read (the chart list, ledger.json, replacements.json,
+#     fixes/, ignore/, patches/) have no uncommitted change.
+#  2. The tools (crossrun, ledger, staticcheck) are built from the checked tree. The
+#     variables CROSSRUN, LEDGER, STATICCHECK, STATIC_CAUSES and STATIC_WORKFLOW are
+#     refused unless MMC_ANALYZE_TEST=1; with it every JSON output carries
+#     "testMode": true, the markdown result starts with a line saying it is not
+#     valid, and NOT-VALID-TEST-MODE.txt is written. The tests use that mode.
+#  3. Every run id (qualification, run 1, run 2, certification, recheck) is checked
+#     against gh and its own metadata: its head commit (`headSha`) is the tag commit
+#     or a descendant whose frozen files equal the tag's, it ran the workflow
+#     compat-exp.yml on workflow_dispatch, it completed, its mode fits its role (run 1
+#     and run 2: observe; certification: certify; recheck: recheck; the qualification
+#     run named by the chart list: qualify) and its Istio version is the pinned one
+#     for that role (ISTIO_PRIMARY of the tag's workflow, except recheck: the second
+#     option of the istio input, decided at the freeze).
+#     gh run view --json gives headSha, workflowName, event, status, attempt and the
+#     times; it does not give the dispatch inputs. Mode and Istio version therefore
+#     come from run-meta-ID.json, which the workflow must upload at the root of the
+#     run's artifact (compat-exp-report-ID, and charts-exp-ID for qualify). Fields:
+#     schema (1), runId, runAttempt, sha (github.sha), workflowRef (github.workflow_ref),
+#     eventName, mode, istio, chartsFile, fixesFile, chartIds, fixId (the dispatch
+#     inputs). The script cross-checks sha and runId against gh, and istio against the
+#     records' environment.
+#  4. The sample is not choosable after data exists: the qualification run's records
+#     (artifact charts-exp-ID, qual/) are downloaded, select.sh is run on them and on the
+#     committed candidates.json, and the result must be byte-identical to the chart list.
+#  5. Times, conservatively against reruns: the end of a run is the latest `completedAt`
+#     of any job in any attempt (gh run view ID --attempt N --json jobs, for every
+#     attempt up to the `attempt` field), the start is the earliest `startedAt` of any
+#     job or attempt. A run that is not completed is refused.
+#  6. The result records the freeze tag commit, HEAD, every run id with headSha, mode,
+#     Istio version, start and end, and the sha256 of the chart list, ledger.json,
+#     causes.json and replacements.json that were read (DIR/provenance.json, and in
+#     result.json under "provenance").
 #
-# Environment: CROSSRUN, LEDGER, STATICCHECK (binaries; default: go build into a
-# temporary directory), and what static.sh reads (MMC_STATE,
-# STATIC_ALLOW_HELM_MISMATCH).
+# Steps, in order, each stopping the script when it fails: 1 and 2 above; the chart
+# list is a frozen experiment list; 3 and the downloads for every run id; 4; the
+# ledger check (DIR/ledger-check.txt); static.sh over the charts the reports hold
+# (DIR/static.json); DIR/inputs.json, crossrun's manifest; crossrun: DIR/result.json
+# and DIR/result.md.
+#
+# Needs: git, gh, jq, go (unless the test overrides are on), helm (static.sh), and
+# what static.sh reads (MMC_STATE, STATIC_ALLOW_HELM_MISMATCH: recorded in
+# static.json.meta.json).
 #
 # Exit codes: 0 done, 1 a step failed (crossrun exits 1 when the ledger and the
-# reports disagree), 2 usage or a refused input.
+# reports disagree or run 2 started too early), 2 usage or a refused input.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
+tag=compat-exp-freeze
 
 die() { echo "analyze.sh: $*" >&2; exit "${2:-1}"; }
 usage() { sed -n '/^# Usage:/,/^# Run ids/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 out="" run1="" run2="" recheck="" repo=""
 charts="$root/hack/compat-exp/charts-exp.json" ledger_file="$root/hack/compat-exp/ledger.json"
+replacements_file="$root/hack/compat-exp/replacements.json"
 certs=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -61,6 +102,7 @@ while [[ $# -gt 0 ]]; do
     --repo) repo="${2:-}"; shift 2 ;;
     --charts) charts="${2:-}"; shift 2 ;;
     --ledger) ledger_file="${2:-}"; shift 2 ;;
+    --replacements) replacements_file="${2:-}"; shift 2 ;;
     -h | --help) usage ;;
     *) echo "analyze.sh: unknown argument '$1'" >&2; usage ;;
   esac
@@ -74,22 +116,111 @@ done
 [[ -z "$repo" || "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "--repo must be OWNER/REPO" 2
 [[ -f "$charts" ]] || die "no chart list $charts" 2
 [[ -f "$ledger_file" ]] || die "no ledger $ledger_file" 2
+[[ -f "$replacements_file" ]] || die "no replacements file $replacements_file (commit one, {\"schema\":1,\"replacements\":[]} when nothing was replaced)" 2
 if [[ -e "$out" ]]; then
   [[ -d "$out" && -z "$(ls -A "$out")" ]] || die "$out exists and is not an empty directory" 2
 fi
-for t in gh jq; do command -v "$t" >/dev/null || die "$t is needed" 2; done
+for t in gh jq git; do command -v "$t" >/dev/null || die "$t is needed" 2; done
+
+ids=("$run1")
+[[ -z "$run2" ]] || ids+=("$run2")
+ids+=(${certs[@]+"${certs[@]}"})
+[[ -z "$recheck" ]] || ids+=("$recheck")
+[[ "$(printf '%s\n' "${ids[@]}" | sort | uniq -d | wc -l | tr -d ' ')" == 0 ]] || die "a run id is given twice" 2
+
+# --- 2. the tools come from the checked tree ----------------------------------------
+
+test_mode=0
+case "${MMC_ANALYZE_TEST:-}" in
+  1) test_mode=1 ;;
+  "") ;;
+  *) die "MMC_ANALYZE_TEST must be 1 or unset" 2 ;;
+esac
+if [[ $test_mode -eq 0 ]]; then
+  for v in CROSSRUN LEDGER STATICCHECK STATIC_CAUSES STATIC_WORKFLOW; do
+    [[ -z "${!v:-}" ]] || die "$v is set: tool and file overrides are refused unless MMC_ANALYZE_TEST=1 (the tools are built from the checked tree)" 2
+  done
+fi
 
 mkdir -p "$out" || die "cannot create $out" 2
 out="$(cd "$out" && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-
+git_() { git -C "$root" "$@"; }
 gh_() { if [[ -n "$repo" ]]; then gh "$@" -R "$repo"; else gh "$@"; fi; }
 
-build() { # ENVVAR PACKAGE: a binary path, built unless given
-  local var="$1" pkg="$2" bin="${!1:-}"
+# --- 1. the freeze, and the data files -------------------------------------------------
+
+git_ rev-parse -q --verify "refs/tags/$tag^{commit}" >/dev/null || die "tag $tag does not exist locally (git fetch --tags); the analysis is bound to the freeze"
+tag_sha="$(git_ rev-parse "refs/tags/$tag^{commit}")"
+head_sha="$(git_ rev-parse HEAD)"
+# guard.sh as the tag has it: the definition of "frozen" cannot be edited after the tag.
+git_ show "$tag_sha:hack/compat-exp/guard.sh" >"$tmp/guard-at-tag.sh" 2>/dev/null || die "hack/compat-exp/guard.sh is not in tag $tag"
+freeze_check() { # [SHA]
+  env -i PATH="$PATH" HOME="${HOME:-/}" GUARD_ROOT="$root" FREEZE_TAG="$tag" bash "$tmp/guard-at-tag.sh" freeze "$@" 2>"$tmp/guard.err" ||
+    die "$(tr '\n' ' ' <"$tmp/guard.err")"
+}
+freeze_check
+
+relpath() { # PATH: the path inside the repository, or die
+  local d b top rel
+  d="$(cd "$(dirname "$1")" 2>/dev/null && pwd -P)" || die "cannot resolve $1" 2
+  b="$(basename "$1")"
+  top="$(cd "$root" && pwd -P)"
+  [[ "$d/$b" == "$top"/* ]] || die "$1 is outside the repository: the data files must be committed" 2
+  rel="$d/$b"
+  echo "${rel#"$top"/}"
+}
+charts_rel="$(relpath "$charts")" || exit $?
+ledger_rel="$(relpath "$ledger_file")" || exit $?
+repl_rel="$(relpath "$replacements_file")" || exit $?
+for f in "$charts_rel" "$ledger_rel" "$repl_rel"; do
+  git_ ls-files --error-unmatch -- "$f" >/dev/null 2>&1 || die "$f is not a tracked file; commit it before the analysis"
+done
+dirty="$(git_ status --porcelain --untracked-files=all -- "$charts_rel" "$ledger_rel" "$repl_rel" \
+  hack/compat-exp/fixes hack/compat-exp/ignore hack/compat-exp/patches hack/compat-exp/causes.json | head -5 | tr '\n' ' ')"
+[[ -z "$dirty" ]] || die "uncommitted changes to files the analysis reads: $dirty"
+
+sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+charts_sha="$(sha "$charts")"
+ledger_sha="$(sha "$ledger_file")"
+causes_sha="$(sha "$root/hack/compat-exp/causes.json")"
+repl_sha="$(sha "$replacements_file")"
+
+# --- the chart list is a frozen experiment list ------------------------------------------
+
+jq -e '(.charts | type == "array") and (.reserves | type == "array") and (.sha256 | type == "string")' "$charts" >/dev/null 2>&1 ||
+  die "$charts_rel is not a charts-exp.json (charts, reserves, sha256)" 2
+qual_run="$(jq -r '.qualification.run // empty' "$charts")"
+isid "$qual_run" || die "$charts_rel names no qualification run id: it is not a frozen experiment list (the acceptance list and candidate lists cannot be analysed)" 2
+stored="$(jq -r .sha256 "$charts")"
+actual="$(jq -S -c 'del(.sha256)' "$charts" | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; } | cut -d' ' -f1)"
+[[ "$stored" == "$actual" ]] || die "$charts_rel: stored sha256 does not match its content"
+jq -e 'all((.charts + .reserves)[]; .qualified == true)' "$charts" >/dev/null || die "$charts_rel lists a chart that is not qualified"
+
+# --- the pinned versions (the tag's workflow) ---------------------------------------------------
+
+git_ show "$tag_sha:.github/workflows/compat-exp.yml" >"$tmp/workflow.yml" || die ".github/workflows/compat-exp.yml is not in tag $tag"
+primary="$(sed -n 's/^[[:space:]]*ISTIO_PRIMARY:[[:space:]]*"\{0,1\}\([0-9][0-9.]*\)"\{0,1\}.*$/\1/p' "$tmp/workflow.yml" | head -1)"
+[[ "$primary" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "no ISTIO_PRIMARY in the tag's workflow"
+recheck_version="$(awk '
+  /^[a-z]/ { in_i = 0; in_o = 0 }
+  /^      istio:/ { in_i = 1; next }
+  in_i && /^      [a-z_]+:/ { in_i = 0 }
+  in_i && /options:/ { in_o = 1; next }
+  in_o && /^[[:space:]]*- / { n++; v = $0; sub(/^[[:space:]]*- /, "", v); gsub(/"/, "", v); if (n == 2) { print v; exit } }
+' "$tmp/workflow.yml")"
+if [[ -n "$recheck" ]]; then
+  [[ "$recheck_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "the tag's workflow offers no decided recheck version ('$recheck_version')"
+fi
+
+# --- builds -----------------------------------------------------------------------------------------
+
+build() { # ENVVAR PACKAGE: a binary path; built from the tree unless a test override is given
+  local var="$1" pkg="$2" bin
+  bin="${!var:-}"
   if [[ -z "$bin" ]]; then
-    command -v go >/dev/null || die "go (or $var) is needed" 2
+    command -v go >/dev/null || die "go is needed" 2
     bin="$tmp/$(basename "$pkg")"
     (cd "$root" && go build -o "$bin" "$pkg") || die "$pkg did not build"
   fi
@@ -99,59 +230,123 @@ crossrun="$(build CROSSRUN ./hack/compat-exp/crossrun)" || exit $?
 ledger_bin="$(build LEDGER ./hack/compat-exp/ledger/cmd/ledger)" || exit $?
 STATICCHECK="$(build STATICCHECK ./hack/compat-exp/staticcheck)" || exit $?
 export STATICCHECK
+[[ $test_mode -eq 0 ]] || export MMC_ANALYZE_TEST=1   # static.sh reads its own overrides only behind this switch
 
-# --- 1. download ----------------------------------------------------------------
+# --- 3. every run id --------------------------------------------------------------------------------------
 
-# Everything downloaded is data: it lands in its own directory and is only read
-# by jq and crossrun, never executed or sourced.
-ids=("$run1")
-[[ -z "$run2" ]] || ids+=("$run2")
-ids+=(${certs[@]+"${certs[@]}"})
-[[ -z "$recheck" ]] || ids+=("$recheck")
-[[ "$(printf '%s\n' "${ids[@]}" | sort | uniq -d | wc -l | tr -d ' ')" == 0 ]] || die "a run id is given twice" 2
+rfc3339z='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+prov_runs='[]'      # for provenance.json
+times_of=()          # "id started ended" lines
 
-for id in "${ids[@]}"; do
+# fetch_run ROLE ID ARTIFACT WANT_MODE WANT_ISTIO: checks, downloads into $out/run-ID
+fetch_run() {
+  local role="$1" id="$2" artifact="$3" want_mode="$4" want_istio="$5" view head attempt n j d
   d="$out/run-$id"
   mkdir -p "$d"
-  gh_ run download "$id" -n "compat-exp-report-$id" -D "$d" >"$tmp/dl.log" 2>&1 ||
+  view="$(gh_ run view "$id" --json attempt,conclusion,databaseId,event,headSha,startedAt,status,updatedAt,workflowName 2>"$tmp/view.log")" ||
+    die "gh run view $id failed: $(tail -2 "$tmp/view.log" | tr '\n' ' ')"
+  jq -e . >/dev/null 2>&1 <<<"$view" || die "run $id: gh run view did not return JSON"
+  [[ "$(jq -r .status <<<"$view")" == completed ]] || die "run $id is not completed (status $(jq -r .status <<<"$view"))"
+  [[ "$(jq -r '.databaseId | tostring' <<<"$view")" == "$id" ]] || die "run $id: gh returned another run"
+  [[ "$(jq -r .event <<<"$view")" == workflow_dispatch ]] || die "run $id was triggered by '$(jq -r .event <<<"$view")', not workflow_dispatch"
+  [[ "$(jq -r .workflowName <<<"$view")" == compat-exp ]] || die "run $id belongs to the workflow '$(jq -r .workflowName <<<"$view")', not compat-exp"
+  head="$(jq -r .headSha <<<"$view")"
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] || die "run $id: headSha '$head' is not a commit sha"
+  freeze_check "$head" || exit $?
+  attempt="$(jq -r '.attempt // 1' <<<"$view")"
+  [[ "$attempt" =~ ^[0-9]{1,3}$ ]] || die "run $id: attempt '$attempt' is not a number"
+
+  gh_ run download "$id" -n "$artifact" -D "$d" >"$tmp/dl.log" 2>&1 ||
     die "gh run download $id failed: $(tail -2 "$tmp/dl.log" | tr '\n' ' ')"
-  jq -e '.schema == 1 and (.charts | type == "array")' "$d/report-$id.json" >/dev/null 2>&1 ||
-    die "run $id: no usable report-$id.json in its artifact"
-  [[ -d "$d/results" ]] || die "run $id: no results/ (observation records) in its artifact"
-done
 
-# --- 2. times and versions ----------------------------------------------------------
+  local meta="$d/run-meta-$id.json" mode istio recs_istio
+  [[ -f "$meta" ]] || die "run $id: its artifact $artifact has no run-meta-$id.json; the workflow must upload it at the artifact root (fields: schema 1, runId, runAttempt, sha, workflowRef, eventName, mode, istio, chartsFile, fixesFile, chartIds, fixId)"
+  jq -e --arg id "$id" --arg sha "$head" '.schema == 1 and ((.runId | tostring) == $id) and .sha == $sha and .eventName == "workflow_dispatch"
+      and (.workflowRef | type == "string" and contains("/.github/workflows/compat-exp.yml@"))
+      and (.mode | type == "string") and (.istio | type == "string")' "$meta" >/dev/null 2>&1 ||
+    die "run $id: run-meta-$id.json does not describe this run (runId, sha = headSha, eventName workflow_dispatch, workflowRef .github/workflows/compat-exp.yml)"
+  mode="$(jq -r .mode "$meta")"
+  istio="$(jq -r .istio "$meta")"
+  [[ "$mode" == "$want_mode" ]] || die "run $id was dispatched with mode '$mode', but it is given as $role, which needs mode $want_mode"
+  [[ "$istio" == "$want_istio" ]] || die "run $id ran Istio $istio, but the pinned version for $role is $want_istio"
+  if [[ "$role" != qualification ]]; then
+    local cf
+    cf="$(jq -r '.chartsFile // ""' "$meta")"
+    [[ -z "$cf" || "$cf" == "$charts_rel" ]] || die "run $id used the chart list '$cf', not $charts_rel"
+    jq -e '.schema == 1 and (.charts | type == "array")' "$d/report-$id.json" >/dev/null 2>&1 || die "run $id: no usable report-$id.json in its artifact"
+    [[ -d "$d/results" ]] || die "run $id: no results/ (observation records) in its artifact"
+    recs_istio="$(find "$d/results" -maxdepth 1 -name '*.json' -exec jq -r '.environment.istio // empty' {} + | sort -u | tr '\n' ' ')"
+    [[ -z "${recs_istio// /}" || "${recs_istio% }" == "$istio" ]] || die "run $id: its records say Istio '${recs_istio% }', its metadata says $istio"
+  fi
 
-rfc3339='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$'
-times() { # ID -> "started ended"
-  local j
-  j="$(gh_ run view "$1" --json status,conclusion,startedAt,updatedAt 2>"$tmp/view.log")" ||
-    die "gh run view $1 failed: $(tail -2 "$tmp/view.log" | tr '\n' ' ')"
-  [[ "$(jq -r .status <<<"$j")" == completed ]] || die "run $1 is not completed (status $(jq -r .status <<<"$j"))"
-  local s e
-  s="$(jq -r .startedAt <<<"$j")"
-  e="$(jq -r .updatedAt <<<"$j")"
-  [[ "$s" =~ $rfc3339 && "$e" =~ $rfc3339 ]] || die "run $1: startedAt/updatedAt are not RFC 3339 times"
-  echo "$s $e"
-}
-istio_of() { # ID: the Istio version in the records' environment, W1 first
-  local f v
-  for f in "$out/run-$1"/results/*.W1.run1.json "$out/run-$1"/results/*.W3.run1.json; do
-    [[ -f "$f" ]] || continue
-    v="$(jq -r '.environment.istio // empty' "$f")"
-    [[ -n "$v" ]] && { echo "$v"; return 0; }
+  # times: all attempts, conservatively
+  : >"$tmp/attempts.jsonl"
+  for ((n = 1; n <= attempt; n++)); do
+    j="$(gh_ run view "$id" --attempt "$n" --json status,startedAt,updatedAt,jobs 2>"$tmp/view.log")" ||
+      die "gh run view $id --attempt $n failed: $(tail -2 "$tmp/view.log" | tr '\n' ' ')"
+    [[ "$(jq -r .status <<<"$j")" == completed ]] || die "run $id attempt $n is not completed"
+    jq -c . <<<"$j" >>"$tmp/attempts.jsonl" || die "run $id attempt $n: not JSON"
   done
-  die "run $1: no record states the Istio version"
+  local se started ended
+  se="$(jq -s -r --arg re "$rfc3339z" '
+    def real: select(type == "string" and test($re) and . > "2000");
+    ([.[] | (.startedAt | real), (.jobs[]? | .startedAt | real)] | min) as $s
+    | ([.[] | (.jobs[]? | .completedAt | real)] | max) as $e
+    | if $s == null or $e == null then "none" else "\($s) \($e)" end' "$tmp/attempts.jsonl")"
+  [[ "$se" != none ]] || die "run $id: gh reports no job start and completion times (need UTC RFC 3339 times in jobs[].startedAt and completedAt)"
+  read -r started ended <<<"$se"
+  times_of+=("$id $started $ended")
+
+  prov_runs="$(jq -c --arg role "$role" --arg id "$id" --arg head "$head" --arg mode "$mode" --arg istio "$istio" \
+    --arg s "$started" --arg e "$ended" --argjson attempts "$attempt" --arg conclusion "$(jq -r .conclusion <<<"$view")" \
+    '. + [{role: $role, id: $id, headSha: $head, mode: $mode, istio: $istio, started: $s, ended: $e, attempts: $attempts, conclusion: $conclusion}]' <<<"$prov_runs")"
 }
 
-# --- 3. the manifest ----------------------------------------------------------------
+# the qualification run first: the sample is chosen from its records
+fetch_run qualification "$qual_run" "charts-exp-$qual_run" qualify "$primary" || exit $?
+[[ -d "$out/run-$qual_run/qual" ]] || die "run $qual_run: no qual/ (qualification records) in its artifact charts-exp-$qual_run"
+bash "$here/select.sh" "$root/hack/compat-exp/candidates.json" "$out/run-$qual_run/qual" "$tmp/charts-reselected.json" "$qual_run" >"$tmp/select.log" 2>&1 ||
+  die "select.sh on the qualification run's records failed: $(tail -2 "$tmp/select.log" | tr '\n' ' ')"
+cmp -s "$tmp/charts-reselected.json" "$charts" ||
+  die "the chart list $charts_rel is not what select.sh makes from the records of qualification run $qual_run and the frozen candidates.json: the sample does not reproduce, so it is not the frozen one"
+
+fetch_run run1 "$run1" "compat-exp-report-$run1" observe "$primary" || exit $?
+[[ -z "$run2" ]] || fetch_run run2 "$run2" "compat-exp-report-$run2" observe "$primary" || exit $?
+for id in ${certs[@]+"${certs[@]}"}; do fetch_run certification "$id" "compat-exp-report-$id" certify "$primary" || exit $?; done
+[[ -z "$recheck" ]] || fetch_run recheck "$recheck" "compat-exp-report-$recheck" recheck "$recheck_version" || exit $?
+
+tm() { # ID started|ended
+  local l a b c
+  for l in "${times_of[@]}"; do
+    read -r a b c <<<"$l"
+    if [[ "$a" == "$1" ]]; then [[ "$2" == started ]] && echo "$b" || echo "$c"; return; fi
+  done
+}
+
+# --- 4. ledger check ------------------------------------------------------------------------------------------
+
+"$ledger_bin" check -ledger "$ledger_file" -causes "$root/hack/compat-exp/causes.json" >"$out/ledger-check.txt" 2>&1 || {
+  cat "$out/ledger-check.txt" >&2
+  die "ledger check failed (see $out/ledger-check.txt)"
+}
+
+# --- 5. static checks -------------------------------------------------------------------------------------------
+
+# The charts the reports hold: base charts of every observe run, not fix entries.
+chart_ids=()
+while IFS= read -r c; do chart_ids+=("$c"); done < <(
+  for id in "$run1" ${run2:+"$run2"}; do jq -r '.charts[] | select((.fixOf // "") == "") | .chart' "$out/run-$id/report-$id.json"; done | sort -u)
+[[ ${#chart_ids[@]} -gt 0 ]] || die "the reports hold no charts"
+"$here/static.sh" "$charts" "$out/static.json" "${chart_ids[@]}" || die "static.sh failed"
+
+# --- the manifest ---------------------------------------------------------------------------------------------------------
 
 runs='[]'
 for id in "$run1" ${run2:+"$run2"}; do
-  read -r s e < <(times "$id") || exit $?
-  runs="$(jq -c --arg id "$id" --arg s "$s" --arg e "$e" --arg d "$out/run-$id" \
+  runs="$(jq -c --arg id "$id" --arg s "$(tm "$id" started)" --arg e "$(tm "$id" ended)" --arg d "$out/run-$id" \
     '. + [{id: $id, report: ($d + "/report-" + $id + ".json"), records: ($d + "/results"), started: $s, ended: $e}]' <<<"$runs")"
 done
+istio_of() { jq -r --arg id "$1" '.[] | select(.id == $id) | .istio' <<<"$prov_runs"; }
 cert_json='[]'
 for id in ${certs[@]+"${certs[@]}"}; do
   cert_json="$(jq -c --arg id "$id" --arg d "$out/run-$id" --arg i "$(istio_of "$id")" \
@@ -162,31 +357,36 @@ if [[ -n "$recheck" ]]; then
   recheck_json="$(jq -c -n --arg id "$recheck" --arg d "$out/run-$recheck" --arg i "$(istio_of "$recheck")" \
     '{id: $id, report: ($d + "/report-" + $id + ".json"), istio: $i}')" || exit $?
 fi
-jq -n --argjson runs "$runs" --argjson cert "$cert_json" --argjson recheck "$recheck_json" \
-  --arg causes "$root/hack/compat-exp/causes.json" --arg ledger "$ledger_file" --arg frame "$charts" --arg static "$out/static.json" \
-  '{runs: $runs, certification: $cert, causes: $causes, ledger: $ledger, frame: $frame, static: $static}
-   + (if $recheck == null then {} else {recheck: $recheck} end)' >"$out/inputs.json" || die "could not write the manifest"
+static_meta="$(jq -c '{helmVersion, helmPinned, helmMatchesPinned}' "$out/static.json.meta.json")" || die "static.json.meta.json is unreadable"
+provenance="$(jq -c -n --arg tag "$tag" --arg tagsha "$tag_sha" --arg head "$head_sha" --argjson runs "$prov_runs" --argjson static "$static_meta" \
+  --arg charts "$charts_rel" --arg chartsSha "$charts_sha" --arg ledger "$ledger_rel" --arg ledgerSha "$ledger_sha" \
+  --arg causesSha "$causes_sha" --arg repl "$repl_rel" --arg replSha "$repl_sha" --argjson test "$test_mode" \
+  '{freezeTag: $tag, freezeCommit: $tagsha, head: $head, runs: $runs, static: $static,
+    files: {chartList: {path: $charts, sha256: $chartsSha}, ledger: {path: $ledger, sha256: $ledgerSha},
+            causes: {path: "hack/compat-exp/causes.json", sha256: $causesSha}, replacements: {path: $repl, sha256: $replSha}}}
+   + (if $test == 1 then {testMode: true} else {} end)')" || die "could not build the provenance"
+echo "$provenance" | jq . >"$out/provenance.json"
+jq -n --argjson runs "$runs" --argjson cert "$cert_json" --argjson recheck "$recheck_json" --argjson prov "$provenance" --argjson test "$test_mode" \
+  --arg causes "$root/hack/compat-exp/causes.json" --arg ledger "$ledger_file" --arg frame "$charts" --arg static "$out/static.json" --arg repl "$replacements_file" \
+  '{runs: $runs, certification: $cert, causes: $causes, ledger: $ledger, frame: $frame, static: $static, replacements: $repl, provenance: $prov}
+   + (if $recheck == null then {} else {recheck: $recheck} end)
+   + (if $test == 1 then {testMode: true} else {} end)' >"$out/inputs.json" || die "could not write the manifest"
+if [[ $test_mode -eq 1 ]]; then
+  jq '. + {testMode: true}' "$out/static.json.meta.json" >"$tmp/meta.json" && mv "$tmp/meta.json" "$out/static.json.meta.json"
+  echo "This directory was made with MMC_ANALYZE_TEST=1 (tool overrides). Nothing in it is a valid analysis." >"$out/NOT-VALID-TEST-MODE.txt"
+fi
 
-# --- 4. ledger check ------------------------------------------------------------------
-
-"$ledger_bin" check -ledger "$ledger_file" -causes "$root/hack/compat-exp/causes.json" >"$out/ledger-check.txt" 2>&1 || {
-  cat "$out/ledger-check.txt" >&2
-  die "ledger check failed (see $out/ledger-check.txt)"
-}
-
-# --- 5. static checks --------------------------------------------------------------------
-
-# The charts the reports hold: base charts of every observe run, not fix entries.
-chart_ids=()
-while IFS= read -r c; do chart_ids+=("$c"); done < <(
-  for id in "$run1" ${run2:+"$run2"}; do jq -r '.charts[] | select((.fixOf // "") == "") | .chart' "$out/run-$id/report-$id.json"; done | sort -u)
-[[ ${#chart_ids[@]} -gt 0 ]] || die "the reports hold no charts"
-"$here/static.sh" "$charts" "$out/static.json" "${chart_ids[@]}" || die "static.sh failed"
-
-# --- 6. crossrun ---------------------------------------------------------------------------
+# --- 6. crossrun ---------------------------------------------------------------------------------------------------------------
 
 "$crossrun" -inputs "$out/inputs.json" -json "$out/result.json" -md "$out/result.md"
 rc=$?
-if [[ $rc -ne 0 ]]; then die "crossrun exited $rc (1: the ledger and the reports disagree; 2: unreadable input)"; fi
+if [[ $rc -ne 0 ]]; then die "crossrun exited $rc (1: the ledger and the reports disagree, or run 2 started under 12 h after run 1 ended, or the sample is incomplete; 2: unreadable input)"; fi
+
+# the files read must be the files hashed
+[[ "$(sha "$charts")" == "$charts_sha" && "$(sha "$ledger_file")" == "$ledger_sha" && "$(sha "$root/hack/compat-exp/causes.json")" == "$causes_sha" &&
+  "$(sha "$replacements_file")" == "$repl_sha" ]] || die "a file the analysis reads changed while it ran; the result is discarded"
+
 echo "analyze.sh: done: $out/result.json, $out/result.md"
-jq -r '"region \(.region.region), N_new \(.metrics.nNew), P_new \(.metrics.pNew), D \(.metrics.d), P_D \(.metrics.pD), S \(.metrics.s)"' "$out/result.json" || true
+[[ $test_mode -eq 0 ]] || echo "analyze.sh: MMC_ANALYZE_TEST=1: this result is NOT valid" >&2
+jq -r 'if .final then "region \(.region.region), N_new \(.metrics.nNew), P_new \(.metrics.pNew), D \(.metrics.d), P_D \(.metrics.pD), S \(.metrics.s)"
+       else "run 1 only (no final region), N_max \(.futility.nMax), P_max \(.futility.pMax), stopDrop \(.futility.stopDrop)" end' "$out/result.json" || true

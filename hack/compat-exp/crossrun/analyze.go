@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -214,11 +215,16 @@ type SampleInfo struct {
 
 // Result is crossrun's whole output.
 type Result struct {
-	Schema   int     `json:"schema"`
-	Run1     string  `json:"run1"`
-	Run2     string  `json:"run2,omitempty"`
-	GapHours float64 `json:"gapHours,omitempty"`
-	GapOK    bool    `json:"gapOk"`
+	Schema int `json:"schema"`
+	// TestMode is true when analyze.sh ran with its test overrides: the result
+	// is not valid and says so. Provenance is what analyze.sh recorded about the
+	// freeze, the runs and the files read, carried through unread.
+	TestMode   bool            `json:"testMode,omitempty"`
+	Provenance json.RawMessage `json:"provenance,omitempty"`
+	Run1       string          `json:"run1"`
+	Run2       string          `json:"run2,omitempty"`
+	GapHours   float64         `json:"gapHours,omitempty"`
+	GapOK      bool            `json:"gapOk"`
 	// Final is false for run 1 only: that output serves the futility check
 	// after run 1 and declares no region.
 	Final          bool             `json:"final"`
@@ -384,7 +390,7 @@ func rowLabel(i int, r ledger.Row) string {
 // returns an error naming every ledger row that disagrees with the reports.
 func Analyze(in *Inputs) (*Result, error) {
 	a := &analysis{in: in, rowOf: map[ledger.Cell]*ledger.Row{}, byCell: map[ledger.Cell]*CellResult{}}
-	res := &Result{Schema: 1, Warnings: []string{}}
+	res := &Result{Schema: 1, Warnings: []string{}, TestMode: in.TestMode, Provenance: in.Provenance}
 	if len(in.Runs) < 1 {
 		return nil, fmt.Errorf("no run given")
 	}
