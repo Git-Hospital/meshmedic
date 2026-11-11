@@ -1,0 +1,338 @@
+package ledger
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func testCauses(t *testing.T) *Causes {
+	t.Helper()
+	c, err := LoadCauses(filepath.Join("testdata", "causes.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func countedRow() Row {
+	return Row{
+		Chart: "redis", World: "W3", Key: "workload:StatefulSet/redis-replicas:ready",
+		Cause: "ambient-np", Type: TypeDefect,
+		TypeBasis: &TypeBasis{Doc: "extraIngress is a generic key"},
+		Fix:       &Fix{Entry: "redis-np-15008", Form: FormValues, HelmLint: true},
+		Runs:      &Runs{Run1: "100", Run2: "200", Certification: []string{"300", "400"}},
+		Recheck:   &Recheck{Version: "1.32.0", Result: RecheckReproduces, Run: "500"},
+		Upstream:  &Upstream{},
+		Reviewer:  &Reviewer{Verdict: VerdictAgree, Run: "600"},
+		Status:    StatusCounted, Publisher: "bitnami",
+	}
+}
+
+func newKey() NewKey {
+	nk := NewKey{Key: "tls-origination", Anchor: "traffic-management/tls", CertifiedFix: "x-fix", Reproduction: "hack/compat-exp/repro/x.sh"}
+	nk.Reviewer = &struct {
+		Verdict string `json:"verdict"`
+		Run     string `json:"run"`
+	}{KeyAdmit, "700"}
+	return nk
+}
+
+func TestCheck(t *testing.T) {
+	causes := testCauses(t)
+	cases := []struct {
+		name string
+		mod  func(f *File)
+		want string // substring of the single expected problem; "" means valid
+	}{
+		{"valid counted", func(f *File) {}, ""},
+		{"empty ledger", func(f *File) { f.Rows = nil }, ""},
+		{"bad schema", func(f *File) { f.Schema = 2 }, "schema is 2"},
+		{"unknown cause", func(f *File) { f.Rows[0].Cause = "made-up" }, `cause "made-up" is not in causes.json`},
+		{"new key complete", func(f *File) {
+			f.NewKeys = []NewKey{newKey()}
+			f.Rows[0].Cause = "tls-origination"
+		}, ""},
+		{"new key without anchor", func(f *File) {
+			nk := newKey()
+			nk.Anchor = ""
+			f.NewKeys = []NewKey{nk}
+			f.Rows[0].Cause = "tls-origination"
+		}, "anchor"},
+		{"new key without fix", func(f *File) {
+			nk := newKey()
+			nk.CertifiedFix = ""
+			f.NewKeys = []NewKey{nk}
+		}, "certifiedFix"},
+		{"new key without reproduction", func(f *File) {
+			nk := newKey()
+			nk.Reproduction = ""
+			f.NewKeys = []NewKey{nk}
+		}, "reproduction"},
+		{"new key without reviewer", func(f *File) {
+			nk := newKey()
+			nk.Reviewer = nil
+			f.NewKeys = []NewKey{nk}
+		}, "reviewer verdict and run are missing"},
+		{"new key merged by reviewer", func(f *File) {
+			nk := newKey()
+			nk.Reviewer.Verdict = KeyMerge
+			f.NewKeys = []NewKey{nk}
+		}, "admitted only on"},
+		{"new key duplicates frozen key", func(f *File) {
+			nk := newKey()
+			nk.Key = "protocol"
+			f.NewKeys = []NewKey{nk}
+		}, "already in causes.json"},
+		{"duplicate cell", func(f *File) { f.Rows = append(f.Rows, f.Rows[0]) }, "same cell as row 1"},
+		{"bad status", func(f *File) { f.Rows[0].Status = "done" }, "status"},
+		{"bad type", func(f *File) { f.Rows[0].Type = "bug" }, "type"},
+		{"counted without cause", func(f *File) { f.Rows[0].Cause = "" }, "needs cause"},
+		{"counted without type", func(f *File) { f.Rows[0].Type = "" }, "needs type"},
+		{"counted without type basis", func(f *File) { f.Rows[0].TypeBasis = nil }, "typeBasis"},
+		{"counted without fix", func(f *File) { f.Rows[0].Fix = nil }, "needs fix"},
+		{"counted without lint", func(f *File) { f.Rows[0].Fix.HelmLint = false }, "helmLint"},
+		{"patch without sha", func(f *File) { f.Rows[0].Fix.Form = FormPatch }, "patchSha256"},
+		{"patch with sha", func(f *File) {
+			f.Rows[0].Fix.Form = FormPatch
+			f.Rows[0].Fix.PatchSHA256 = strings.Repeat("a", 64)
+		}, ""},
+		{"values with sha", func(f *File) { f.Rows[0].Fix.PatchSHA256 = strings.Repeat("a", 64) }, "fix.form is values"},
+		{"bad form", func(f *File) { f.Rows[0].Fix.Form = "yaml" }, "fix.form"},
+		{"counted without run2", func(f *File) { f.Rows[0].Runs.Run2 = "" }, "run1 and runs.run2"},
+		{"runs equal", func(f *File) { f.Rows[0].Runs.Run2 = "100" }, "same workflow run"},
+		{"one certification run", func(f *File) { f.Rows[0].Runs.Certification = []string{"300"} }, "two distinct"},
+		{"same certification run twice", func(f *File) { f.Rows[0].Runs.Certification = []string{"300", "300"} }, "two distinct"},
+		{"no recheck", func(f *File) { f.Rows[0].Recheck = nil }, "recheck"},
+		{"recheck not reproduced", func(f *File) { f.Rows[0].Recheck.Result = RecheckNotReproduced }, "rule 4 needs"},
+		{"bad recheck result", func(f *File) { f.Rows[0].Recheck.Result = "maybe" }, "recheck.result"},
+		{"upstream missing", func(f *File) { f.Rows[0].Upstream = nil }, "needs upstream"},
+		{"upstream merged", func(f *File) { f.Rows[0].Upstream = &Upstream{Merged: true, Link: "https://x"} }, "merged upstream"},
+		{"upstream merged without link", func(f *File) {
+			f.Rows[0].Status = StatusUnexplain
+			f.Rows[0].Upstream = &Upstream{Merged: true}
+		}, "upstream.link"},
+		{"no reviewer", func(f *File) { f.Rows[0].Reviewer = nil }, "reviewer"},
+		{"reviewer disagree-other", func(f *File) { f.Rows[0].Reviewer.Verdict = VerdictDisagreeOth }, "disagree-other"},
+		{"reviewer disagree-type is allowed", func(f *File) {
+			f.Rows[0].Reviewer.Verdict = VerdictDisagreeType
+			f.Rows[0].Type = TypeGap
+		}, ""},
+		{"bad reviewer verdict", func(f *File) { f.Rows[0].Reviewer.Verdict = "yes" }, "reviewer.verdict"},
+		{"no publisher", func(f *File) { f.Rows[0].Publisher = "" }, "publisher"},
+		{"counted with exclusion", func(f *File) { f.Rows[0].Exclusion = &Exclusion{Reason: ReasonFlaky, Evidence: "x"} }, "counted row has an exclusion"},
+		{"excluded ok", func(f *File) {
+			f.Rows[0] = Row{Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded,
+				Exclusion: &Exclusion{Reason: ReasonCOptout, Evidence: "test pods carry sidecar.istio.io/inject=false"}}
+		}, ""},
+		{"excluded without reason", func(f *File) {
+			f.Rows[0] = Row{Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded}
+		}, "needs exclusion.reason"},
+		{"excluded without evidence", func(f *File) {
+			f.Rows[0] = Row{Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded,
+				Exclusion: &Exclusion{Reason: ReasonCOptout}}
+		}, "needs exclusion.evidence"},
+		{"excluded with invented reason", func(f *File) {
+			f.Rows[0] = Row{Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded,
+				Exclusion: &Exclusion{Reason: "too-hard", Evidence: "x"}}
+		}, "rule 5 reasons"},
+		{"unexplained with exclusion", func(f *File) {
+			f.Rows[0] = Row{Chart: "a", World: "W1", Key: "k", Status: StatusUnexplain,
+				Exclusion: &Exclusion{Reason: ReasonFlaky, Evidence: "x"}}
+		}, "exclusion is set"},
+		{"unexplained minimal", func(f *File) {
+			f.Rows[0] = Row{Chart: "a", World: "W1", Key: "k", Status: StatusUnexplain}
+		}, ""},
+		{"unresolved minimal", func(f *File) {
+			f.Rows[0] = Row{Chart: "a", World: "W1", Key: "k", Status: StatusUnresolved}
+		}, ""},
+		{"missing cell fields", func(f *File) { f.Rows[0].Key = "" }, "chart, world and key"},
+		{"parts ok", func(f *File) {
+			r := &f.Rows[0]
+			r.Combined = &Combined{Entry: "redis-both", Certification: []string{"1", "2"}}
+			r.Parts = []Part{{"ambient-np", "redis-np-15008", []string{"3"}}, {"protocol", "redis-proto", []string{"3"}}}
+		}, ""},
+		{"parts credit two keys", func(f *File) {
+			r := &f.Rows[0]
+			r.Combined = &Combined{Entry: "redis-both", Certification: []string{"1", "2"}}
+			r.Parts = []Part{{"protocol", "p", []string{"3"}}, {"protocol", "q", []string{"3"}}}
+		}, "repeated"},
+		{"cause outside parts", func(f *File) {
+			r := &f.Rows[0]
+			r.Combined = &Combined{Entry: "redis-both", Certification: []string{"1", "2"}}
+			r.Parts = []Part{{"protocol", "p", []string{"3"}}, {"uid-1337", "q", []string{"3"}}}
+		}, "not one of the parts"},
+		{"parts without combined", func(f *File) {
+			r := &f.Rows[0]
+			r.Parts = []Part{{"ambient-np", "redis-np-15008", []string{"3"}}, {"protocol", "p", []string{"3"}}}
+		}, "combined"},
+		{"combined without parts", func(f *File) { f.Rows[0].Combined = &Combined{Entry: "x"} }, "without parts"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &File{Schema: Schema, Rows: []Row{countedRow()}}
+			tc.mod(f)
+			ps := Check(f, causes)
+			if tc.want == "" {
+				if len(ps) != 0 {
+					t.Fatalf("want valid, got %v", ps)
+				}
+				return
+			}
+			if len(ps) == 0 {
+				t.Fatalf("want a problem containing %q, got none", tc.want)
+			}
+			for _, p := range ps {
+				if strings.Contains(p.Error(), tc.want) {
+					if len(f.Rows) > 0 && !strings.Contains(p.Where, "row 1 (") && !strings.HasPrefix(p.Where, "newKeys") && p.Where != "ledger" && !strings.Contains(p.Where, "row 2") {
+						t.Fatalf("problem does not name its row: %v", p)
+					}
+					return
+				}
+			}
+			t.Fatalf("no problem contains %q: %v", tc.want, ps)
+		})
+	}
+}
+
+func TestParseStrict(t *testing.T) {
+	cases := []struct{ name, doc, want string }{
+		{"empty valid", `{"schema":1,"rows":[],"newKeys":[]}`, ""},
+		{"unknown top field", `{"schema":1,"rows":[],"newKeys":[],"extra":1}`, "unknown field"},
+		{"unknown row field", `{"schema":1,"rows":[{"chart":"a","world":"W1","key":"k","status":"unresolved","bogus":1}],"newKeys":[]}`, "unknown field"},
+		{"unknown nested field", `{"schema":1,"rows":[{"chart":"a","world":"W1","key":"k","status":"counted","fix":{"entry":"x","form":"values","helmLint":true,"oops":1}}],"newKeys":[]}`, "unknown field"},
+		{"trailing data", `{"schema":1,"rows":[],"newKeys":[]} {}`, "trailing"},
+		{"not json", `rows`, "ledger:"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.doc))
+			if tc.want == "" && err != nil {
+				t.Fatal(err)
+			}
+			if tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("want error containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestParseCauses(t *testing.T) {
+	cases := []struct {
+		name, doc string
+		want      []string
+		err       string
+	}{
+		{"array", `[{"key":"a"},{"key":"b","staticCheck":"sb"}]`, []string{"a", "b"}, ""},
+		{"causes wrapper", `{"causes":[{"key":"a"}]}`, []string{"a"}, ""},
+		{"keys wrapper", `{"keys":[{"key":"z"},{"key":"a"}]}`, []string{"z", "a"}, ""},
+		{"duplicate", `[{"key":"a"},{"key":"a"}]`, nil, "repeated"},
+		{"empty key", `[{"key":""}]`, nil, "no key"},
+		{"empty", `[]`, nil, "no keys"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := ParseCauses([]byte(tc.doc))
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("want %q, got %v", tc.err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(c.Keys, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("got %v", c.Keys)
+			}
+		})
+	}
+	c, _ := ParseCauses([]byte(`[{"key":"a"},{"key":"b","staticCheck":"sb"}]`))
+	if c.Static["a"] != "a" || c.Static["b"] != "sb" {
+		t.Fatalf("static checks %v", c.Static)
+	}
+}
+
+func TestOrder(t *testing.T) {
+	c := testCauses(t)
+	f := &File{NewKeys: []NewKey{{Key: "n1"}, {Key: "n2"}}}
+	if c.Order(f, "ambient-np") != 0 || c.Order(f, "ambient-l7") != 8 {
+		t.Fatal("frozen order")
+	}
+	if !(c.Order(f, "ambient-l7") < c.Order(f, "n1") && c.Order(f, "n1") < c.Order(f, "n2") && c.Order(f, "n2") < c.Order(f, "zzz")) {
+		t.Fatal("new keys rank after the frozen list, in ledger order")
+	}
+}
+
+// pilotLedger is pilot 1's real outcome as ledger rows: redis in W3 (three
+// differing keys) and rabbitmq in W3 (five), cause ambient-np, fix
+// <chart>-np-15008, and podinfo W1, excluded as c-optout. Pilot 1 had no
+// recheck version, no reviewer and no upstream check in this form, so those
+// fields are stand-ins and say so in the note.
+func pilotLedger() *File {
+	f := &File{Schema: Schema}
+	counted := func(chart, fix string, keys ...string) {
+		for _, k := range keys {
+			f.Rows = append(f.Rows, Row{
+				Chart: chart, World: "W3", Key: k,
+				Cause: "ambient-np", Type: TypeDefect,
+				TypeBasis: &TypeBasis{Doc: "networkPolicy.extraIngress is a generic key (section 2, Type)"},
+				Fix:       &Fix{Entry: fix, Form: FormValues, HelmLint: true},
+				Runs:      &Runs{Run1: "40109270484", Run2: "40119399052", Certification: []string{"40109270484", "40119399052"}},
+				Recheck:   &Recheck{Version: "1.31.3", Result: RecheckReproduces, Run: "40119399052"},
+				Upstream:  &Upstream{},
+				Reviewer:  &Reviewer{Verdict: VerdictAgree, Run: "fixture"},
+				Status:    StatusCounted, Publisher: "bitnami",
+				Note: "test fixture: pilot 1 had no recheck version or reviewer; those fields are stand-ins",
+			})
+		}
+	}
+	counted("redis", "redis-np-15008",
+		"helm:install", "workload:StatefulSet/redis-replicas:ready", "workload:StatefulSet/redis-replicas:restarts")
+	counted("rabbitmq", "rabbitmq-np-15008",
+		"helm:install", "port:rabbitmq-headless:15672:http", "port:rabbitmq:15672:http",
+		"workload:StatefulSet/rabbitmq:ready", "workload:StatefulSet/rabbitmq:restarts")
+	f.Rows = append(f.Rows, Row{
+		Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded,
+		Exclusion: &Exclusion{Reason: ReasonCOptout,
+			Evidence: "podinfo's test pods carry sidecar.istio.io/inject=false and call podinfo in plaintext under STRICT (docs/compat-pilot.md, podinfo section)"},
+	})
+	return f
+}
+
+func TestPilotRowsPass(t *testing.T) {
+	f := pilotLedger()
+	if ps := Check(f, testCauses(t)); len(ps) != 0 {
+		t.Fatalf("pilot rows rejected: %v", ps)
+	}
+	// round trip through the strict parser
+	data, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ps := Check(g, testCauses(t)); len(ps) != 0 {
+		t.Fatalf("round trip rejected: %v", ps)
+	}
+	if err := os.WriteFile(filepath.Join(t.TempDir(), "x.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCommittedLedgerIsValid(t *testing.T) {
+	f, err := Load(filepath.Join("..", "ledger.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Rows) != 0 || len(f.NewKeys) != 0 {
+		t.Fatalf("the committed ledger starts empty")
+	}
+	if ps := Check(f, testCauses(t)); len(ps) != 0 {
+		t.Fatal(ps)
+	}
+}
