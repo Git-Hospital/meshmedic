@@ -336,6 +336,8 @@ eq "select: skips failures, rank order" "$(jq -c '.charts[0:9] | map(.rank)' "$t
 eq "select: charts then reserves are consecutive qualified ranks" "$(jq '[.charts[].rank, .reserves[].rank] as $r | $r == ($r | sort) and ($r | all(. % 8 != 0))' "$tmp/s1/out.json")" true
 eq "select: nothing past the 65th qualified" "$(jq '[.charts[].rank, .reserves[].rank] | max' "$tmp/s1/out.json")" 74
 eq "select: entry shape observe.sh reads" "$(jq -c '.charts[0] | {id, chart, version, repo, deadline}' "$tmp/s1/out.json")" '{"id":"chart1","chart":"chart1","version":"1.0.1","repo":"https://example.test/1","deadline":"600s"}'
+eq "select: publisher and qualified carried for crossrun's frame" "$(jq -c '.charts[0] | {publisher, qualified}' "$tmp/s1/out.json")" '{"publisher":"p1","qualified":true}'
+eq "select: every entry has them" "$(jq '[.charts[], .reserves[]] | all(.publisher != null and .qualified == true)' "$tmp/s1/out.json")" true
 eq "select: bias fields present" "$(jq '.bias.fields | length' "$tmp/s1/out.json")" 4
 
 # deadline: slowest install is 174 s here, so the 600 s floor; 400 s gives 1200 s

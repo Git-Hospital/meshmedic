@@ -40,18 +40,21 @@ mklist() {
 
 # newrepo DIR: the frozen instrument, small stand-ins, committed and tagged.
 newrepo() {
-  local d="$1"
+  local d="$1" f
   mkdir -p "$d" && git -C "$d" init -q -b main
   mkdir -p "$d/hack/compat-exp/frame" "$d/hack/compat-exp/patches" "$d/hack/compat-exp/fixes" "$d/hack/compat-exp/ignore" \
-    "$d/hack/compat-pilot/difftable" "$d/.github/workflows"
-  echo "package main" >"$d/hack/compat-exp/frame/main.go"
-  for f in qualify.sh select.sh guard.sh candidates.json; do echo "$f v1" >"$d/hack/compat-exp/$f"; done
+    "$d/hack/compat-exp/staticcheck" "$d/hack/compat-exp/ledger" "$d/hack/compat-exp/crossrun" \
+    "$d/hack/compat-pilot/difftable" "$d/.github/workflows" "$d/docs"
+  for f in frame/main.go frame/exclusions.json staticcheck/main.go ledger/ledger.go crossrun/main.go; do echo "$f v1" >"$d/hack/compat-exp/$f"; done
+  for f in qualify.sh select.sh static.sh analyze.sh guard.sh classification-prompt.md candidates.json; do echo "$f v1" >"$d/hack/compat-exp/$f"; done
   echo '[{"id":"c1","chart":"c1","version":"1.0.0","repo":"https://example.test/1"},{"id":"c2","chart":"c2","version":"1.0.0"}]' >"$d/hack/compat-exp/candidates-charts.json"
-  jq -n '[range(1; 10) as $i | {key: "cause-\($i)", anchor: "a", mechanism: "m"}]' >"$d/hack/compat-exp/causes.json"
-  echo "observe v1" >"$d/hack/compat-pilot/observe.sh"
-  echo "world v1" >"$d/hack/compat-pilot/world.sh"
+  # the real cause list, the contract of the guard, ledger and crossrun
+  cp "$repo/hack/compat-exp/causes.json" "$d/hack/compat-exp/causes.json"
+  echo '{"schema":1,"rows":[],"newKeys":[]}' >"$d/hack/compat-exp/ledger.json"
+  for f in observe.sh render-args.sh world.sh; do echo "$f v1" >"$d/hack/compat-pilot/$f"; done
   echo "package main" >"$d/hack/compat-pilot/difftable/main.go"
   echo "name: compat-exp" >"$d/.github/workflows/compat-exp.yml"
+  echo "the pre-registration" >"$d/docs/compat-experiment.md"
   echo "module x" >"$d/go.mod"
   echo "" >"$d/go.sum"
   echo "a patch" >"$d/hack/compat-exp/patches/c1-fix.patch"
@@ -85,8 +88,8 @@ cat >"$r/hack/compat-exp/acceptance-charts.json" <<'JSONEND'
 [
   {"id":"redis","chart":"oci://example.test/redis","version":"1.0.0"},
   {"id":"podinfo","chart":"podinfo","version":"6.0.0","repo":"https://example.test/p"},
-  {"id":"redis-fix","fixOf":"redis","cause":"cause-1","chart":"oci://example.test/redis","version":"1.0.0","values":["--set-json","a=[1]"]},
-  {"id":"redis-fix-patch","fixOf":"redis","cause":"cause-1","chart":"oci://example.test/redis","version":"1.0.0","patch":"hack/compat-exp/patches/c1-fix.patch"}
+  {"id":"redis-fix","fixOf":"redis","cause":"ambient-np","chart":"oci://example.test/redis","version":"1.0.0","values":["--set-json","a=[1]"]},
+  {"id":"redis-fix-patch","fixOf":"redis","cause":"ambient-np","chart":"oci://example.test/redis","version":"1.0.0","patch":"hack/compat-exp/patches/c1-fix.patch"}
 ]
 JSONEND
 commit "$r"
@@ -156,10 +159,14 @@ refuses "istio must be x.y.z" "decided at the freeze"
 g "$r" bogus
 refuses "unknown mode" "is not one of"
 
-# the freeze: every frozen file
-for f in hack/compat-exp/qualify.sh hack/compat-exp/select.sh hack/compat-exp/guard.sh hack/compat-exp/causes.json \
-  hack/compat-pilot/observe.sh hack/compat-pilot/world.sh hack/compat-pilot/difftable/main.go \
-  hack/compat-exp/frame/main.go .github/workflows/compat-exp.yml go.mod hack/compat-exp/candidates.json; do
+# the freeze: every file of the instrument (docs/compat-experiment.md section 5 and the
+# scripts and tools added since), edited after the tag, committed or not
+for f in hack/compat-exp/frame/main.go hack/compat-exp/frame/exclusions.json hack/compat-exp/qualify.sh hack/compat-exp/select.sh \
+  hack/compat-exp/static.sh hack/compat-exp/analyze.sh hack/compat-exp/guard.sh hack/compat-exp/causes.json \
+  hack/compat-exp/classification-prompt.md hack/compat-exp/staticcheck/main.go hack/compat-exp/ledger/ledger.go \
+  hack/compat-exp/crossrun/main.go hack/compat-exp/candidates.json \
+  hack/compat-pilot/observe.sh hack/compat-pilot/render-args.sh hack/compat-pilot/world.sh hack/compat-pilot/difftable/main.go \
+  .github/workflows/compat-exp.yml docs/compat-experiment.md go.mod; do
   d="$tmp/mod-$(tr '/.' '__' <<<"$f")"
   cp -R "$r" "$d"
   echo "# edited" >>"$d/$f"
@@ -173,14 +180,33 @@ for f in hack/compat-exp/qualify.sh hack/compat-exp/select.sh hack/compat-exp/gu
   g "$d2" observe
   refuses "frozen file edited in the working tree: $f" "differ from tag"
 done
-# new tools appear after the freeze: frozen from then on, and a new one is a difference
+# an instrument file deleted after the tag is a difference too
+d="$tmp/deleted"
+cp -R "$r" "$d"
+git -C "$d" rm -q hack/compat-exp/analyze.sh
+commit "$d" "analyze.sh deleted"
+g "$d" observe
+refuses "a frozen file deleted after the tag" "differ from tag"
+# a freeze that lacks part of the instrument is incomplete
+for f in hack/compat-exp/static.sh hack/compat-exp/analyze.sh hack/compat-exp/classification-prompt.md docs/compat-experiment.md \
+  hack/compat-exp/crossrun hack/compat-exp/ledger hack/compat-exp/staticcheck hack/compat-exp/frame/exclusions.json; do
+  d="$tmp/incomplete-$(tr '/.' '__' <<<"$f")"
+  newrepo "$d"
+  git -C "$d" rm -rq "$f"
+  git -C "$d" commit -q -m "without $f"
+  freeze "$d"
+  mklist 3 "$d/hack/compat-exp/charts-exp.json"
+  commit "$d" list
+  g "$d" observe
+  refuses "a tag without $f" "freeze is incomplete"
+done
+# a file added to a frozen tool is a difference
 d="$tmp/newtool"
 cp -R "$r" "$d"
-mkdir -p "$d/hack/compat-exp/crossrun"
-echo "package main" >"$d/hack/compat-exp/crossrun/main.go"
-commit "$d" "crossrun added after the freeze"
+echo "package main" >"$d/hack/compat-exp/crossrun/extra.go"
+commit "$d" "a crossrun file added after the freeze"
 g "$d" observe
-refuses "a frozen tool added after the tag" "differ from tag"
+refuses "a file added to a frozen tool after the tag" "differ from tag"
 d="$tmp/untracked"
 cp -R "$r" "$d"
 echo x >"$d/hack/compat-exp/frame/extra.go"
@@ -190,11 +216,22 @@ refuses "untracked file among frozen paths" "untracked"
 d="$tmp/data"
 cp -R "$r" "$d"
 echo "another patch" >"$d/hack/compat-exp/patches/new.patch"
-mkdir -p "$d/hack/compat-exp/ledger-data"
-echo '{}' >"$d/hack/compat-exp/ledger-data/row.json"
+jq '.rows += [{"chart":"c1","world":"W3","key":"k","status":"unresolved"}]' "$d/hack/compat-exp/ledger.json" >"$d/x" && mv "$d/x" "$d/hack/compat-exp/ledger.json"
+echo '[]' >"$d/hack/compat-exp/fixes/new.json"
+echo '[]' >"$d/hack/compat-exp/ignore/new.json"
 commit "$d" "data"
 g "$d" observe
-passes "patches and data are not frozen"
+passes "a patch, a ledger row, fix entries and ignore lists are data, not frozen"
+d="$tmp/data2"
+cp -R "$r" "$d"
+echo "another patch" >"$d/hack/compat-exp/patches/new.patch"
+g "$d" observe
+passes "an uncommitted patch is data too"
+d="$tmp/data3"
+cp -R "$r" "$d"
+jq '.newKeys += [{"key":"nk"}]' "$d/hack/compat-exp/ledger.json" >"$d/x" && mv "$d/x" "$d/hack/compat-exp/ledger.json"
+g "$d" observe
+passes "a ledger edit (even an incomplete new key) is not a freeze matter"
 
 # HEAD must descend from the tag
 d="$tmp/side"
@@ -276,7 +313,7 @@ newrepo "$r2"
 freeze "$r2"
 mklist 5 "$r2/hack/compat-exp/charts-exp.json"
 commit "$r2" list
-base='"fixOf":"c1","cause":"cause-2","chart":"c1","version":"1.0.0","repo":"https://example.test/1"'
+base='"fixOf":"c1","cause":"protocol","chart":"c1","version":"1.0.0","repo":"https://example.test/1"'
 fx "[{\"id\":\"c1-fix\",$base,\"values\":[\"--set\",\"a=b\"]}]"
 g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json GUARD_CHART_IDS="c1 c1-fix"
 passes "a values fix of a listed chart"
@@ -285,18 +322,18 @@ g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json GUARD_CHART_IDS="c
 passes "a patch fix under patches/"
 g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json GUARD_CHART_IDS="c1-fix"
 refuses "a fix without its base in the selection" "without their base"
-fx "[{\"id\":\"zz-fix\",\"fixOf\":\"zz\",\"cause\":\"cause-2\",\"chart\":\"c1\",\"version\":\"1.0.0\",\"values\":[\"--set\",\"a=b\"]}]"
+fx "[{\"id\":\"zz-fix\",\"fixOf\":\"zz\",\"cause\":\"protocol\",\"chart\":\"c1\",\"version\":\"1.0.0\",\"values\":[\"--set\",\"a=b\"]}]"
 g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
 refuses "fixOf outside the frozen list" "not in the frozen chart list"
-fx "[{\"id\":\"r1-fix\",\"fixOf\":\"r1\",\"cause\":\"cause-2\",\"chart\":\"r1\",\"version\":\"1.0.0\",\"values\":[\"--set\",\"a=b\"]}]"
+fx "[{\"id\":\"r1-fix\",\"fixOf\":\"r1\",\"cause\":\"protocol\",\"chart\":\"r1\",\"version\":\"1.0.0\",\"values\":[\"--set\",\"a=b\"]}]"
 g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json GUARD_CHART_IDS="r1 r1-fix"
 passes "fixOf may name a reserve"
 fx "[{\"id\":\"c1-fix\",\"fixOf\":\"c1\",\"cause\":\"made-up\",\"chart\":\"c1\",\"version\":\"1.0.0\",\"repo\":\"https://example.test/1\",\"values\":[\"--set\",\"a=b\"]}]"
 g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
-refuses "cause outside causes.json" "not a key of causes.json"
+refuses "cause outside causes.json" "neither a key of causes.json"
 fx "[{\"id\":\"c1-fix\",\"fixOf\":\"c1\",\"chart\":\"c1\",\"version\":\"1.0.0\",\"repo\":\"https://example.test/1\",\"values\":[\"--set\",\"a=b\"]}]"
 g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
-refuses "missing cause" "not a key of causes.json"
+refuses "missing cause" "neither a key of causes.json"
 for bad in '/etc/passwd' 'hack/compat-exp/patches/../../go.mod' 'hack/compat-exp/frame/main.go' 'hack/compat-pilot/world.sh' 'hack/compat-exp/patches/x.sh'; do
   fx "[{\"id\":\"c1-fix\",$base,\"patch\":\"$bad\"}]"
   g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
@@ -311,7 +348,7 @@ refuses "values that run code" "values must be"
 fx "[{\"id\":\"c1-fix\",$base,\"values\":[\"--set\"]}]"
 g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
 refuses "odd values" "values must be"
-fx "[{\"id\":\"c1-fix\",\"fixOf\":\"c1\",\"cause\":\"cause-2\",\"chart\":\"c9\",\"version\":\"1.0.0\",\"values\":[\"--set\",\"a=b\"]}]"
+fx "[{\"id\":\"c1-fix\",\"fixOf\":\"c1\",\"cause\":\"protocol\",\"chart\":\"c9\",\"version\":\"1.0.0\",\"values\":[\"--set\",\"a=b\"]}]"
 g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
 refuses "a fix of another chart or version" "must equal those of c1"
 fx "[{\"id\":\"c1-fix\",$base}]"
@@ -342,16 +379,51 @@ fx "[{\"id\":\"c1-fix\",$base,\"values\":[\"--set\",\"a=b\"],\"cellWorlds\":[\"W
 g "$r2" certify GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json GUARD_FIX_ID=c1-fix
 refuses "ignore file outside ignore/" "ignore is not a file under"
 
-# causes.json shapes: an object with a causes array works too
-d="$tmp/causes-obj"
-cp -R "$r" "$d"
-rm -rf "$d/.git" && git -C "$d" init -q -b main
-jq '{causes: .}' "$r/hack/compat-exp/causes.json" >"$d/x" && mv "$d/x" "$d/hack/compat-exp/causes.json"
-git -C "$d" add -A && git -C "$d" commit -q -m i && git -C "$d" tag compat-exp-freeze
-printf '[{"id":"c1-fix","fixOf":"c1","cause":"cause-3","chart":"c1","version":"1.0.0","repo":"https://example.test/1","values":["--set","a=b"]}]' >"$d/hack/compat-exp/fixes/f.json"
-commit "$d" fixes
-g "$d" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
-passes "causes.json as {causes: [...]}"
+# causes.json: the real file passes (every test above runs on a copy of it); other shapes do not exist
+d="$tmp/causes-array"
+newrepo "$d"
+jq '.keys' "$d/hack/compat-exp/causes.json" >"$d/x" && mv "$d/x" "$d/hack/compat-exp/causes.json"
+commit "$d" "array shape"
+freeze "$d"
+mklist 3 "$d/hack/compat-exp/charts-exp.json"
+commit "$d" list
+g "$d" observe
+refuses "causes.json as a bare array is not read" "causes.json"
+d="$tmp/causes-wrapped"
+newrepo "$d"
+jq '{causes: .keys}' "$d/hack/compat-exp/causes.json" >"$d/x" && mv "$d/x" "$d/hack/compat-exp/causes.json"
+commit "$d" "causes wrapper"
+freeze "$d"
+mklist 3 "$d/hack/compat-exp/charts-exp.json"
+commit "$d" list
+g "$d" observe
+refuses "causes.json as {causes: [...]} is not read" "causes.json"
+
+# a fix entry's cause: a key of causes.json, or a new key with a complete record in the ledger
+mk_nk() { # JSON of the newKeys array
+  jq --argjson n "$1" '.newKeys = $n' "$r2/hack/compat-exp/ledger.json" >"$r2/x" && mv "$r2/x" "$r2/hack/compat-exp/ledger.json"
+  commit "$r2" "ledger newKeys"
+}
+nk_fix="[{\"id\":\"c1-fix\",\"fixOf\":\"c1\",\"cause\":\"brand-new\",\"chart\":\"c1\",\"version\":\"1.0.0\",\"repo\":\"https://example.test/1\",\"values\":[\"--set\",\"a=b\"]}]"
+fx "$nk_fix"
+g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
+refuses "a new key that is not in the ledger" "neither a key of causes.json nor a new key"
+full='{"key":"brand-new","anchor":"https://istio.io/x","certifiedFix":"c1-fix","reproduction":"hack/compat-exp/repro/x.sh","reviewer":{"verdict":"admit","run":"123"}}'
+mk_nk "[$full]"
+g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
+passes "a new key with a complete record in the ledger"
+for missing in anchor certifiedFix reproduction reviewer; do
+  mk_nk "[$(jq -c "del(.$missing)" <<<"$full")]"
+  g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
+  refuses "a new key without $missing" "neither a key of causes.json nor a new key"
+done
+mk_nk "[$(jq -c '.reviewer.verdict = "merge"' <<<"$full")]"
+g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
+refuses "a new key the reviewer did not admit" "neither a key of causes.json nor a new key"
+mk_nk "[$(jq -c '.reviewer.run = ""' <<<"$full")]"
+g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
+refuses "a new key whose reviewer run is empty" "neither a key of causes.json nor a new key"
+mk_nk '[]'
 
 if [[ $fails -ne 0 ]]; then echo "$fails failure(s)" >&2; exit 1; fi
 echo "all guard tests passed"

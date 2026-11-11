@@ -76,8 +76,9 @@ where the maintainer may want the other reading before the freeze.
 ## 12. S
 
 - Sentence: "flags every counted finding of its key and at most 10% of charts that were 'same' in that world".
-- Reading: the check id is the cause key, or the optional `staticCheck` field of its causes.json entry. For each world holding counted findings of the key: every counted cell is flagged, and flagged * 100 <= 10 * same, where same is the qualified charts whose world verdict is `same` in every given run. A world's wildcard `*` in the static file covers all worlds. A missing static result for a counted cell or a same chart stops with an error. Without a static file S is 0 and a warning says so. The 10% test is per world, not pooled; zero same charts passes.
-- Alternative: pool the worlds; treat missing results as not flagged.
+- Reading: the check id is the `staticCheck` of the key's causes.json entry (a key outside causes.json, a new key, uses its own name). A key whose `staticCheck` is null has no check and is never in S. For each world holding counted findings of the key: every counted cell is flagged, and flagged * 100 <= 10 * same, where same is the qualified charts whose world verdict is `same` in every given run. A missing static result for a counted cell or a same chart stops with an error. Without a static file S is 0 and a warning says so. The 10% test is per world, not pooled; zero same charts passes.
+- Not applicable: a check "applies" to a world when static.sh says so and, for a frozen key, the world is in the key's `worlds`. A counted finding in a world the check does not apply to is reported as `notApplicableFindings`, not as unflagged, and the key does not qualify (a check that cannot look at a world cannot flag a finding there; "flags every counted finding" is not met). That world has no 10% test (`notApplicable`), so no chart is counted as flagged or not flagged there. In practice a key's counted findings lie in its own worlds, so this fires only when a ledger credits a cell to a key outside its worlds.
+- Alternative: pool the worlds; treat missing results as not flagged; treat a finding outside the check's worlds as out of the key's scope instead of a miss.
 
 ## 13. N_max and P_max
 
@@ -103,7 +104,7 @@ where the maintainer may want the other reading before the freeze.
 
 ## 17. Frame input
 
-- Reading: the frame tool's output is not yet defined; crossrun reads a JSON list (or `{"charts": [...]}`) of `{id, publisher, qualified}`, `qualified` defaulting to true. Publisher is the frame's, per rule "Publisher". A chart in a report but not in the frame, or marked not qualified, stops the run. Reserves replaced in both runs are the frame's concern.
+- Reading: the frame is the frozen chart list select.sh writes (charts-exp.json): `charts` then `reserves`, each with `id`, `publisher` and `qualified` (select.sh takes the publisher from candidates.json and writes `qualified` true for every listed chart, since only qualified ones are listed). Publisher is the frame's, per rule "Publisher". A chart in a report but not in the frame, or marked not qualified, stops the run. Reserves replaced in both runs are the frame's concern.
 - Alternative: take publishers from the ledger only.
 
 ## 18. Rule 4 and rule 2 failures

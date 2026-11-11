@@ -119,7 +119,14 @@ func RenderMarkdown(r *Result) []byte {
 		for _, s := range r.Static {
 			var ws []string
 			for _, x := range s.Worlds {
+				if x.NotApplicable {
+					ws = append(ws, x.World+" check not applicable")
+					continue
+				}
 				ws = append(ws, fmt.Sprintf("%s %d of %d same flagged", x.World, x.FlaggedSame, x.SameCharts))
+			}
+			if s.NoCheck {
+				ws = append(ws, "no static check")
 			}
 			w("| %s | %s | %v | %s | %v |\n", s.Key, s.Check, s.FlagsAll, strings.Join(ws, "; "), s.Qualifies)
 		}

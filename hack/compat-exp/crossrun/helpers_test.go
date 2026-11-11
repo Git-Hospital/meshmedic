@@ -146,13 +146,29 @@ func newFixture(r1, r2 []ChartReport, pubs map[string]string) *fixture {
 	return &fixture{in}
 }
 
+// mustCauses is causes.json's shape with every key's static check named after
+// the key and applying in both mesh worlds, except bind-address (null, as in
+// the real file). The real file is read by TestRealCausesFile.
 func mustCauses() *ledger.Causes {
-	c, err := ledger.ParseCauses([]byte(`[{"key":"ambient-np"},{"key":"protocol"},{"key":"bind-address"},{"key":"uid-1337"},
-	{"key":"reserved-port"},{"key":"startup-order"},{"key":"job-lifecycle"},{"key":"apiserver-caller"},{"key":"ambient-l7"}]`))
+	var items []string
+	for _, k := range []string{"ambient-np", "protocol", "bind-address", "uid-1337", "reserved-port", "startup-order", "job-lifecycle", "apiserver-caller", "ambient-l7"} {
+		sc := `"` + k + `"`
+		if k == "bind-address" {
+			sc = "null"
+		}
+		items = append(items, `{"key":"`+k+`","worlds":["W1","W3"],"staticCheck":`+sc+`}`)
+	}
+	c, err := ledger.ParseCauses([]byte(`{"keys":[` + strings.Join(items, ",") + `]}`))
 	if err != nil {
 		panic(err)
 	}
 	return c
+}
+
+// stat is a static result row for an applicable check.
+func stat(chart, world, check string, flagged bool) StaticResult {
+	app := true
+	return StaticResult{Chart: chart, World: world, Check: check, Applicable: &app, Flagged: flagged}
 }
 
 // row is a counted ledger row consistent with fixEntry certificates in runs c1, c2.

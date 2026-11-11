@@ -7,7 +7,7 @@ import (
 )
 
 func TestRun(t *testing.T) {
-	causes := filepath.Join("..", "..", "testdata", "causes.json")
+	causes := filepath.Join("..", "..", "..", "causes.json")
 	dir := t.TempDir()
 	write := func(name, doc string) string {
 		p := filepath.Join(dir, name)

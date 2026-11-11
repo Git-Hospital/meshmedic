@@ -25,10 +25,10 @@ Output is deterministic: the same inputs give the same bytes.
 - `runs`: run 1, then run 2 once it exists (with run 1 only, cells wait for run 2 and the futility bound still works). `started` and `ended` are RFC 3339; the 12 h gap comes from them.
 - `report`: `difftable -json` output of one workflow run's records (hack/compat-exp/DIFFTABLE-JSON.md). Certification and recheck runs use the same shape; a certification report holds the fix entries with their `certificate`.
 - `records`: the observation records of that run (hack/compat-exp/RECORD.md); only `podMesh` is read, for c-optout evidence.
-- `causes`: hack/compat-exp/causes.json, a list of objects with `key` (or an object holding that list under `causes` or `keys`), in rank order; an optional `staticCheck` names the check id of a key.
+- `causes`: hack/compat-exp/causes.json, the real file: an object whose list is under `keys`, in rank order, each entry with `key`, `worlds` and `staticCheck` (a check id, or null for a key without a static check). No other shape is read.
 - `ledger`: hack/compat-exp/ledger.json; it must pass `ledger check`. See hack/compat-exp/ledger/README.md.
-- `frame` (defined here until the frame tool's output is fixed): `[{"id": chart id, "publisher": ..., "qualified": true}]` or `{"charts": [...]}`.
-- `static` (from the static-check tool): `[{"chart", "world", "check", "flagged"}]`; world `*` covers all worlds. Needed for S.
+- `frame`: the frozen chart list `charts-exp.json` that select.sh writes (`charts`, then `reserves`; each entry has `id`, `publisher` and `qualified`, which select.sh carries from candidates.json and the qualification records).
+- `static` (optional, written by hack/compat-exp/static.sh): `[{"chart", "world", "check", "applicable", "flagged"}]`, one row per chart, world and check. Needed for S. `applicable` false means the check does not apply to that world.
 
 ## Output
 

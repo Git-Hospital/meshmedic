@@ -263,7 +263,7 @@ func TestWorldUniversalCauseKey(t *testing.T) {
 			} else {
 				r = append(r, chart(n, wr("W3", ok(wk))))
 			}
-			st = append(st, StaticResult{Chart: n, World: "W3", Check: "protocol", Flagged: true})
+			st = append(st, stat(n, "W3", "protocol", true))
 		}
 		f := newFixture(r, r, nil)
 		f.in.Ledger.Rows = rows
@@ -523,10 +523,10 @@ func TestMetrics(t *testing.T) {
 func staticFixture(same, flaggedSame int, hitFlagged bool) *fixture {
 	r := []ChartReport{chart("hit", wr("W3", bad(wk)))}
 	var st []StaticResult
-	st = append(st, StaticResult{Chart: "hit", World: "W3", Check: "protocol", Flagged: hitFlagged})
+	st = append(st, stat("hit", "W3", "protocol", hitFlagged))
 	for i, n := range names(same, "s") {
 		r = append(r, chart(n, wr("W3", ok(wk))))
-		st = append(st, StaticResult{Chart: n, World: "W3", Check: "protocol", Flagged: i < flaggedSame})
+		st = append(st, stat(n, "W3", "protocol", i < flaggedSame))
 	}
 	f := newFixture(r, r, nil)
 	rw := row("hit", "W3", wk, "protocol", "gap")
@@ -585,24 +585,55 @@ func TestStaticCheckS(t *testing.T) {
 			t.Fatal(msg)
 		}
 	})
-	t.Run("a world wildcard covers every world", func(t *testing.T) {
+	t.Run("a check that does not apply to the world cannot flag the finding", func(t *testing.T) {
 		f := staticFixture(2, 0, true)
+		na := false
 		for i := range f.in.Static {
-			f.in.Static[i].World = "*"
+			f.in.Static[i].Applicable = &na
+			f.in.Static[i].Flagged = true // meaningless when not applicable
 		}
-		if res := f.analyze(t); res.Metrics.S != 1 {
-			t.Fatalf("%v", res.Metrics)
+		res := f.analyze(t)
+		if res.Metrics.S != 0 {
+			t.Fatalf("S %d: a check that does not apply to W3 cannot count in W3", res.Metrics.S)
+		}
+		sk := res.Static[0]
+		if len(sk.NotApplicable) != 1 || len(sk.Unflagged) != 0 || sk.FlagsAll || !sk.Worlds[0].NotApplicable {
+			t.Fatalf("not applicable is its own state, not unflagged: %+v", sk)
 		}
 	})
-	t.Run("causes.json can name another static check", func(t *testing.T) {
+	t.Run("causes.json worlds make a check not applicable even when the file says it applies", func(t *testing.T) {
 		f := staticFixture(2, 0, true)
-		c, _ := ledger.ParseCauses([]byte(`[{"key":"ambient-np"},{"key":"protocol","staticCheck":"proto-check"}]`))
+		c, _ := ledger.ParseCauses([]byte(`{"keys":[{"key":"ambient-np","worlds":["W3"],"staticCheck":"x"},{"key":"protocol","worlds":["W1"],"staticCheck":"protocol"}]}`))
 		f.in.Causes = c
-		for i := range f.in.Static {
-			f.in.Static[i].Check = "proto-check"
+		res := f.analyze(t)
+		if res.Metrics.S != 0 || len(res.Static[0].NotApplicable) != 1 {
+			t.Fatalf("%v %+v", res.Metrics, res.Static)
 		}
-		if res := f.analyze(t); res.Metrics.S != 1 {
-			t.Fatalf("%v", res.Metrics)
+	})
+	t.Run("not applicable same charts are not flagged same charts", func(t *testing.T) {
+		// the check applies in W3; only the 10% test counts flagged charts
+		f := staticFixture(10, 1, true)
+		if res := f.analyze(t); res.Metrics.S != 1 || res.Static[0].Worlds[0].FlaggedSame != 1 {
+			t.Fatalf("%v %+v", res.Metrics, res.Static)
+		}
+	})
+	t.Run("a key without a static check is never in S and needs no static rows", func(t *testing.T) {
+		r := []ChartReport{chart("h0", wr("W3", bad(wk)))}
+		for _, n := range names(10, "s") {
+			r = append(r, chart(n, wr("W3", ok(wk))))
+		}
+		f := newFixture(r, r, nil)
+		f.withCerts(row("h0", "W3", wk, "bind-address", "gap"))
+		f.in.Static, f.in.StaticGiven = []StaticResult{}, true
+		res := f.analyze(t)
+		var found bool
+		for _, sk := range res.Static {
+			if sk.Key == "bind-address" {
+				found = sk.NoCheck && !sk.Qualifies
+			}
+		}
+		if !found || res.Metrics.S != 0 {
+			t.Fatalf("%v %+v", res.Metrics, res.Static)
 		}
 	})
 	t.Run("without a static file S is 0 and says so", func(t *testing.T) {
@@ -620,7 +651,7 @@ func TestStaticCheckS(t *testing.T) {
 		for i, cause := range []string{"protocol", "uid-1337"} {
 			n := fmt.Sprintf("h%d", i)
 			r = append(r, chart(n, wr("W3", bad(wk))))
-			st = append(st, StaticResult{Chart: n, World: "W3", Check: cause, Flagged: true})
+			st = append(st, stat(n, "W3", cause, true))
 			rows = append(rows, row(n, "W3", wk, cause, "gap"))
 		}
 		f := newFixture(r, r, nil)

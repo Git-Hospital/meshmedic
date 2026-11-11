@@ -109,15 +109,20 @@ type Record struct {
 	PodMesh []PodMesh `json:"podMesh"`
 }
 
-// StaticResult is one row of the static-check input file.
+// StaticResult is one row of the static-check input file, which
+// hack/compat-exp/static.sh writes: one row per chart, world and check.
+// A check that does not apply to the world has Applicable false (and Flagged
+// false, which then means nothing).
 type StaticResult struct {
-	Chart   string `json:"chart"`
-	World   string `json:"world"`
-	Check   string `json:"check"`
-	Flagged bool   `json:"flagged"`
+	Chart      string `json:"chart"`
+	World      string `json:"world"`
+	Check      string `json:"check"`
+	Applicable *bool  `json:"applicable"`
+	Flagged    bool   `json:"flagged"`
 }
 
-// FrameChart is one chart of the frozen chart list.
+// FrameChart is one chart or reserve of the frozen chart list
+// (charts-exp.json, written by select.sh).
 type FrameChart struct {
 	ID        string `json:"id"`
 	Publisher string `json:"publisher"`
@@ -331,50 +336,52 @@ func LoadInputs(manifestPath string) (*Inputs, error) {
 		return nil, err
 	}
 	if m.Static != "" {
-		var wrap struct {
-			Results []StaticResult `json:"results"`
-		}
 		data, err := os.ReadFile(rel(m.Static))
 		if err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal(data, &in.Static); err != nil {
-			if err2 := json.Unmarshal(data, &wrap); err2 != nil {
-				return nil, fmt.Errorf("%s: %v", m.Static, err)
+		if err := strictDecode(data, &in.Static); err != nil {
+			return nil, fmt.Errorf("%s: %v (a list of chart, world, check, applicable, flagged, as static.sh writes it)", m.Static, err)
+		}
+		for i, s := range in.Static {
+			if s.Chart == "" || s.World == "" || s.Check == "" || s.Applicable == nil {
+				return nil, fmt.Errorf("%s: entry %d needs chart, world, check and applicable", m.Static, i+1)
 			}
-			in.Static = wrap.Results
 		}
 		in.StaticGiven = true
 	}
 	return in, nil
 }
 
+// loadFrame reads the frozen chart list select.sh writes (charts-exp.json):
+// `charts`, then `reserves`, each entry with id, publisher and qualified.
 func loadFrame(path string, in *Inputs) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	var list []FrameChart
-	if err := json.Unmarshal(data, &list); err != nil {
-		var wrap struct {
-			Charts []FrameChart `json:"charts"`
-		}
-		if err2 := json.Unmarshal(data, &wrap); err2 != nil {
-			return fmt.Errorf("%s: %v", path, err)
-		}
-		list = wrap.Charts
+	var doc struct {
+		Charts   []FrameChart `json:"charts"`
+		Reserves []FrameChart `json:"reserves"`
 	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("%s: %v (the frame is charts-exp.json: an object with charts and reserves)", path, err)
+	}
+	if len(doc.Charts) == 0 {
+		return fmt.Errorf("%s: no charts (the frame is charts-exp.json: an object with charts and reserves)", path)
+	}
+	list := append(append([]FrameChart{}, doc.Charts...), doc.Reserves...)
 	in.Publisher = map[string]string{}
 	in.Qualified = map[string]bool{}
 	for i, c := range list {
-		if c.ID == "" || c.Publisher == "" {
-			return fmt.Errorf("%s: entry %d needs id and publisher", path, i+1)
+		if c.ID == "" || c.Publisher == "" || c.Qualified == nil {
+			return fmt.Errorf("%s: entry %d needs id, publisher and qualified (select.sh writes all three)", path, i+1)
 		}
 		if _, dup := in.Publisher[c.ID]; dup {
 			return fmt.Errorf("%s: chart %q listed twice", path, c.ID)
 		}
 		in.Publisher[c.ID] = c.Publisher
-		in.Qualified[c.ID] = c.Qualified == nil || *c.Qualified
+		in.Qualified[c.ID] = *c.Qualified
 		in.FrameOrder = append(in.FrameOrder, c.ID)
 	}
 	return nil

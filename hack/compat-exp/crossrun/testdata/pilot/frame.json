@@ -2,43 +2,54 @@
   "charts": [
     {
       "id": "podinfo",
-      "publisher": "stefanprodan"
+      "publisher": "stefanprodan",
+      "qualified": true
     },
     {
       "id": "argo-cd",
-      "publisher": "argoproj"
+      "publisher": "argoproj",
+      "qualified": true
     },
     {
       "id": "prometheus-pushgateway",
-      "publisher": "prometheus-community"
+      "publisher": "prometheus-community",
+      "qualified": true
     },
     {
       "id": "kube-prometheus-stack",
-      "publisher": "prometheus-community"
+      "publisher": "prometheus-community",
+      "qualified": true
     },
     {
       "id": "redis",
-      "publisher": "bitnami"
+      "publisher": "bitnami",
+      "qualified": true
     },
     {
       "id": "rabbitmq",
-      "publisher": "bitnami"
+      "publisher": "bitnami",
+      "qualified": true
     },
     {
       "id": "cloudnative-pg",
-      "publisher": "cloudnative-pg"
+      "publisher": "cloudnative-pg",
+      "qualified": true
     },
     {
       "id": "nats",
-      "publisher": "nats-io"
+      "publisher": "nats-io",
+      "qualified": true
     },
     {
       "id": "grafana",
-      "publisher": "grafana-community"
+      "publisher": "grafana-community",
+      "qualified": true
     },
     {
       "id": "valkey",
-      "publisher": "valkey-io"
+      "publisher": "valkey-io",
+      "qualified": true
     }
-  ]
+  ],
+  "reserves": []
 }

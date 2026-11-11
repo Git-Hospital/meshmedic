@@ -17,6 +17,9 @@
 #   RECORDS_DIR      holds ID.qualify.json files written by qualify.sh
 #   OUT              charts-exp.json to write
 #
+# Entries carry the publisher (from candidates.json) and `qualified: true` (every
+# listed chart qualified), because crossrun reads this file as its frame.
+#
 # Chart ids follow `frame charts`: the package name, or <repository>-<name>
 # when two candidates share a name.
 #
@@ -72,13 +75,13 @@ sha() {
 # shellcheck disable=SC2016 # a jq program, not shell
 program='
   def share($n; $d): if $d == 0 then null else (($n / $d * 10000 | round) / 10000) end;
-  def entry: {id, chart, version, why, rank} + (if .repo then {repo} else {} end);
+  def entry: {id, chart, version, why, rank, publisher, qualified: true} + (if .repo then {repo} else {} end);
 
   ($cand[0].candidates) as $c
   | ($c | map(.package) | group_by(.) | map({key: .[0], value: length}) | from_entries) as $count
   | [$c[] | {
       id: (if $count[.package] > 1 then .repository + "-" + .package else .package end),
-      rank, repo: (.repo // null), chart, version,
+      rank, repo: (.repo // null), chart, version, publisher,
       why: ("Artifact Hub top 300 by stars, rank \(.rank), \(.stars) stars, publisher \(.publisher)")
     }] as $entries
   | ($recs[0] | map({key: .id, value: .}) | from_entries) as $r

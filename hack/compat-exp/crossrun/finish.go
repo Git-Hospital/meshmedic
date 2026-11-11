@@ -263,15 +263,28 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 
 // staticKey runs the S test for one key over its counted cells.
 func (a *analysis) staticKey(key string, cells []counted) StaticKey {
-	check := a.checkID(key)
+	check, hasCheck := a.checkID(key)
 	sk := StaticKey{Key: key, Check: check, FlagsAll: true, Qualifies: true, Worlds: []StaticWorld{}, CountedFor: []ledger.Cell{}}
 	worlds := map[string]bool{}
 	for _, c := range cells {
 		sk.CountedFor = append(sk.CountedFor, c.cell)
 		worlds[c.cell.World] = true
-		f, found := a.flagged(c.cell.Chart, c.cell.World, check)
+	}
+	sort.Slice(sk.CountedFor, func(i, j int) bool { return cellLess(sk.CountedFor[i], sk.CountedFor[j]) })
+	if !hasCheck {
+		sk.NoCheck, sk.FlagsAll, sk.Qualifies = true, false, false
+		return sk
+	}
+	naWorld := map[string]bool{}
+	for _, c := range cells {
+		f, app, found := a.staticRow(c.cell.Chart, c.cell.World, key, check)
 		if !found {
 			a.errf("static results lack check %q for %s/%s, which has a counted finding of key %s", check, c.cell.Chart, c.cell.World, key)
+			continue
+		}
+		if !app {
+			naWorld[c.cell.World] = true
+			sk.NotApplicable = append(sk.NotApplicable, c.cell)
 			continue
 		}
 		if !f {
@@ -279,9 +292,16 @@ func (a *analysis) staticKey(key string, cells []counted) StaticKey {
 			sk.Unflagged = append(sk.Unflagged, c.cell)
 		}
 	}
-	sort.Slice(sk.CountedFor, func(i, j int) bool { return cellLess(sk.CountedFor[i], sk.CountedFor[j]) })
+	if len(sk.NotApplicable) > 0 {
+		sk.FlagsAll = false
+	}
 	for _, w := range sortedKeys(worlds) {
 		sw := StaticWorld{World: w}
+		if naWorld[w] {
+			sw.NotApplicable = true
+			sk.Worlds = append(sk.Worlds, sw)
+			continue
+		}
 		for _, ch := range a.qualifiedCharts() {
 			same := true
 			for _, v := range a.views {
@@ -293,9 +313,13 @@ func (a *analysis) staticKey(key string, cells []counted) StaticKey {
 				continue
 			}
 			sw.SameCharts++
-			f, found := a.flagged(ch, w, check)
+			f, app, found := a.staticRow(ch, w, key, check)
 			if !found {
 				a.errf("static results lack check %q for %s/%s, a chart that was same in %s", check, ch, w, w)
+				continue
+			}
+			if !app {
+				a.errf("static results say check %q does not apply to %s for chart %s, but applies for a counted finding there", check, w, ch)
 				continue
 			}
 			if f {

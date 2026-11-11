@@ -10,7 +10,7 @@ import (
 
 func testCauses(t *testing.T) *Causes {
 	t.Helper()
-	c, err := LoadCauses(filepath.Join("testdata", "causes.json"))
+	c, err := LoadCauses(filepath.Join("..", "causes.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,12 +225,13 @@ func TestParseCauses(t *testing.T) {
 		want      []string
 		err       string
 	}{
-		{"array", `[{"key":"a"},{"key":"b","staticCheck":"sb"}]`, []string{"a", "b"}, ""},
-		{"causes wrapper", `{"causes":[{"key":"a"}]}`, []string{"a"}, ""},
-		{"keys wrapper", `{"keys":[{"key":"z"},{"key":"a"}]}`, []string{"z", "a"}, ""},
-		{"duplicate", `[{"key":"a"},{"key":"a"}]`, nil, "repeated"},
-		{"empty key", `[{"key":""}]`, nil, "no key"},
-		{"empty", `[]`, nil, "no keys"},
+		{"keys", `{"keys":[{"key":"z","worlds":["W1"]},{"key":"a","worlds":["W3"],"staticCheck":"sa"}]}`, []string{"z", "a"}, ""},
+		{"a bare array is not the file's shape", `[{"key":"a","worlds":["W1"]}]`, nil, "list under keys"},
+		{"a causes wrapper is not the file's shape", `{"causes":[{"key":"a","worlds":["W1"]}]}`, nil, "no keys"},
+		{"duplicate", `{"keys":[{"key":"a","worlds":["W1"]},{"key":"a","worlds":["W1"]}]}`, nil, "repeated"},
+		{"empty key", `{"keys":[{"key":"","worlds":["W1"]}]}`, nil, "no key"},
+		{"no worlds", `{"keys":[{"key":"a"}]}`, nil, "no worlds"},
+		{"empty", `{"keys":[]}`, nil, "no keys"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -249,9 +250,26 @@ func TestParseCauses(t *testing.T) {
 			}
 		})
 	}
-	c, _ := ParseCauses([]byte(`[{"key":"a"},{"key":"b","staticCheck":"sb"}]`))
-	if c.Static["a"] != "a" || c.Static["b"] != "sb" {
+	c, _ := ParseCauses([]byte(`{"keys":[{"key":"a","worlds":["W1"],"staticCheck":null},{"key":"b","worlds":["W1","W3"],"staticCheck":"sb"}]}`))
+	if _, has := c.Static["a"]; has || c.Static["b"] != "sb" {
 		t.Fatalf("static checks %v", c.Static)
+	}
+	if len(c.Worlds["b"]) != 2 {
+		t.Fatalf("worlds %v", c.Worlds)
+	}
+}
+
+// TestRealCauses reads the committed causes.json, the contract of every tool.
+func TestRealCauses(t *testing.T) {
+	c := testCauses(t)
+	if len(c.Keys) != 9 || c.Keys[0] != "ambient-np" {
+		t.Fatalf("keys %v", c.Keys)
+	}
+	if c.Static["ambient-np"] != "np-hbone-probe" || len(c.Worlds["ambient-np"]) != 1 || c.Worlds["ambient-np"][0] != "W3" {
+		t.Fatalf("ambient-np: %q %v", c.Static["ambient-np"], c.Worlds["ambient-np"])
+	}
+	if _, has := c.Static["bind-address"]; has {
+		t.Fatal("bind-address has staticCheck null, so no check")
 	}
 }
 

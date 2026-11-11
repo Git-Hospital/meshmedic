@@ -129,6 +129,13 @@ type StaticKey struct {
 	Qualifies  bool          `json:"qualifies"`
 	Unflagged  []ledger.Cell `json:"unflaggedFindings,omitempty"`
 	CountedFor []ledger.Cell `json:"countedCells"`
+	// NoCheck: the key has no static check (staticCheck null in causes.json),
+	// so it cannot be in S.
+	NoCheck bool `json:"noStaticCheck,omitempty"`
+	// NotApplicable lists counted findings in a world the check does not apply
+	// to. A check that cannot look at a world cannot flag a finding there, so
+	// the key does not qualify (and the cell is not reported as "not flagged").
+	NotApplicable []ledger.Cell `json:"notApplicableFindings,omitempty"`
 }
 
 // StaticWorld is the 10% test in one world.
@@ -137,6 +144,9 @@ type StaticWorld struct {
 	SameCharts  int    `json:"chartsSame"`
 	FlaggedSame int    `json:"flaggedOfThose"`
 	Ok          bool   `json:"atMostTenPercent"`
+	// NotApplicable: the check does not apply to this world, so there is no
+	// 10% test to run (and no "same" chart is counted as not flagged).
+	NotApplicable bool `json:"notApplicable,omitempty"`
 }
 
 // Futility is section 7's bound test.
@@ -653,31 +663,41 @@ func (c *CellResult) classKey() string {
 	return c.Class
 }
 
-func (a *analysis) checkID(key string) string {
-	if id, ok := a.in.Causes.Static[key]; ok {
-		return id
+// checkID is the id of the key's static check. ok is false for a frozen key
+// whose causes.json entry has staticCheck null. A key outside causes.json (a
+// new key) uses its own name as the check id.
+func (a *analysis) checkID(key string) (id string, ok bool) {
+	if a.in.Causes.Has(key) {
+		id, ok = a.in.Causes.Static[key]
+		return id, ok
 	}
-	return key
+	return key, true
 }
 
-func (a *analysis) flagged(chart, world, check string) (flagged, found bool) {
-	var wild *StaticResult
+// staticRow finds the static result for a chart, world and check. applicable
+// is the file's flag and, for a frozen key, also the key's `worlds` in
+// causes.json.
+func (a *analysis) staticRow(chart, world, key, check string) (flagged, applicable, found bool) {
 	for i := range a.in.Static {
 		s := &a.in.Static[i]
-		if s.Chart != chart || s.Check != check {
-			continue
-		}
-		if s.World == world {
-			return s.Flagged, true
-		}
-		if s.World == "*" {
-			wild = s
+		if s.Chart == chart && s.World == world && s.Check == check {
+			applicable = *s.Applicable
+			if a.in.Causes.Has(key) && !contains(a.in.Causes.Worlds[key], world) {
+				applicable = false
+			}
+			return s.Flagged && applicable, applicable, true
 		}
 	}
-	if wild != nil {
-		return wild.Flagged, true
+	return false, false, false
+}
+
+func contains(l []string, s string) bool {
+	for _, x := range l {
+		if x == s {
+			return true
+		}
 	}
-	return false, false
+	return false
 }
 
 // credit applies rule 3 to one ledger row: the cause itself, or, when the row
@@ -804,15 +824,6 @@ func (a *analysis) assignStatus() {
 			}
 		}
 	}
-}
-
-func contains(list []string, s string) bool {
-	for _, x := range list {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 func dedupe(l []string) []string {

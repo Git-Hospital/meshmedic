@@ -40,7 +40,8 @@
 #     touched it. In qualify mode the list is the candidate list, which must be
 #     identical to the tag's.
 #  5. Every fix entry: fixOf names a chart in the frozen list (charts and
-#     reserves), its cause is a key of causes.json, it pins the same chart,
+#     reserves), its cause is a key of causes.json or a new key with a complete
+#     record in ledger.json, it pins the same chart,
 #     version and repo, its values are --set/--set-string/--set-json pairs only
 #     (no flag that runs code, such as --post-renderer), its patch is a file under
 #     hack/compat-exp/patches/, its cellWorlds (certify) are mesh worlds and its
@@ -139,31 +140,42 @@ fi
 
 # --- 3. the freeze -----------------------------------------------------------------------
 
-# Paths whose bytes must equal the tag's. A path missing in both is fine, so the
-# tools that are built elsewhere (staticcheck, ledger, crossrun) are checked as
-# soon as they exist.
+# Paths whose bytes must equal the tag's: the whole instrument (docs/compat-experiment.md
+# section 5). Data stays outside it: ledger.json, patches/, fix entries (fixes/, ignore/) and
+# the frozen chart list, which has its own rule below (one commit since the tag).
 frozen=(
   hack/compat-exp/frame
+  hack/compat-exp/frame/exclusions.json
   hack/compat-exp/qualify.sh
   hack/compat-exp/select.sh
+  hack/compat-exp/static.sh
+  hack/compat-exp/analyze.sh
   hack/compat-exp/guard.sh
   hack/compat-exp/causes.json
+  hack/compat-exp/classification-prompt.md
   hack/compat-exp/staticcheck
   hack/compat-exp/ledger
   hack/compat-exp/crossrun
   hack/compat-exp/candidates.json
   hack/compat-exp/candidates-charts.json
   hack/compat-pilot/observe.sh
+  hack/compat-pilot/render-args.sh
   hack/compat-pilot/world.sh
   hack/compat-pilot/difftable
   .github/workflows/compat-exp.yml
+  docs/compat-experiment.md
   go.mod
   go.sum
 )
+# Must exist in the tag, or the freeze is incomplete. candidates.json and
+# candidates-charts.json are checked where they are used (qualify mode).
 required_at_tag=(
-  hack/compat-exp/frame hack/compat-exp/qualify.sh hack/compat-exp/select.sh hack/compat-exp/guard.sh
-  hack/compat-exp/causes.json hack/compat-pilot/observe.sh hack/compat-pilot/world.sh
-  hack/compat-pilot/difftable .github/workflows/compat-exp.yml
+  hack/compat-exp/frame hack/compat-exp/frame/exclusions.json
+  hack/compat-exp/qualify.sh hack/compat-exp/select.sh hack/compat-exp/static.sh hack/compat-exp/analyze.sh
+  hack/compat-exp/guard.sh hack/compat-exp/causes.json hack/compat-exp/classification-prompt.md
+  hack/compat-exp/staticcheck hack/compat-exp/ledger hack/compat-exp/crossrun
+  hack/compat-pilot/observe.sh hack/compat-pilot/render-args.sh hack/compat-pilot/world.sh hack/compat-pilot/difftable
+  .github/workflows/compat-exp.yml docs/compat-experiment.md
 )
 
 if [[ "$mode" != acceptance ]]; then
@@ -218,9 +230,27 @@ esac
 
 causes=
 if [[ -f "$root/hack/compat-exp/causes.json" ]]; then
-  causes="$(jq -c 'if type == "array" then . elif has("causes") then .causes else [.[]] end | [.[] | objects | .key | strings]' \
-    "$root/hack/compat-exp/causes.json" 2>/dev/null)" || die "causes.json is not readable"
+  # The real shape (hack/compat-exp/causes.json): an object whose list is under
+  # `keys`, each entry with a string `key`. No other shape is read.
+  causes="$(jq -c '.keys | map(.key | strings)' "$root/hack/compat-exp/causes.json" 2>/dev/null)" ||
+    die "causes.json is not readable: it must be an object with a list under keys"
   [[ "$(jq length <<<"$causes")" -gt 0 ]] || die "causes.json holds no cause keys"
+  # A fix entry's cause may also be a new key recorded in the ledger with a
+  # complete new-key record (section 3 "New key"; ledger/ledger.go NewKey): an
+  # anchor, a certified fix, a reproduction and an admitting reviewer verdict
+  # with its run. `ledger check` (the guard job, certify and recheck) is the
+  # full check; this is the part a fix entry's cause needs.
+  if [[ -f "$root/hack/compat-exp/ledger.json" ]]; then
+    # shellcheck disable=SC2016 # a jq program, not shell
+    newkeys="$(jq -c --argjson base "$causes" '[.newKeys[]? | .key as $k
+        | select(($k | type == "string") and ($k != "") and (($base | index($k)) == null)
+            and ((.anchor // "") | gsub("\\s"; "") | length > 0)
+            and ((.certifiedFix // "") | gsub("\\s"; "") | length > 0)
+            and ((.reproduction // "") | gsub("\\s"; "") | length > 0)
+            and (.reviewer.verdict == "admit") and ((.reviewer.run // "") != ""))
+        | .key]' "$root/hack/compat-exp/ledger.json" 2>/dev/null)" || die "hack/compat-exp/ledger.json is not readable"
+    causes="$(jq -c -n --argjson a "$causes" --argjson b "$newkeys" '$a + $b')"
+  fi
 elif [[ "$mode" != acceptance ]]; then
   die "hack/compat-exp/causes.json is missing"
 fi
@@ -263,7 +293,7 @@ problems="$(jq -rn --argjson base "$entries_json" --argjson fixes "$fixes_json" 
     ($fixes[] | . as $f
        | common($f),
          (if ($ids | index($f.fixOf)) == null then "\($f.id): fixOf \($f.fixOf) is not in the frozen chart list" else empty end),
-         (if $causes != null and (($causes | index($f.cause)) == null) then "\($f.id): cause \($f.cause) is not a key of causes.json" else empty end),
+         (if $causes != null and (($causes | index($f.cause)) == null) then "\($f.id): cause \($f.cause) is neither a key of causes.json nor a new key recorded completely in ledger.json" else empty end),
          (($base[] | select(.id == $f.fixOf)) as $b
             | if $b.chart != $f.chart or $b.version != $f.version or ($b.repo // "") != ($f.repo // "")
               then "\($f.id): chart, version and repo must equal those of \($f.fixOf)" else empty end),

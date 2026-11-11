@@ -147,9 +147,9 @@ func TestCLIExitCodes(t *testing.T) {
 		}
 	}
 	_ = os.WriteFile(filepath.Join(tmp, "ledger.json"), []byte(bad), 0o644)
-	causes, _ := filepath.Abs(filepath.Join("testdata", "causes.json"))
+	causes, _ := filepath.Abs(filepath.Join("..", "causes.json"))
 	man, _ := os.ReadFile(filepath.Join(dir, "inputs.json"))
-	_ = os.WriteFile(filepath.Join(tmp, "inputs.json"), []byte(strings.Replace(string(man), "../causes.json", causes, 1)), 0o644)
+	_ = os.WriteFile(filepath.Join(tmp, "inputs.json"), []byte(strings.Replace(string(man), "../../../causes.json", causes, 1)), 0o644)
 	if code := run([]string{"-inputs", filepath.Join(tmp, "inputs.json")}, devnull, devnull); code != 1 {
 		t.Fatalf("disagreement: %d", code)
 	}

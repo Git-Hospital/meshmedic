@@ -204,15 +204,14 @@ func Parse(data []byte) (*File, error) {
 // Causes is the frozen cause list, in rank order.
 type Causes struct {
 	Keys []string
-	// Static maps a cause key to the id of its static check; the key itself
-	// when causes.json names no other.
+	// Static maps a cause key to the id of its static check. A key whose
+	// causes.json entry has staticCheck null has no entry.
 	Static map[string]string
+	// Worlds maps a cause key to the mesh worlds it applies to.
+	Worlds map[string][]string
 }
 
-// LoadCauses reads hack/compat-exp/causes.json. The file may be a JSON array
-// of objects with a `key` field, or an object holding that array under
-// `causes` or `keys`. Other fields are ignored, except an optional string
-// `staticCheck` (see hack/compat-exp/crossrun/INTERPRETATIONS.md).
+// LoadCauses reads hack/compat-exp/causes.json.
 func LoadCauses(path string) (*Causes, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -221,45 +220,42 @@ func LoadCauses(path string) (*Causes, error) {
 	return ParseCauses(data)
 }
 
-// ParseCauses is LoadCauses on bytes.
+// ParseCauses is LoadCauses on bytes. The one shape is the real file's: an
+// object whose list is under `keys`, each entry with `key`, `worlds` and
+// `staticCheck` (a check id, or null for a key without a static check). Other
+// fields are ignored.
 func ParseCauses(data []byte) (*Causes, error) {
-	type item struct {
-		Key         string `json:"key"`
-		StaticCheck string `json:"staticCheck"`
+	var doc struct {
+		Keys []struct {
+			Key         string   `json:"key"`
+			Worlds      []string `json:"worlds"`
+			StaticCheck *string  `json:"staticCheck"`
+		} `json:"keys"`
 	}
-	var list []item
-	if err := json.Unmarshal(data, &list); err != nil {
-		var wrap struct {
-			Causes []item `json:"causes"`
-			Keys   []item `json:"keys"`
-		}
-		if err2 := json.Unmarshal(data, &wrap); err2 != nil {
-			return nil, fmt.Errorf("causes: %v", err)
-		}
-		list = wrap.Causes
-		if len(list) == 0 {
-			list = wrap.Keys
-		}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("causes: %v (the file is an object with a list under keys)", err)
 	}
-	if len(list) == 0 {
+	if len(doc.Keys) == 0 {
 		return nil, fmt.Errorf("causes: no keys found")
 	}
-	c := &Causes{Static: map[string]string{}}
+	c := &Causes{Static: map[string]string{}, Worlds: map[string][]string{}}
 	seen := map[string]bool{}
-	for i, it := range list {
+	for i, it := range doc.Keys {
 		if it.Key == "" {
 			return nil, fmt.Errorf("causes: entry %d has no key", i+1)
 		}
 		if seen[it.Key] {
 			return nil, fmt.Errorf("causes: key %q repeated", it.Key)
 		}
+		if len(it.Worlds) == 0 {
+			return nil, fmt.Errorf("causes: key %q has no worlds", it.Key)
+		}
 		seen[it.Key] = true
 		c.Keys = append(c.Keys, it.Key)
-		sc := it.StaticCheck
-		if sc == "" {
-			sc = it.Key
+		c.Worlds[it.Key] = it.Worlds
+		if it.StaticCheck != nil && *it.StaticCheck != "" {
+			c.Static[it.Key] = *it.StaticCheck
 		}
-		c.Static[it.Key] = sc
 	}
 	return c, nil
 }

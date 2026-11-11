@@ -32,7 +32,7 @@
     "report": "run2.report.json",
     "istio": "1.31.3"
   },
-  "causes": "../causes.json",
+  "causes": "../../../causes.json",
   "ledger": "ledger.json",
   "frame": "frame.json"
 }
