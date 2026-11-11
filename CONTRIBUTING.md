@@ -146,10 +146,15 @@ running until it is re-validated and re-approved.
 Everything CI runs, in the order it runs it:
 
 ```console
-$ go build ./... && go vet ./... && go test ./...
+$ test -z "$(gofmt -l .)" || gofmt -l .
+$ go build ./... && go vet ./... && go test -race ./...
 $ go run ./cmd/meshmedic validate
 $ go run ./cmd/meshmedic validate --no-drift
 ```
+
+`make all` runs the same steps, and `make fmt-check` alone lists the files
+gofmt would change. The race detector needs cgo, so a machine without a C
+compiler can run `go test ./...` and leave `-race` to CI.
 
 The last one is the gate that fails when an approved entry was edited, or when
 an entry was removed without its approval being retired. Go 1.21 or newer.
