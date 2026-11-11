@@ -8,7 +8,8 @@ import (
 )
 
 // checkCoverage returns one message per broken promise: a catalog entry with
-// neither a proof nor a declaration, or a reference to an id the catalog does
+// neither a proof nor a declaration, an entry with both (it cannot be proven
+// and unprovable at once), or a reference to an id the catalog does
 // not have. The inventory "N proven, M declared unprovable, zero silently
 // missing" is only true while this returns nothing.
 func checkCoverage(ids map[string]bool, specs []Spec, unprovable map[string]string) []string {
@@ -33,6 +34,9 @@ func checkCoverage(ids map[string]bool, specs []Spec, unprovable map[string]stri
 	for id := range unprovable {
 		if !ids[id] {
 			out = append(out, "UNPROVABLE.yaml names entry missing from the catalog: "+id)
+		}
+		if proven[id] {
+			out = append(out, "entry has both a proof and an UNPROVABLE declaration: "+id)
 		}
 	}
 	for id := range ids {
@@ -61,6 +65,7 @@ func TestCheckCoverage(t *testing.T) {
 		{"proof for removed entry", []Spec{spec("a", nil, nil), spec("b", nil, nil), spec("gone", nil, nil)}, nil, 1},
 		{"quiet names missing", []Spec{spec("a", []string{"gone"}, nil), spec("b", nil, nil)}, nil, 1},
 		{"allowFiring names missing", []Spec{spec("a", nil, []string{"gone"}), spec("b", nil, nil)}, nil, 1},
+		{"proven and declared unprovable", []Spec{spec("a", nil, nil), spec("b", nil, nil)}, map[string]string{"b": "r"}, 1},
 		{"declaration for removed entry", []Spec{spec("a", nil, nil), spec("b", nil, nil)}, map[string]string{"gone": "r"}, 1},
 	}
 	for _, c := range cases {
