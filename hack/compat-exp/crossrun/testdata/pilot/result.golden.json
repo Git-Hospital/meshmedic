@@ -535,6 +535,17 @@
     "undecidedCells": 0,
     "cells": 10,
     "overFifteenPercent": false,
+    "drivesTheStop": "cells",
+    "cellsReading": {
+      "undecided": 0,
+      "of": 10,
+      "overFifteenPercent": false
+    },
+    "chartWorldsReading": {
+      "undecided": 0,
+      "of": 20,
+      "overFifteenPercent": false
+    },
     "note": "the stop applies after one rerun; crossrun reports the share of this input only"
   },
   "unresolved": null,

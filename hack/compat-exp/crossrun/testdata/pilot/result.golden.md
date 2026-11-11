@@ -31,7 +31,11 @@ N_max 0, P_max 0 (0 cells neither credited nor excluded, 0 new publishers among 
 
 Region A is unreachable: prevalence certificates are skipped.
 
-Undecided cells: 0 of 10 (not over the 15% stop).
+Undecided share (the 15% stop, section 7), under both readings:
+
+- cells reading: 0 of 10 undecided cells over all cells (not over 15%)
+- chart-worlds reading: 0 of 20 undecided chart-worlds over compared chart-worlds (not over 15%)
+- drives the stop: cells (the constant UndecidedStop in analyze.go)
 
 ## ambient-np prevalence
 

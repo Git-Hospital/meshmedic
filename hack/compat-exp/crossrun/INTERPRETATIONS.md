@@ -96,7 +96,8 @@ where the maintainer may want the other reading before the freeze.
 ## 14. The undecided share
 
 - Sentence: "Over 15% of cells undecided after one rerun".
-- Reading: undecided cells (primary reason undecided) over all cells listed in the result (including excluded and not-reproduced ones); over means strictly more than 15%; 3 of 20 is not over. "After one rerun" is a procedure, not an input: crossrun reports the share of the reports it is given.
+- Ambiguity: "cells" can mean the cells of the result, or the chart-worlds the instrument compares.
+- Reading: both are computed and printed, labelled. Cells reading: undecided cells (primary reason undecided) over all cells listed in the result (including excluded and not-reproduced ones). Chart-worlds reading: chart-worlds with an `undecided` verdict in any run over the chart-worlds of the sample compared in every run (W1 and W3 per chart). Over means strictly more than 15% in either reading; 3 of 20 is not over. Which reading drives `overFifteenPercent` (the stop) is one named constant, `UndecidedStop` in analyze.go, set to the cells reading as first implemented; the output names it (`drivesTheStop`). The maintainer chooses. "After one rerun" is a procedure, not an input: crossrun reports the share of the reports it is given.
 - Alternative: count pull-failure and capacity cells as undecided too, or use findings only as the denominator.
 
 ## 15. "The region they would reach if all counted"
@@ -127,3 +128,11 @@ where the maintainer may want the other reading before the freeze.
 - Sentence: section 3, "a fresh reviewer ... checks all three and that no existing key covers it; a tie merges".
 - Reading: the ledger's new-key reviewer verdict is `admit`, `merge` or `reject`; only `admit` passes the check. The order of `newKeys` is the rank among new keys.
 - Alternative: reuse agree, disagree-type, disagree-other, which do not fit.
+
+## 20. P_D leaves out ambient-np
+
+- Sentence: section 1, "P_D: publishers with a counted defect finding"; "`ambient-np` charts found again are reported as prevalence, never in N_new, P_new, D or S".
+- Ambiguity: the second sentence lists N_new, P_new, D and S but not P_D.
+- Reading: the code leaves ambient-np findings out of P_D as well (they are skipped before any metric is computed, in `metricsOf`), so a publisher whose only counted defect finding is ambient-np is not a P_D publisher. The list in section 1 omits P_D by oversight; leaving it out is the only reading under which pilot 1's class cannot supply the "beyond pilot 1" the experiment asks for.
+- Alternative: count ambient-np defect findings toward P_D, which would let a sibling of pilot 1's class lift region A.
+

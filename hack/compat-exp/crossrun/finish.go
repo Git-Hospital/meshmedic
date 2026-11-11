@@ -168,9 +168,32 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 	f.PrevalenceCertificatesOff = !contains(f.Reachable, "A")
 	res.Futility = f
 
-	// undecided share
-	res.Undecided = UndecidedShare{Undecided: undecided, Cells: len(a.cells),
-		Over:        undecided*100 > UndecidedPercent*len(a.cells),
+	// undecided share, under both readings; UndecidedStop picks the one that
+	// drives the stop
+	cwCompared, cwUndecided := 0, 0
+	for _, id := range a.sample.Active {
+		for _, w := range requiredWorlds {
+			cw := chartWorld{id, w}
+			if !a.compared(id, w) {
+				continue
+			}
+			cwCompared++
+			for _, v := range a.views {
+				if v.verdict[cw] == "undecided" {
+					cwUndecided++
+					break
+				}
+			}
+		}
+	}
+	byCells := Share{Undecided: undecided, Of: len(a.cells), Over: undecided*100 > UndecidedPercent*len(a.cells)}
+	byCW := Share{Undecided: cwUndecided, Of: cwCompared, Over: cwUndecided*100 > UndecidedPercent*cwCompared}
+	driver := byCells
+	if UndecidedStop == ReadingChartWorlds {
+		driver = byCW
+	}
+	res.Undecided = UndecidedShare{Undecided: undecided, Cells: len(a.cells), Over: driver.Over, Drives: UndecidedStop,
+		ByCells: byCells, ByChartWorlds: byCW,
 		NoteAfterRR: "the stop applies after one rerun; crossrun reports the share of this input only"}
 
 	// if all open cells counted

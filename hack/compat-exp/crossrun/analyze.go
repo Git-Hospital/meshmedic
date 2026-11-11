@@ -164,12 +164,38 @@ type Futility struct {
 	PrevalenceCertificatesOff bool     `json:"prevalenceCertificatesSkipped"`
 }
 
+// The two readings of "over 15% of cells undecided" (section 7), see
+// INTERPRETATIONS.md 14.
+const (
+	ReadingCells       = "cells"
+	ReadingChartWorlds = "chart-worlds"
+)
+
+// UndecidedStop names the reading that drives the stop. The maintainer chooses;
+// both readings are always reported.
+const UndecidedStop = ReadingCells
+
+// Share is one reading of the undecided share.
+type Share struct {
+	Undecided int  `json:"undecided"`
+	Of        int  `json:"of"`
+	Over      bool `json:"overFifteenPercent"`
+}
+
 // UndecidedShare is the 15% stop.
 type UndecidedShare struct {
-	Undecided   int    `json:"undecidedCells"`
-	Cells       int    `json:"cells"`
-	Over        bool   `json:"overFifteenPercent"`
-	NoteAfterRR string `json:"note"`
+	// Undecided, Cells and Over are the cell reading (undecided cells over all
+	// cells), kept under their first names.
+	Undecided int  `json:"undecidedCells"`
+	Cells     int  `json:"cells"`
+	Over      bool `json:"overFifteenPercent"`
+	// Drives is the reading Over is taken from: the constant UndecidedStop.
+	Drives string `json:"drivesTheStop"`
+	// ByCells is undecided cells over all cells. ByChartWorlds is undecided
+	// chart-worlds over compared chart-worlds.
+	ByCells       Share  `json:"cellsReading"`
+	ByChartWorlds Share  `json:"chartWorldsReading"`
+	NoteAfterRR   string `json:"note"`
 }
 
 // Hypothetical is the region if all open cells counted.

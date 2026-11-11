@@ -77,7 +77,10 @@ func RenderMarkdown(r *Result) []byte {
 		w("\nRegion A is unreachable: prevalence certificates are skipped.\n")
 	}
 	u := r.Undecided
-	w("\nUndecided cells: %d of %d (%s the 15%% stop).\n\n", u.Undecided, u.Cells, okWord(!u.Over, "not over", "OVER"))
+	w("\nUndecided share (the 15%% stop, section 7), under both readings:\n\n")
+	w("- cells reading: %d of %d undecided cells over all cells (%s 15%%)\n", u.ByCells.Undecided, u.ByCells.Of, okWord(!u.ByCells.Over, "not over", "OVER"))
+	w("- chart-worlds reading: %d of %d undecided chart-worlds over compared chart-worlds (%s 15%%)\n", u.ByChartWorlds.Undecided, u.ByChartWorlds.Of, okWord(!u.ByChartWorlds.Over, "not over", "OVER"))
+	w("- drives the stop: %s (the constant UndecidedStop in analyze.go)\n\n", u.Drives)
 
 	w("## ambient-np prevalence\n\n%d counted cell(s) in %d chart(s): %s.\n\n", r.Prevalence.Cells, len(r.Prevalence.Charts), joinOrNone(r.Prevalence.Charts))
 

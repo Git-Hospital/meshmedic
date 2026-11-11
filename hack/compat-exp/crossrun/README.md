@@ -40,7 +40,7 @@ excluded, unexplained, unresolved, not-reproduced, awaiting-run-2), credit,
 type and exclusion reasons; the world-universal numerators and denominators;
 c-optout evidence from podMesh; ambient-np prevalence; the five metrics, the
 static-check detail, the region with the first-match trace; N_max, P_max, the
-reachable regions, the stop flags; the undecided share against 15%; the open
+reachable regions, the stop flags; the undecided share against 15% under both readings (cells; chart-worlds), with the constant that picks the one driving the stop; the open
 cells and the region they would reach if all counted.
 
 How far c-optout is mechanised: the ledger row names the failing callers
