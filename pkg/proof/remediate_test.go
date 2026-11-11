@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Git-Hospital/meshmedic/pkg/catalog"
+	"github.com/Git-Hospital/meshmedic/pkg/detect"
 )
 
 // remediableEntry is an entry that proposes a patch, so there is something to
@@ -36,12 +37,14 @@ func remediationSpec(entry string) Spec {
 		Summary:     "a fault and the fix it proposes",
 		Target:      map[string]string{"namespace": "demo"},
 		Inject:      []Command{{Run: []string{"kubectl", "--context=kind-test", "set", "env", "x"}}},
-		Reset:       []Command{{Run: []string{"kubectl", "reset-fault"}}},
+		Reset:       []Command{{Run: []string{"kubectl", "--context=kind-test", "reset-fault"}}},
 		FiresWithin: Duration(time.Minute),
 		Expect:      Expect{Names: []string{"x"}},
 		Remediation: &RemediationCheck{
-			ClearsWithin: Duration(time.Minute),
-			Revert:       []Command{{Run: []string{"kubectl", "delete", "the-patch"}}},
+			// Room for the signal to fall and then hold clear for the
+			// sustain, which is three polls for an entry with no hold.
+			ClearsWithin: Duration(2 * time.Minute),
+			Revert:       []Command{{Run: []string{"kubectl", "--context=kind-test", "delete", "the-patch"}}},
 		},
 	}
 }
@@ -71,7 +74,7 @@ func (rec *recorder) execInput(_ context.Context, argv []string, stdin string) e
 	return nil
 }
 
-func newRemediationRunner(t *testing.T, scenarios []catalog.Scenario, script scriptedProm, rec *recorder, tick *int, now *time.Time) *Runner {
+func newRemediationRunner(t *testing.T, scenarios []catalog.Scenario, script detect.Querier, rec *recorder, tick *int, now *time.Time) *Runner {
 	t.Helper()
 	r := NewRunner(scenarios, script, nil)
 	r.Poll = 10 * time.Second
@@ -182,8 +185,8 @@ func TestRemediationFailsWhenTheFixDoesNotFix(t *testing.T) {
 	}
 }
 
-// Thirteen of eighteen entries are report-only. Skipping them is the correct
-// answer, not a coverage gap, and it must not read as one.
+// Most catalog entries are report-only. Skipping them is the correct answer,
+// not a coverage gap, and it must not read as one.
 func TestRemediationSkipsReportOnlyEntries(t *testing.T) {
 	tick := 0
 	entry := remediableEntry("triage")
