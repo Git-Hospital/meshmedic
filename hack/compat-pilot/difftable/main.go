@@ -311,6 +311,9 @@ func (a *analysis) table(w io.Writer) error {
 				for _, e := range c.Ignored {
 					p("- `%s` ignores %s `%s` of %s: %s\n", c.Fix, e.World, e.Key, e.Chart, e.Reason)
 				}
+				for _, e := range c.IgnoredNotComparable {
+					p("- ignored, not comparable (base flaky or undecided): %s `%s` of %s\n", e.World, e.Key, e.Chart)
+				}
 			}
 		}
 	}

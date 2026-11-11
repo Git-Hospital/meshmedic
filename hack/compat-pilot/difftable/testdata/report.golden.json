@@ -574,7 +574,8 @@
         ],
         "ignored": [],
         "worldsNotCompared": [],
-        "ignoredChanged": []
+        "ignoredChanged": [],
+        "ignoredNotComparable": []
       }
     },
     {

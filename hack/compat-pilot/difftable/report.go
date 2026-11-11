@@ -93,6 +93,10 @@ type CertReport struct {
 	// from the base's ("ignored cell changed under the fix"); any entry fails
 	// the certificate.
 	IgnoredChanged []IgnoredChange `json:"ignoredChanged"`
+	// IgnoredNotComparable lists ignored cells (also in Ignored) whose base
+	// value is flaky or undecided: "ignored, not comparable (base flaky or
+	// undecided)". They do not fail the certificate.
+	IgnoredNotComparable []IgnoreCell `json:"ignoredNotComparable"`
 }
 
 func verdictWord(c Comparison) string {
@@ -150,7 +154,7 @@ func (a *analysis) report() Report {
 		if c, ok := certs[chart]; ok {
 			cr.Certificate = &CertReport{Fix: c.Fix, Base: c.Base, Certified: c.Certified(),
 				Cleared: nonNil(c.Cleared), Problems: nonNil(c.Problems),
-				CellWorlds: nonNil(c.CellWorlds), Ignored: nonNil(c.Ignored), WorldsNotCompared: nonNil(c.NotCompared), IgnoredChanged: nonNil(c.IgnoredChanged)}
+				CellWorlds: nonNil(c.CellWorlds), Ignored: nonNil(c.Ignored), WorldsNotCompared: nonNil(c.NotCompared), IgnoredChanged: nonNil(c.IgnoredChanged), IgnoredNotComparable: nonNil(c.IgnoredNotComparable)}
 		}
 		r.Charts = append(r.Charts, cr)
 	}

@@ -425,6 +425,11 @@ type Certificate struct {
 	IgnoredChanged []IgnoredChange
 	// FixOnly are ignore entries that match a difference only the fix has.
 	FixOnly []IgnoreCell
+	// IgnoredNotComparable are ignored cells (also in Ignored) whose base value
+	// is flaky or undecided, so there is no stable value for the fix to change:
+	// "ignored, not comparable (base flaky or undecided)". They never fail the
+	// certificate. A base cell that is a stable finding is compared instead.
+	IgnoredNotComparable []IgnoreCell
 }
 
 // IgnoredChange is one ignored cell the fix changed. The values are the
@@ -510,7 +515,12 @@ func CertifyWith(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0,
 			case hasKey(b.Findings, e.Key) || hasKey(b.Flaky, e.Key) || hasUndecidedKey(b, e.Key):
 				ignore[e.Key] = true
 				c.Ignored = append(c.Ignored, e)
-				if f.Undecided == "" && b.Undecided == "" {
+				if !hasKey(b.Findings, e.Key) {
+					// Flaky or undecided for the base: run-to-run luck decides
+					// whether the fix's three runs happen to look stable, so
+					// nothing is compared (pre-registration rule 5).
+					c.IgnoredNotComparable = append(c.IgnoredNotComparable, e)
+				} else if f.Undecided == "" && b.Undecided == "" {
 					bv, fv := seenValues(b, e.Key), seenValues(f, e.Key)
 					if !equalStrings(bv, fv) && !hasChange(c.IgnoredChanged, w, e.Key) {
 						c.IgnoredChanged = append(c.IgnoredChanged, IgnoredChange{Chart: base, World: w, Key: e.Key, BaseValues: bv, FixValues: fv})
@@ -548,7 +558,7 @@ func CertifyWith(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0,
 			c.Cleared = append(c.Cleared, w)
 		}
 	}
-	for _, list := range [][]IgnoreCell{c.Ignored, c.NotCompared} {
+	for _, list := range [][]IgnoreCell{c.Ignored, c.NotCompared, c.IgnoredNotComparable} {
 		sort.Slice(list, func(i, j int) bool {
 			a, b := list[i], list[j]
 			if a.World != b.World {

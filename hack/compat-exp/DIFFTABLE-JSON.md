@@ -94,7 +94,8 @@ Present on a fix entry (a chart whose records carry `fixOf`).
 | `cellWorlds` | string[] | the worlds the fix had to clear: `-cell-worlds`, else all of `worlds` |
 | `ignored` | IgnoreCell[] | every ignore-list entry for a key that the certificate did not count, sorted by world, key, chart |
 | `worldsNotCompared` | IgnoreCell[] | ignore entries with key `*`: whole worlds with no verdict that the certificate passed; never in `ignored` |
-| `ignoredChanged` | IgnoredChange[] | ignored cells whose value under the fix differs from the base's ("ignored cell changed under the fix"); any entry fails the certificate and is also in `problems` |
+| `ignoredChanged` | IgnoredChange[] | ignored cells whose value under the fix differs from the base's ("ignored cell changed under the fix"); any entry fails the certificate and is also in `problems`; only for a base cell that is a stable finding |
+| `ignoredNotComparable` | IgnoreCell[] | ignored cells (also in `ignored`) whose base value is flaky or undecided, so there is nothing stable to compare: "ignored, not comparable (base flaky or undecided)"; they never fail the certificate |
 
 IgnoredChange: `chart` (the base), `world`, `key`, `baseValues`, `fixValues`
 (the sorted distinct values the key took in the used runs of that world, for the
@@ -127,10 +128,16 @@ By default a fix fails while any mesh world still differs from the oracle.
   world or a repeated entry; the run exits with status 2 and prints nothing
   else. The table lists each ignored cell under the certificates, and the JSON
   lists it in `ignored`.
-- An accepted key entry also freezes the cell: if the set of values the key
-  took under the fix differs from the base's (both worlds decided), the
-  certificate lists it as "ignored cell changed under the fix" (table and
-  `ignoredChanged`) and is not certified.
+- An accepted key entry also freezes the cell when the base's value is a stable
+  finding (all base runs agree on one value that differs from the oracle): if
+  the set of values the key took under the fix differs from the base's (both
+  worlds decided), the certificate lists it as "ignored cell changed under the
+  fix" (table and `ignoredChanged`) and is not certified. For a base cell that
+  is flaky or undecided there is no stable value, and whether the fix's runs
+  look stable is run-to-run luck, so the cell is listed as "ignored, not
+  comparable (base flaky or undecided)" (table and `ignoredNotComparable`) and
+  does not fail the certificate. An entry that matches only a difference of the
+  fix stays an error.
 
 ## Input
 

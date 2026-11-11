@@ -530,3 +530,82 @@ func TestOracleInstallMakesAVacuousSameVisible(t *testing.T) {
 		t.Fatalf("table:\n%s", table.String())
 	}
 }
+
+// flakyBaseRecords is the auditor's second-round scenario: the base chart's W3
+// has a stable finding (the one the fix is for) and a flaky probe that is on
+// the ignore list as a rule-5 cell. The fix's three runs happen to be stable
+// on that probe.
+func flakyBaseRecords(fixProbe []string) []Record {
+	w0 := map[string]string{cause: "true", probe: "ok", "port:redis:6379:passive": "bytes"}
+	mk := func(p string, passive string) map[string]string {
+		return map[string]string{cause: "true", probe: p, "port:redis:6379:passive": passive}
+	}
+	var rs []Record
+	for _, w := range []string{"W0", "W1", "W3"} {
+		rs = append(rs, chartRecs("redis", "1.0.0", "", same(w, 3, w0))...)
+		rs = append(rs, chartRecs("redis-fix", "1.0.0", "redis", same(w, 3, w0))...)
+	}
+	// replace the base W3 and the fix W3 by the scenario
+	var out []Record
+	for _, r := range rs {
+		if r.World == "W3" {
+			continue
+		}
+		out = append(out, r)
+	}
+	out = append(out, chartRecs("redis", "1.0.0", "", runs("W3", mk("failed", "silent"), mk("ok", "silent"), mk("failed", "silent")))...)
+	out = append(out, chartRecs("redis-fix", "1.0.0", "redis", runs("W3", mk(fixProbe[0], "bytes"), mk(fixProbe[1], "bytes"), mk(fixProbe[2], "bytes")))...)
+	return out
+}
+
+// A flaky base cell on the ignore list is not comparable: whether the fix's
+// three runs look stable is luck, so it must not fail the certificate.
+func TestFlakyIgnoredBaseCellDoesNotBlockCertification(t *testing.T) {
+	withMeshWorlds(t, "W0", "W1", "W3")
+	opts := CertifyOpts{CellWorlds: []string{"W3"}, Ignore: []IgnoreCell{ic("W3", probe, "flaky, rule 5")}}
+	for _, fixProbe := range [][]string{{"ok", "ok", "ok"}, {"failed", "failed", "failed"}, {"ok", "failed", "ok"}} {
+		c, err := certOf(t, flakyBaseRecords(fixProbe), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !c.Certified() || len(c.IgnoredChanged) != 0 || len(c.IgnoredNotComparable) != 1 || len(c.Ignored) != 1 {
+			t.Fatalf("fix runs %v: a flaky ignored base cell must certify and be listed as not comparable: %+v", fixProbe, c)
+		}
+	}
+	a, err := analyze(flakyBaseRecords([]string{"ok", "ok", "ok"}), 3, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var table, js bytes.Buffer
+	if err := a.table(&table); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(table.String(), "ignored, not comparable (base flaky or undecided): W3 `helm:test`") {
+		t.Fatalf("table lacks the not-comparable line:\n%s", table.String())
+	}
+	if err := a.writeJSON(&js); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(js.String(), `"ignoredNotComparable"`) {
+		t.Fatalf("json lacks ignoredNotComparable:\n%s", js.String())
+	}
+}
+
+// The comparison stays for a stable base finding: the fix changing it fails.
+func TestStableIgnoredBaseFindingChangedStillFails(t *testing.T) {
+	withMeshWorlds(t, "W0", "W1", "W3")
+	rs := flakyBaseRecords([]string{"ok", "ok", "ok"})
+	// make the base probe stable (failed x3) instead of flaky
+	for i := range rs {
+		if rs[i].Chart == "redis" && rs[i].World == "W3" {
+			rs[i].Obs[probe] = "failed"
+		}
+	}
+	c, err := certOf(t, rs, CertifyOpts{CellWorlds: []string{"W3"}, Ignore: []IgnoreCell{ic("W3", probe, "world-universal")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Certified() || len(c.IgnoredChanged) != 1 || len(c.IgnoredNotComparable) != 0 {
+		t.Fatalf("a stable ignored finding changed by the fix must fail: %+v", c)
+	}
+}
