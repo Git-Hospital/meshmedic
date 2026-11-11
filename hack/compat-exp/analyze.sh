@@ -60,6 +60,13 @@
 #     unless all files agree on everything but runAttempt. It also checks freezeTagSha
 #     against the tag and, for the observe-type roles, chartsFile and chartsSha256
 #     against the chart list analysed, and istio against the records' environment.
+#     Layout of what is downloaded. The report artifact holds report-ID.json, table.md and
+#     results/ with one directory per observe artifact, exp-ID-CHART-WORLD/, each holding
+#     CHART.WORLD.runN.json (N 1 to 3): the chart is one the frozen list or a committed fix
+#     entry names, the world W0, W1 or W3, and each record says the chart, world and run of
+#     its directory and file name. A flat results/ (the old layout), a missing or empty one, an
+#     extra or unexpected file, and zero records for a report chart or (runs 1 and 2) for a
+#     chart of the frozen list stop the script.
 #  4. The sample is not choosable after data exists: the qualification run's records
 #     (artifact charts-exp-ID, qual/) are downloaded, select.sh is run on them and on the
 #     committed candidates.json, and the result must be byte-identical to the chart list.
@@ -237,6 +244,58 @@ STATICCHECK="$(build STATICCHECK ./hack/compat-exp/staticcheck)" || exit $?
 export STATICCHECK
 [[ $test_mode -eq 0 ]] || export MMC_ANALYZE_TEST=1   # static.sh reads its own overrides only behind this switch
 
+# --- what a download may hold -------------------------------------------------------------------
+
+# The chart ids the frozen list predicts: charts and reserves, and the fix entries of the
+# committed fixes files (certification runs record those under the fix id).
+allowed_ids="$tmp/allowed-ids"
+{
+  jq -r '(.charts + .reserves)[].id' "$charts"
+  for f in "$root"/hack/compat-exp/fixes/*.json; do [[ -f "$f" ]] && jq -r '.[]?.id' "$f"; done
+} 2>/dev/null | sort -u >"$allowed_ids"
+[[ -s "$allowed_ids" ]] || die "$charts_rel lists no chart"
+
+# check_records ROLE ID DIR: results/ has the layout of the workflow's report artifact:
+# exp-<run id>-<chart>-<world>/<chart>.<world>.run<1-3>.json, charts the frozen list (or a
+# committed fix entry) names, worlds W0 W1 W3, every record saying the same chart, world and
+# run as its directory and file name. Zero records for a chart of the frozen list (the
+# report's charts, and for run 1 and run 2 every primary chart) is an error.
+check_records() {
+  local role="$1" id="$2" dir="$3/results" e m chart world f bad c files
+  shopt -s nullglob
+  [[ -d "$dir" ]] || die "run $id: no results/ (observation records) in its artifact"
+  : >"$tmp/recdirs"
+  for e in "$dir"/*; do
+    e="${e##*/}"
+    [[ -d "$dir/$e" ]] || die "run $id: results/$e is not a directory; results/ must hold exp-$id-<chart>-<world>/ directories (a flat directory of records is not the layout of the report artifact)"
+    if ! [[ "$e" =~ ^exp-$id-([a-z0-9][a-z0-9-]*)-(W[013])$ ]]; then
+      die "run $id: results/$e is not named exp-$id-<chart>-<world> with a world of W0, W1, W3"
+    fi
+    chart="${BASH_REMATCH[1]}" world="${BASH_REMATCH[2]}"
+    grep -qxF -- "$chart" "$allowed_ids" || die "run $id: results/$e is a chart the frozen list and the fix entries do not predict ($chart)"
+    echo "$e" >>"$tmp/recdirs"
+    files=("$dir/$e"/*)
+    [[ ${#files[@]} -gt 0 ]] || die "run $id: results/$e holds no record"
+    for f in "${files[@]}"; do
+      f="${f##*/}"
+      [[ "$f" =~ ^$chart\.$world\.run[1-3]\.json$ ]] || die "run $id: unexpected file results/$e/$f (only $chart.$world.run<1-3>.json)"
+    done
+  done
+  [[ -s "$tmp/recdirs" ]] || die "run $id: results/ holds no records at all (zero records for the charts of the frozen list)"
+  bad="$(find "$dir" -mindepth 2 -type f -exec jq -r '
+      (input_filename | capture("results/exp-[0-9]+-(?<c>[a-z0-9-]+)-(?<w>W[0-9])/[^/]+\\.run(?<n>[0-9])\\.json$")) as $m
+      | select((.chart? // "") != $m.c or (.world? // "") != $m.w or ((.run? // "") | tostring) != $m.n) | input_filename' {} + 2>&1 | head -3)"
+  [[ -z "$bad" ]] || die "run $id: a record does not say the chart, world and run of its directory and file name: $bad"
+  while IFS= read -r c; do
+    grep -Eq "^exp-$id-$c-W[013]\$" "$tmp/recdirs" || die "run $id: the report holds chart $c but results/ holds no record of it"
+  done < <(jq -r '.charts[].chart' "$3/report-$id.json")
+  if [[ "$role" == run1 || "$role" == run2 ]]; then
+    while IFS= read -r c; do
+      grep -Eq "^exp-$id-$c-W[013]\$" "$tmp/recdirs" || die "run $id: no record of the frozen chart $c (zero records for a chart of the list)"
+    done < <(jq -r '.charts[].id' "$charts")
+  fi
+}
+
 # --- 3. every run id --------------------------------------------------------------------------------------
 
 rfc3339z='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
@@ -306,8 +365,8 @@ fetch_run() {
     [[ "$(jq -r .chartsFile "$meta")" == "$charts_rel" ]] || die "run $id used the chart list '$(jq -r .chartsFile "$meta")', not $charts_rel"
     [[ "$(jq -r .chartsSha256 "$meta")" == "$charts_sha" ]] || die "run $id used a chart list with another sha256 than the one analysed ($charts_rel)"
     jq -e '.schema == 1 and (.charts | type == "array")' "$d/report-$id.json" >/dev/null 2>&1 || die "run $id: no usable report-$id.json in its artifact"
-    [[ -d "$d/results" ]] || die "run $id: no results/ (observation records) in its artifact"
-    recs_istio="$(find "$d/results" -maxdepth 1 -name '*.json' -exec jq -r '.environment.istio // empty' {} + | sort -u | tr '\n' ' ')"
+    check_records "$role" "$id" "$d"
+    recs_istio="$(find "$d/results" -mindepth 2 -maxdepth 2 -name '*.json' -exec jq -r '.environment.istio // empty' {} + | sort -u | tr '\n' ' ')"
     [[ -z "${recs_istio// /}" || "${recs_istio% }" == "$istio" ]] || die "run $id: its records say Istio '${recs_istio% }', its metadata says $istio"
   fi
 

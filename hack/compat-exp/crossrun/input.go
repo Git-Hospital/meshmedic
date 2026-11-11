@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"regexp"
 	"strings"
 	"time"
 
@@ -253,22 +253,59 @@ func loadReport(path string) (*Report, error) {
 	return &r, nil
 }
 
-func loadRecords(dir string) ([]Record, error) {
-	matches, err := filepath.Glob(filepath.Join(dir, "*.json"))
+// RecordLayout is the layout of a records directory, the one the workflow's report job
+// uploads under results/: one subdirectory per observe artifact, named
+// exp-<run id>-<chart>-<world>, each holding only regular files named
+// <chart>.<world>.run<N>.json (N 1 to 3) whose own chart, world and run fields say the
+// same. Anything else is an error: a flat directory, a link, an extra file, a record
+// that belongs to another chart or world, a directory of another run, and no record at
+// all.
+var (
+	expDirRe    = regexp.MustCompile(`^exp-([0-9]{1,20})-([a-z0-9][a-z0-9-]*)-(W[0-9])$`)
+	recordFile  = regexp.MustCompile(`^([a-z0-9][a-z0-9-]*)\.(W[0-9])\.run([1-3])\.json$`)
+	errNoRecord = "no records"
+)
+
+func loadRecords(dir, runID string) ([]Record, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(matches)
 	var out []Record
-	for _, m := range matches {
-		var r Record
-		if err := readJSON(m, &r, false); err != nil {
+	for _, e := range entries {
+		m := expDirRe.FindStringSubmatch(e.Name())
+		sub := filepath.Join(dir, e.Name())
+		if m == nil || !e.IsDir() || e.Type()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("%s: %q is not a directory named exp-<run id>-<chart>-<world>; the records directory holds one such directory per observe artifact (a flat directory of records is not the layout of the report artifact)", dir, e.Name())
+		}
+		if m[1] != runID {
+			return nil, fmt.Errorf("%s: the directory %q belongs to run %s, not run %s", dir, e.Name(), m[1], runID)
+		}
+		files, err := os.ReadDir(sub)
+		if err != nil {
 			return nil, err
 		}
-		if r.Chart == "" || r.World == "" {
-			return nil, fmt.Errorf("%s: record has no chart or world", m)
+		for _, f := range files {
+			fm := recordFile.FindStringSubmatch(f.Name())
+			path := filepath.Join(sub, f.Name())
+			if fm == nil || !f.Type().IsRegular() {
+				return nil, fmt.Errorf("%s: unexpected entry %q (only regular files <chart>.<world>.run<1-3>.json are records)", sub, f.Name())
+			}
+			if fm[1] != m[2] || fm[2] != m[3] {
+				return nil, fmt.Errorf("%s: the file name says chart %s world %s, the directory says chart %s world %s", path, fm[1], fm[2], m[2], m[3])
+			}
+			var r Record
+			if err := readJSON(path, &r, false); err != nil {
+				return nil, err
+			}
+			if r.Chart != m[2] || r.World != m[3] || fmt.Sprint(r.Run) != fm[3] {
+				return nil, fmt.Errorf("%s: the record says chart %q world %q run %d, its directory and file name say chart %s world %s run %s", path, r.Chart, r.World, r.Run, m[2], m[3], fm[3])
+			}
+			out = append(out, r)
 		}
-		out = append(out, r)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%s: %s found (expected exp-%s-<chart>-<world>/<chart>.<world>.run<N>.json)", dir, errNoRecord, runID)
 	}
 	return out, nil
 }
@@ -314,7 +351,7 @@ func LoadInputs(manifestPath string) (*Inputs, error) {
 			return nil, err
 		}
 		if mr.Records != "" {
-			if ri.Records, err = loadRecords(rel(mr.Records)); err != nil {
+			if ri.Records, err = loadRecords(rel(mr.Records), mr.ID); err != nil {
 				return nil, err
 			}
 			ri.HasRecords = true

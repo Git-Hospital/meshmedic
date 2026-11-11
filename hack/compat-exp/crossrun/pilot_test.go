@@ -139,12 +139,17 @@ func TestCLIExitCodes(t *testing.T) {
 		_ = os.WriteFile(filepath.Join(tmp, name), b, 0o644)
 	}
 	for _, name := range []string{"records-run1", "records-run2"} {
-		_ = os.MkdirAll(filepath.Join(tmp, name), 0o755)
-		files, _ := filepath.Glob(filepath.Join(dir, name, "*.json"))
-		for _, f := range files {
-			b, _ := os.ReadFile(f)
-			_ = os.WriteFile(filepath.Join(tmp, name, filepath.Base(f)), b, 0o644)
-		}
+		_ = filepath.WalkDir(filepath.Join(dir, name), func(p string, d os.DirEntry, err error) error {
+			rel, _ := filepath.Rel(dir, p)
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return os.MkdirAll(filepath.Join(tmp, rel), 0o755)
+			}
+			b, _ := os.ReadFile(p)
+			return os.WriteFile(filepath.Join(tmp, rel), b, 0o644)
+		})
 	}
 	_ = os.WriteFile(filepath.Join(tmp, "ledger.json"), []byte(bad), 0o644)
 	causes, _ := filepath.Abs(filepath.Join("..", "causes.json"))

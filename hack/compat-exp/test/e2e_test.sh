@@ -22,9 +22,22 @@
 #   4. the stub cluster's pod JSON (what the "chart" does), the rendered manifests
 #      helm template returns, and gh's run view (start and end times). The run metadata
 #      file is not hand-made: the workflow's own "run metadata" step writes it.
-#   5. the second workflow run's records are a copy of the first's (the stub is
-#      deterministic), and so are the second certification run's.
+#   5. the records of the 47 sample charts that are not run: copies of app-1's artifact
+#      directories under their own ids (crossrun needs the 50 primary charts).
 #
+# RUN FOR REAL, from the text of .github/workflows/compat-exp.yml (test/lib-runmeta.sh
+# wf_step): the guard job's "run metadata" step; the observe job's "three runs" step
+# (once per chart and world, its results/ becoming the artifact exp-<run id>-<chart>-<world>);
+# the report job's "check records" and "difftable" steps, whose upload paths (report-*.json,
+# table.md, results/) become the artifact compat-exp-report-<run id>; the select job's
+# "check records" and "select" steps, whose out/ and qual/ become charts-exp-<run id>. The
+# stub gh serves those trees unchanged.
+# STILL HAND-BUILT because they need the runner, an action or a cluster: the upload and
+# download of artifacts (GitHub's own), checkout, tool installation, world.sh (the world's
+# state files and the stub cluster), qualify.sh and the qualify job (needs a cluster; its
+# artifacts qual-<run>-<chart> hold hand-made records), the guard job's guard and ledger
+# steps (guard.sh plan is run directly), and `go run ./hack/compat-pilot/difftable`, which a
+# `go` shim serves with the prebuilt binary.
 # shellcheck disable=SC2015,SC2016
 set -uo pipefail
 
@@ -74,7 +87,23 @@ jq -r '.[].id' "$T/frame/candidates-charts.json" | while read -r id; do
     installs: [{n:1,durationSeconds:120,ready:true,helmRc:0},{n:2,durationSeconds:118,ready:true,helmRc:0},{n:3,durationSeconds:119,ready:true,helmRc:0}],
     bias: {hasStatefulSet: false, hasNetworkPolicy: false, hasNonHttpPort: false, hasHeadlessService: false}}' >"$T/qual/$id.qualify.json"
 done
-must "select.sh" "$repo/hack/compat-exp/select.sh" "$T/frame/candidates.json" "$T/qual" "$T/charts-exp.json" 7001
+in_ws() { local d="$1"; shift; (cd "$d" && env "$@"); }   # run a command in a workspace directory, with env assignments
+# the qualify job's artifacts qual-<run>-<chart> (hand-made records: qualify.sh needs a cluster), downloaded
+# per artifact by the select job, then the select job's own two steps run for real: "check records" and "select"
+SEL="$T/ws-select"
+mkdir -p "$SEL/qual-artifacts" "$SEL/out"
+cp -R "$repo/hack" "$SEL/hack"
+cp "$T/frame/candidates.json" "$SEL/hack/compat-exp/candidates.json"
+for f in "$T/qual"/*.qualify.json; do
+  id="$(basename "$f" .qualify.json)"
+  mkdir -p "$SEL/qual-artifacts/qual-7001-$id"
+  cp "$f" "$SEL/qual-artifacts/qual-7001-$id/"
+done
+sel_check="$(wf_step "$repo/.github/workflows/compat-exp.yml" select "check records")"
+sel_run="$(wf_step "$repo/.github/workflows/compat-exp.yml" select select)"
+must "workflow step: select job, check records" in_ws "$SEL" RUN_ID=7001 bash -c "$sel_check"
+must "workflow step: select job, select" in_ws "$SEL" GITHUB_RUN_ID=7001 GITHUB_STEP_SUMMARY="$T/summary.md" bash -c "$sel_run"
+cp "$SEL/out/charts-exp.json" "$T/charts-exp.json"
 eq "select: 50 charts and 5 reserves" "$(jq -c '[(.charts | length), (.reserves | length)]' "$T/charts-exp.json")" "[50,5]"
 eq "ids: frame charts and select.sh agree, in order" "$(jq -c '[.charts[].id, .reserves[].id]' "$T/charts-exp.json")" "$(jq -c '.[0:55] | map(.id)' "$T/frame/candidates-charts.json")"
 eq "ids: the duplicate package is <repository>-<name> in both" "$(jq -c '.charts[3:5] | map(.id)' "$T/charts-exp.json")" '["repo4-dup","repo5-dup"]'
@@ -160,11 +189,18 @@ mkpods() { # READY(true|false) NAME > file
     status: {phase: "Running", conditions: [{type: "Ready", status: (if $r then "True" else "False" end)}],
              containerStatuses: [{name: "app", image: "img:1", ready: $r, restartCount: 0, state: {running: {}}}]}}]}'
 }
-# observe_set RESULTS_DIR CHARTS_FILE ISTIO ID...: W0, W1, W3 x runs 1 to 3 of each id. A chart whose
-# id is app-2 (or its fix) is not Ready in W3, unless the id ends in -fix.
+# The observe job's steps "three runs" is run for real (the workflow's own text), once per chart and world, in a
+# workspace laid out like the runner's; what the job uploads (results/) becomes the artifact directory
+# exp-<run id>-<chart>-<world>, as the job names it. Hand-built: the world (state files, the stub cluster).
+three_runs="$(wf_step "$repo/.github/workflows/compat-exp.yml" observe "three runs")"
+OBS="$T/ws-observe"
+mkdir -p "$OBS"
+ln -sfn "$repo/hack" "$OBS/hack"
+# observe_set RUN_ID DIR CHARTS_FILE ISTIO ID...: W0, W1, W3 x runs 1 to 3 of each id, into DIR/exp-RUN_ID-ID-WORLD/.
+# A chart whose id is app-2 (or its fix) is not Ready in W3, unless the id ends in -fix.
 observe_set() {
-  local dir="$1" cf="$2" istio="$3" id w c run
-  shift 3
+  local runid="$1" dir="$2" cf="$3" istio="$4" id w c
+  shift 4
   for w in W0 W1 W3; do
     c="mmc-$(tr '[:upper:]' '[:lower:]' <<<"$w")"
     : >"$T/state/$c.kubeconfig"
@@ -175,18 +211,16 @@ observe_set() {
       local ready=true
       [[ "$id" == app-2 && "$w" == W3 ]] && ready=false
       mkpods "$ready" "${id%-fix}" >"$S/pods.json"
-      for run in 1 2 3; do
-        observe_run "$dir" "$cf" "$id" "$w" "$run" "${TEST_POD:-auto}" || return 1
-      done
+      observe_job "$runid" "$dir" "$cf" "$id" "$w" "${TEST_POD:-auto}" || return 1
     done
   done
 }
-# observe_run DIR CHARTS_FILE ID WORLD RUN TEST_POD: one observe.sh run on the stub cluster, pods in $S/pods.json.
+# observe_job RUN_ID DIR CHARTS_FILE ID WORLD TEST_POD: one observe job on the stub cluster, pods in $S/pods.json.
 # The chart app-3 has a helm test hook; in W1 its test fails and the test pod it creates carries the sidecar opt-out
 # label (TEST_POD auto or optout), carries none (plain), or is gone when the instrument looks (gone). In the other
 # worlds the test passes and leaves no pod.
-observe_run() {
-  local dir="$1" cf="$2" id="$3" w="$4" run="$5" tp="$6" extra=()
+observe_job() {
+  local runid="$1" dir="$2" cf="$3" id="$4" w="$5" tp="$6" extra=()
   rm -f "$S/pods-after.json" "$S/pods-after.json.left"
   if [[ "$id" == app-3 ]]; then
     extra+=(STUB_HOOKS=1)
@@ -200,28 +234,66 @@ observe_run() {
                    containerStatuses: [{name: "test", image: "img:1", ready: false, restartCount: 0, state: {terminated: {exitCode: 1, reason: "Error"}}}]}}] end)' "$S/pods.json" >"$S/pods-after.json"
     fi
   fi
-  env PATH="$T/bin:$PATH" STUB_CONTEXT="kind-mmc-$(tr '[:upper:]' '[:lower:]' <<<"$w")" STUB_PODS="$S/pods.json" ${extra[@]+"${extra[@]}"} \
-    MMC_STATE="$T/state" MMC_SETTLE=0 MMC_LATE=0 CHARTS_FILE="$cf" \
-    bash "$repo/hack/compat-pilot/observe.sh" "$w" "$id" "$run" "$dir" >/dev/null 2>"$T/observe.err" || {
-    bad "observe.sh $w $id run$run"; head -3 "$T/observe.err"; return 1; }
+  rm -rf "$OBS/results"
+  in_ws "$OBS" PATH="$T/bin:$PATH" STUB_CONTEXT="kind-mmc-$(tr '[:upper:]' '[:lower:]' <<<"$w")" STUB_PODS="$S/pods.json" ${extra[@]+"${extra[@]}"} \
+    MMC_STATE="$T/state" MMC_SETTLE=0 MMC_LATE=0 CHARTS_FILE="$cf" WORLD="$w" CHART="$id" \
+    bash -c "$three_runs" >/dev/null 2>"$T/observe.err" || {
+    bad "observe job $w $id"; head -3 "$T/observe.err"; return 1; }
+  rm -rf "$dir/exp-$runid-$id-$w"
+  mkdir -p "$dir"
+  mv "$OBS/results" "$dir/exp-$runid-$id-$w"
+}
+
+# The report job's steps "check records" and "difftable" are run for real in a workspace holding the downloaded
+# artifacts (results/exp-*/), and the files its upload step names (report-*.json, table.md, results/) become the
+# artifact compat-exp-report-<run id>. Hand-built: `go run ./hack/compat-pilot/difftable` is served by the binary
+# built above (the go shim), and the step summary goes to a file.
+mkdir -p "$T/shim"
+cat >"$T/shim/go" <<SHIM
+#!/usr/bin/env bash
+[[ "\$1 \$2" == "run ./hack/compat-pilot/difftable" ]] || { echo "go shim: only the difftable run is served" >&2; exit 9; }
+shift 2
+exec "$B/difftable" "\$@"
+SHIM
+chmod +x "$T/shim/go"
+rep_check="$(wf_step "$repo/.github/workflows/compat-exp.yml" report "check records")"
+rep_diff="$(wf_step "$repo/.github/workflows/compat-exp.yml" report difftable)"
+# report_job RUN_ID DIR [PLAN_OUT]: DIR holds the run's exp-RUN_ID-* artifact directories; the artifact tree
+# is left in $T/ws-report-RUN_ID (report-RUN_ID.json, table.md, results/)
+report_job() {
+  local runid="$1" dir="$2" cw="" ig="" w="$T/ws-report-$1"
+  if [[ -n "${3:-}" ]]; then cw="$(sed -n 's/^cell_worlds=//p' "$3")"; ig="$(sed -n 's/^ignore=//p' "$3")"; fi
+  rm -rf "$w"; mkdir -p "$w/results" "$w/hack/compat-exp"
+  cp -R "$dir"/exp-"$runid"-* "$w/results/"
+  if [[ -d "$R/hack/compat-exp/ignore" ]]; then cp -R "$R/hack/compat-exp/ignore" "$w/hack/compat-exp/ignore"; fi
+  must "workflow step: report job $runid, check records" in_ws "$w" RUN_ID="$runid" bash -c "$rep_check"
+  must "workflow step: report job $runid, difftable" in_ws "$w" PATH="$T/shim:$PATH" RUN_ID="$runid" CELL_WORLDS="$cw" IGNORE_FILE="$ig" GITHUB_STEP_SUMMARY="$T/summary.md" bash -c "$rep_diff"
+  cp "$w/report-$runid.json" "$T/report-$runid.json"
 }
 
 # --- 5. run 1 and run 2 -----------------------------------------------------------------------------
 
-observe_set "$T/res-1001" "$T/plan-observe/charts.json" 1.31.3 $id1 $id2 $id3 && ok "observe.sh: 3 charts x 3 worlds x 3 runs"
-eq "records: 27 files named <id>.<world>.run<N>.json" "$(find "$T/res-1001" -name "app-[123].W[013].run[123].json" | wc -l | tr -d " ")" 27
-eq "ids: the record's chart field is the list's id" "$(jq -s -c 'map(.chart) | unique' "$T/res-1001"/*.json)" '["app-1","app-2","app-3"]'
+observe_set 1001 "$T/res-1001" "$T/plan-observe/charts.json" 1.31.3 $id1 $id2 $id3 && ok "observe job steps: 3 charts x 3 worlds x 3 runs"
+eq "artifacts: 9 directories named exp-<run id>-<chart>-<world>, 27 records named <id>.<world>.run<N>.json" \
+  "$(find "$T/res-1001" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ') $(find "$T/res-1001" -name "app-[123].W[013].run[123].json" | wc -l | tr -d ' ')" "9 27"
+eq "ids: the record's chart field is the list's id" "$(jq -s -c 'map(.chart) | unique' "$T/res-1001"/*/*.json)" '["app-1","app-2","app-3"]'
 # hand-made: the sample is the 50 primary charts (crossrun refuses a smaller one), so the other 47 get
-# copies of app-1's records under their own ids; the stub cluster has no behaviour that differs per chart.
-for id in $(jq -r '.charts[3:][].id' "$T/charts-exp.json"); do
-  for f in "$T/res-1001"/app-1.*.json; do
-    jq --arg id "$id" '.chart = $id' "$f" >"$T/res-1001/$id.${f#*/app-1.}"
+# copies of app-1's artifact directories under their own ids; the stub cluster has no behaviour that differs per chart.
+fill_copies() { # RUN_ID DIR
+  local id w f
+  for id in $(jq -r '.charts[3:][].id' "$T/charts-exp.json"); do
+    for w in W0 W1 W3; do
+      mkdir -p "$2/exp-$1-$id-$w"
+      for f in "$2/exp-$1-app-1-$w"/*.json; do
+        jq --arg id "$id" '.chart = $id' "$f" >"$2/exp-$1-$id-$w/$id.${f##*/app-1.}"
+      done
+    done
   done
-done
-cp -R "$T/res-1001" "$T/res-1002"   # hand-made: a second run with the same stub behaviour
-for r in 1001 1002; do
-  "$B/difftable" -json -worlds W1,W3 "$T/res-$r" >"$T/report-$r.json" 2>"$T/dt.err" && ok "difftable -json run $r" || { bad "difftable -json run $r"; head -3 "$T/dt.err"; }
-done
+}
+fill_copies 1001 "$T/res-1001"
+observe_set 1002 "$T/res-1002" "$T/plan-observe/charts.json" 1.31.3 $id1 $id2 $id3 && ok "observe job steps for run 2"
+fill_copies 1002 "$T/res-1002"
+for r in 1001 1002; do report_job $r "$T/res-$r"; done
 eq "ids: the report's charts are the records' charts" "$(jq -c '[.charts[].chart] | sort == ([$l[0].charts[].id] | sort)' --slurpfile l "$T/charts-exp.json" "$T/report-1001.json")" true
 eq "run 1: app-2 differs in W3 only, app-3 (a failing helm test pod) in W1 only" "$(jq -c '[.charts[] | select(.chart | IN("app-1","app-2","app-3")) | {c: .chart, w: [.worlds[] | {(.world): .verdict}] | add}] | sort_by(.c)' "$T/report-1001.json")" \
   '[{"c":"app-1","w":{"W1":"same","W3":"same"}},{"c":"app-2","w":{"W1":"same","W3":"differs"}},{"c":"app-3","w":{"W1":"differs","W3":"same"}}]'
@@ -238,18 +310,17 @@ echo '[]' >"$R/hack/compat-exp/ignore/app-2.json"
 git -C "$R" add hack/compat-exp/fixes hack/compat-exp/ignore && git -C "$R" commit -q -m "fix entry"
 must_guard "guard plan certify" certify GUARD_FIXES_FILE=hack/compat-exp/fixes/app-2.json GUARD_FIX_ID=app-2-fix
 eq "certify plan: cell worlds and ignore come from the entry" "$(grep -E '^(cell_worlds|ignore)=' "$T/plan-certify.out" | tr '\n' ' ')" "cell_worlds=W3 ignore=hack/compat-exp/ignore/app-2.json "
-observe_set "$T/res-1003" "$T/plan-certify/charts.json" 1.31.3 app-2 app-2-fix && ok "observe.sh for the base chart and its fix"
-eq "ids: the fix's record carries fixOf = the base id" "$(jq -r '.fixOf' "$T/res-1003/app-2-fix.W3.run1.json")" "app-2"
-"$B/difftable" -json -worlds W1,W3 -cell-worlds W3 -ignore "$R/hack/compat-exp/ignore/app-2.json" "$T/res-1003" >"$T/report-1003.json" 2>"$T/dt.err" &&
-  ok "difftable -json -cell-worlds on the certification records" || { bad "difftable certification"; head -3 "$T/dt.err"; }
+observe_set 1003 "$T/res-1003" "$T/plan-certify/charts.json" 1.31.3 app-2 app-2-fix && ok "observe job steps for the base chart and its fix"
+eq "ids: the fix's record carries fixOf = the base id" "$(jq -r '.fixOf' "$T/res-1003/exp-1003-app-2-fix-W3/app-2-fix.W3.run1.json")" "app-2"
+report_job 1003 "$T/res-1003" "$T/plan-certify.out"
 eq "certificate: earned, W3 cleared" "$(jq -c '.charts[] | select(.fixOf == "app-2") | .certificate | {certified, cleared}' "$T/report-1003.json")" '{"certified":true,"cleared":["W3"]}'
-cp -R "$T/res-1003" "$T/res-1004"   # hand-made: the second certification run
-cp "$T/report-1003.json" "$T/report-1004.json"
+observe_set 1004 "$T/res-1004" "$T/plan-certify/charts.json" 1.31.3 app-2 app-2-fix && ok "observe job steps for the second certification run"
+report_job 1004 "$T/res-1004" "$T/plan-certify.out"
 
 # --- 7. recheck on the second version -----------------------------------------------------------------------
 
-observe_set "$T/res-1005" "$T/plan-observe/charts.json" 1.32.0 $id2 && ok "observe.sh for the recheck"
-"$B/difftable" -json -worlds W1,W3 "$T/res-1005" >"$T/report-1005.json" 2>/dev/null && ok "difftable -json recheck"
+observe_set 1005 "$T/res-1005" "$T/plan-observe/charts.json" 1.32.0 $id2 && ok "observe job steps for the recheck"
+report_job 1005 "$T/res-1005"
 
 # --- 8. the ledger: one row per differing key, written by a person ---------------------------------------------------------------
 
@@ -283,12 +354,11 @@ G="$T/gh"
 mkdir -p "$G"
 git clone -q "$R" "$T/gen" || { echo "clone failed"; exit 1; }
 # artifact of a workflow run: the report, its records, and the run metadata the workflow uploads
-mkartifact() { # ID MODE ISTIO
-  local r="$1" mode="$2" istio="$3"
+mkartifact() { # ID MODE ISTIO: what the report job's upload step names, from the workspace the job ran in
+  local r="$1" mode="$2" istio="$3" w="$T/ws-report-$1"
   mkdir -p "$G/$r"
-  cp "$T/report-$r.json" "$G/$r/report-$r.json"
-  "$B/difftable" -worlds W1,W3 "$T/res-$r" >"$G/$r/table.md" 2>/dev/null
-  cp -R "$T/res-$r" "$G/$r/results"
+  cp "$w"/report-*.json "$w/table.md" "$G/$r/"
+  cp -R "$w/results" "$G/$r/results"
   echo "compat-exp-report-$r" >"$G/$r.artifact"
   # the guard job's run-metadata-<id>-<attempt> artifact: the workflow's own step, run on a clone of the instrument
   gen_run_metadata "$R/.github/workflows/compat-exp.yml" "$T/gen" "$G/$r.meta-1/run-metadata.json" "$mode" "$istio" "$headsha" "$r" 1 || bad "run metadata step for $r"
@@ -298,10 +368,9 @@ mkartifact 1002 observe 1.31.3
 mkartifact 1003 certify 1.31.3
 mkartifact 1004 certify 1.31.3
 mkartifact 1005 recheck 1.32.0
-# the qualification run: its records and the list it wrote
-mkdir -p "$G/7001/qual" "$G/7001/out"
-cp "$T/qual"/*.qualify.json "$G/7001/qual/"
-cp "$T/charts-exp.json" "$G/7001/out/"
+# the qualification run: what the select job's upload step names (out/ and qual/ of its workspace)
+mkdir -p "$G/7001"
+cp -R "$SEL/out" "$SEL/qual" "$G/7001/"
 echo "charts-exp-7001" >"$G/7001.artifact"
 gen_run_metadata "$R/.github/workflows/compat-exp.yml" "$T/gen" "$G/7001.meta-1/run-metadata.json" qualify 1.31.3 "$headsha" 7001 1 || bad "run metadata step for 7001"
 
@@ -391,7 +460,7 @@ eq "provenance: a valid run carries no testMode" "$(jq -c '[has("testMode"), (.p
 [[ "$(head -c 20 "$T/analysis/result.md")" != "**THIS RESULT IS NOT"* ]] && ok "result.md does not say it is invalid" || bad "result.md says it is invalid"
 
 # seam: the helm test pod is in the record observe.sh wrote (testPodMesh), and crossrun's c-optout check reads it there
-rec3="$T/res-1001/app-3.W1.run1.json"
+rec3="$T/res-1001/exp-1001-app-3-W1/app-3.W1.run1.json"
 eq "record: podMesh is the snapshot before helm test (no test pod), testPodMesh holds the test pod" \
   "$(jq -c '[([.podMesh[].pod] | index("app-3-test")), (.testPodMesh | map(.pod)), .testPodMeshStatus, .obs["helm:test"]]' "$rec3")" '[null,["app-3-test"],"listed","fail"]'
 eq "record: the test pod carries the opt-out label and its Helm hook annotations" \
@@ -401,12 +470,12 @@ eq "crossrun: app-3's helm:test cell in W1 is excluded as c-optout" "$(jq -c '[.
 eq "crossrun: the opt-out evidence names the test pod" "$(jq -c '[.optOutEvidence[]? | select(.chart == "app-3") | .pods[] | select(.testPod) | {pod, effectiveOptOut}] | unique' "$res")" '[{"pod":"app-3-test","effectiveOptOut":true}]'
 
 # the same chart without the opt-out label on its test pod, and with the test pod gone: the exclusion is refused.
-# Records are real observe.sh runs of app-3 in W1 (3 per sample run), the rest is run 1's records.
+# Records are a real observe job of app-3 in W1 (3 runs per sample run) in place of the artifact's own, the rest as downloaded.
 for variant in plain gone; do
   for r in 1001 1002; do
-    rm -rf "$T/v-$variant-$r"; cp -R "$T/res-$r" "$T/v-$variant-$r"
+    rm -rf "$T/v-$variant-$r"; cp -R "$T/analysis/run-$r/results" "$T/v-$variant-$r"
     mkpods true app-3 >"$S/pods.json"
-    for n in 1 2 3; do observe_run "$T/v-$variant-$r" "$T/plan-observe/charts.json" app-3 W1 "$n" "$variant" || break; done
+    observe_job "$r" "$T/v-$variant-$r" "$T/plan-observe/charts.json" app-3 W1 "$variant"
   done
   jq --arg a "$T/v-$variant-1001" --arg b "$T/v-$variant-1002" '.runs[0].records = $a | .runs[1].records = $b' "$T/analysis/inputs.json" >"$T/inputs-$variant.json"
   "$B/crossrun" -inputs "$T/inputs-$variant.json" -json "$T/r-$variant.json" -md "$T/r-$variant.md" >"$T/cr-$variant.out" 2>&1
@@ -414,7 +483,7 @@ for variant in plain gone; do
 done
 grep -q "does not carry the opt-out" "$T/cr-plain.out" && ok "  plain: the error says the pod does not carry the opt-out" || bad "  plain: error text: $(head -3 "$T/cr-plain.out")"
 grep -q 'testPodMeshStatus "no-new-pods"' "$T/cr-gone.out" && ok "  gone: the error says the test pod could not be recorded" || bad "  gone: error text: $(head -3 "$T/cr-gone.out")"
-eq "  gone: the record says helm test ran and its pods could not be listed" "$(jq -c '[.testPodMesh, .testPodMeshStatus, .obs["helm:test"]]' "$T/v-gone-1001/app-3.W1.run1.json")" '[[],"no-new-pods","fail"]'
+eq "  gone: the record says helm test ran and its pods could not be listed" "$(jq -c '[.testPodMesh, .testPodMeshStatus, .obs["helm:test"]]' "$T/v-gone-1001/exp-1001-app-3-W1/app-3.W1.run1.json")" '[[],"no-new-pods","fail"]'
 
 # test mode: the overrides work, and every output says so
 env PATH="$T/bin:$PATH" MMC_STATE="$T/state" MMC_ANALYZE_TEST=1 CROSSRUN="$B/crossrun" LEDGER="$B/ledger" STATICCHECK="$B/staticcheck" \
@@ -447,7 +516,6 @@ grep -q "2026-11-20T21:50:00Z" "$T/analyze.err" && grep -q "2026-11-20T10:20:00Z
 mkview 1002 2 2026-11-20T22:30:00Z 2026-11-20T23:20:00Z 2026-11-21T00:10:00Z 2026-11-21T01:00:00Z
 
 # the sample must be complete: a chart missing from run 2 is an error naming chart and world
-rm "$G/1002/results/app-6."*.json
 jq '.charts |= map(select(.chart != "app-6"))' "$G/1002/report-1002.json" >"$T/x" && mv "$T/x" "$G/1002/report-1002.json"
 analyze "$T/analysis-missing" --run1 1001 --run2 1002 --cert 1003 --cert 1004 --recheck 1005
 mrc=$?
@@ -455,7 +523,6 @@ eq "a chart missing from run 2: analyze.sh fails" "$mrc" 1
 [[ $mrc -ne 0 ]] || tail -3 "$T/analyze.out"
 grep -q 'run 1002: chart "app-6" is missing' "$T/analyze.err" && ok "  and names the run and the chart" || bad "  and names the run and the chart: $(tail -3 "$T/analyze.err")"
 cp "$T/report-1002.json" "$G/1002/report-1002.json"
-cp "$T"/res-1002/app-6.*.json "$G/1002/results/"
 
 # analyze.sh refuses a bad run id before it calls gh
 : >"$GH_LOG"

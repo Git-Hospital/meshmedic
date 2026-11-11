@@ -88,6 +88,18 @@ a named test pod is not found and the exclusion is refused, as it always was for
 that is not recorded. The failure path of observe.sh reads failed test pods' logs with
 its own listing; that listing is not recorded.
 
+## Where the records are
+
+observe.sh writes `<id>.<world>.run<N>.json` into the job's `results/`. The observe job
+uploads that directory as the artifact `exp-<run id>-<chart>-<world>`. The report job
+downloads them without merging into `results/exp-<run id>-<chart>-<world>/` and uploads
+`report-<run id>.json`, `table.md` and `results/` as `compat-exp-report-<run id>`, so the
+records of a run sit at `results/exp-<run id>-<chart>-<world>/<chart>.<world>.run<N>.json`
+(N 1 to 3). That is the only layout analyze.sh and crossrun read: the directory carries the
+chart and world, the file name repeats them with the run, and the record's own `chart`,
+`world` and `run` fields must agree with both. A flat directory, an extra file, a link, a
+directory of another run and no record at all are errors.
+
 ## Observation keys (`obs`)
 
 The part before the first colon is the observation class. Values are strings.

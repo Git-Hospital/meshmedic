@@ -29,3 +29,9 @@ gen_run_metadata() {
   mkdir -p "$(dirname "$out")"
   cp "$clone/run-metadata/run-metadata.json" "$out"
 }
+
+# wf_step WORKFLOW JOB STEP-NAME: the run: script of a workflow step, to be run with bash -c
+# in a directory laid out like the runner's workspace, with the step's env: set by the caller.
+wf_step() {
+  yq -o=json '.' "$1" | jq -r --arg j "$2" --arg s "$3" '.jobs[$j].steps[] | select(.name == $s) | .run'
+}

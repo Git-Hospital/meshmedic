@@ -84,6 +84,17 @@ STUB
 chmod +x "$T/bin/gh"
 export GH_LOG="$T/gh.log" GH_FIX="$T/fix"
 
+jq -r '.charts[].id' "$T/charts-exp.json" >"$T/primary-ids"
+# mkrecords RESULTS_DIR ID ISTIO: records in the layout of the report artifact, one directory per
+# observe artifact (exp-<run id>-<chart>-<world>/<chart>.<world>.run1.json) for every primary chart
+mkrecords() {
+  local d="$1" id="$2" istio="$3" c
+  mkdir -p "$d"
+  while read -r c; do
+    mkdir -p "$d/exp-$id-$c-W1"
+    printf '{"chart":"%s","world":"W1","run":1,"environment":{"istio":"%s"}}\n' "$c" "$istio" >"$d/exp-$id-$c-W1/$c.W1.run1.json"
+  done <"$T/primary-ids"
+}
 # mkrun ID MODE ISTIO [HEAD]: a completed compat-exp run and its artifact
 mkrun() {
   local id="$1" mode="$2" istio="$3" head="${4:-$tagsha}" d="$T/fix/$1" art
@@ -95,7 +106,7 @@ mkrun() {
     cp "$T/charts-exp.json" "$d/out/"
   else
     art="compat-exp-report-$id"
-    mkdir -p "$d/results"
+    mkrecords "$d/results" "$id" "$istio"
     echo '{"schema":1,"oracle":"W0","worlds":["W1","W3"],"runsRequired":3,"charts":[]}' >"$d/report-$id.json"
   fi
   echo "$art" >"$T/fix/$id.artifact"
@@ -300,7 +311,7 @@ setmeta 12 '.mode = "certify"';              an "${A[@]}"; eq "run 2 dispatched 
 setmeta 11 '.mode = "recheck"';              an "${A[@]}"; eq "run 1 dispatched as recheck: refused" "$rc" 1; resetall
 setmeta 12 '.istio = "1.32.0"';              an "${A[@]}"; eq "run 2 on another Istio version: refused" "$rc" 1; says "  and says the pinned one" "pinned version for run2 is 1.31.3"; resetall
 setmeta 12 '.chartsFile = "hack/compat-exp/other.json"'; an "${A[@]}"; eq "run 2 on another chart list: refused" "$rc" 1; resetall
-echo '{"environment":{"istio":"1.30.0"}}' >"$T/fix/12/results/x.json"
+jq '.environment.istio = "1.30.0"' "$T/fix/12/results/exp-12-app-1-W1/app-1.W1.run1.json" >"$T/x" && mv "$T/x" "$T/fix/12/results/exp-12-app-1-W1/app-1.W1.run1.json"
 an "${A[@]}"; eq "records that disagree with the metadata on Istio: refused" "$rc" 1; says "  and says so" "its records say Istio"; resetall
 an "${A[@]}" --cert 13 --cert 14
 eq "certification runs fit their role" "$(grep -c 'refused\|dispatched' "$T/err")" 0
@@ -318,6 +329,30 @@ an "${A[@]}"; eq "a missing qualification record: refused" "$rc" 1; says "  and 
 rm -rf "$T/fix/7001/qual"
 an "${A[@]}"; eq "no qual/ in the qualification artifact: refused" "$rc" 1; resetall
 
+# the report artifact's layout: results/exp-<run id>-<chart>-<world>/<chart>.<world>.run<N>.json, nothing else
+refuses() { # NAME RUN-ID MUTATION-COMMAND... EXPECTED-TEXT: apply the mutation in the run's fixture, expect exit 1 and the text
+  local name="$1" id="$2" want="${*: -1}" cmd=("${@:3:$#-3}")
+  ( cd "$T/fix/$id" && "${cmd[@]}" ) >/dev/null 2>&1 || { bad "$name: the mutation did not apply"; resetall; return; }
+  an "${A[@]}" ${XARGS[@]+"${XARGS[@]}"}; eq "$name: refused" "$rc" 1; says "  and says why" "$want"
+  resetall
+}
+XARGS=()
+refuses "a flat directory of records (the old layout)" 12 bash -c 'for d in results/exp-12-*; do mv "$d"/*.json results/; rmdir "$d"; done' "not the layout of the report artifact"
+refuses "a flat directory beside the exp- ones" 12 bash -c 'echo "{}" > results/x.json' "not the layout of the report artifact"
+refuses "no record at all" 12 rm -rf results/exp-12-app-1-W1 results/exp-12-app-2-W1 "no record of the frozen chart app-1"
+refuses "an empty results directory" 12 bash -c 'rm -rf results/*' "holds no records at all"
+refuses "a directory of another run" 12 mv results/exp-12-app-1-W1 results/exp-99-app-1-W1 "is not named exp-12"
+refuses "a world outside W0 W1 W3" 12 bash -c 'mv results/exp-12-app-1-W1 results/exp-12-app-1-W2' "is not named exp-12"
+refuses "a chart the list does not predict" 12 bash -c 'mkdir results/exp-12-evil-W1 && echo "{}" > results/exp-12-evil-W1/evil.W1.run1.json' "do not predict"
+refuses "an extra file in a record directory" 12 bash -c 'echo x > results/exp-12-app-1-W1/notes.json' "unexpected file"
+refuses "a run index outside 1 to 3" 12 bash -c 'mv results/exp-12-app-1-W1/app-1.W1.run1.json results/exp-12-app-1-W1/app-1.W1.run4.json' "unexpected file"
+refuses "a file of another chart in a directory" 12 bash -c 'cp results/exp-12-app-1-W1/app-1.W1.run1.json results/exp-12-app-1-W1/app-2.W1.run1.json' "unexpected file"
+refuses "a record that says another chart" 12 bash -c 'jq ".chart = \"app-2\"" results/exp-12-app-1-W1/app-1.W1.run1.json > x && mv x results/exp-12-app-1-W1/app-1.W1.run1.json' "does not say the chart, world and run"
+refuses "a record that says another world" 12 bash -c 'jq ".world = \"W3\"" results/exp-12-app-1-W1/app-1.W1.run1.json > x && mv x results/exp-12-app-1-W1/app-1.W1.run1.json' "does not say the chart, world and run"
+refuses "a record that says another run" 12 bash -c 'jq ".run = 2" results/exp-12-app-1-W1/app-1.W1.run1.json > x && mv x results/exp-12-app-1-W1/app-1.W1.run1.json' "does not say the chart, world and run"
+XARGS=(--cert 13 --cert 14)
+refuses "the report of a chart without records" 13 bash -c 'echo "{\"schema\":1,\"charts\":[{\"chart\":\"app-55\"}]}" > report-13.json' "holds no record of it"
+refuses "a certification run with no records" 13 bash -c 'rm -rf results/*' "holds no records at all"
 # ledger failure: after all of the above checks pass
 N="$T/badledger"; rm -rf "$N"; cp -R "$R" "$N"
 echo '{"schema":1,"rows":[{"chart":"x"}],"newKeys":[]}' >"$N/hack/compat-exp/ledger.json"
