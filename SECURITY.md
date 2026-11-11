@@ -49,7 +49,11 @@ catalog entry reads, down to one env value or one argument), in rollout
 template diffs and in matched log lines. That covers plain `value` env
 entries, and a `NAME=value` pair in any other string, such as an argument
 (`--db-password=...`) or a log line. An unquoted value ends at a space, comma,
-semicolon or `&`, so the rest of a value containing one of those is shown. In
+semicolon or `&`, so the rest of a value containing one of those is shown. A
+configuration value that is itself a JSON object or list, such as the
+`kubectl.kubernetes.io/last-applied-configuration` annotation that
+`kubectl apply` writes, is parsed and its env entries are redacted the same
+way; this applies to configuration evidence, not to log lines. In
 a diff an env value is compared with the same container's, and a changed
 credential shows as `[redacted, changed]`, so the change is visible without
 either value; when redaction makes two different templates print alike, the

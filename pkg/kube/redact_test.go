@@ -184,3 +184,49 @@ func TestDiffTemplatesNeverHidesAChange(t *testing.T) {
 		t.Errorf("no change: %s", diff)
 	}
 }
+
+// `kubectl apply` keeps the applied spec as a JSON string in an annotation. An env entry in there
+// is an object inside a string, so the name=value match alone let its value through (#33).
+func TestExtractFieldRedactsJSONHeldInAnAnnotation(t *testing.T) {
+	const applied = `{"apiVersion":"apps/v1","kind":"Deployment","spec":{"replicas":3,"template":{"spec":{"containers":[{"args":["--api-token=tok-123"],"env":[{"name":"DB_PASSWORD","value":"s3cr3t"},{"name":"MODE","value":"fast & <loose>"}],"name":"app"}]}}}}` + "\n"
+	obj := map[string]any{"metadata": map[string]any{"annotations": map[string]any{
+		"kubectl.kubernetes.io/last-applied-configuration": applied,
+		"note":      `{"not json`,
+		"plain":     `{"replicas":3}`,
+		"team/list": `[{"name":"API_KEY","value":"k-9"}]`,
+	}}}
+	for _, path := range []string{"metadata.annotations", "metadata"} {
+		got, err := ExtractField(obj, path)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		for _, secret := range []string{"s3cr3t", "tok-123", "k-9"} {
+			if strings.Contains(got, secret) {
+				t.Errorf("%s: %q reaches the report: %s", path, secret, got)
+			}
+		}
+		// What is not secret-like stays readable, and a number stays a number.
+		for _, kept := range []string{`MODE`, `DB_PASSWORD`, `\"replicas\":3`, `{\"not json`} {
+			if !strings.Contains(got, kept) {
+				t.Errorf("%s: want %q kept, got: %s", path, kept, got)
+			}
+		}
+	}
+	if obj["metadata"].(map[string]any)["annotations"].(map[string]any)["kubectl.kubernetes.io/last-applied-configuration"] != applied {
+		t.Error("ExtractField changed the object it was given")
+	}
+}
+
+// A JSON string with nothing to redact comes back byte for byte, not re-encoded. One that is
+// re-encoded keeps &, < and > as written.
+func TestRedactLeavesJSONWithoutSecretsAsWritten(t *testing.T) {
+	const want = `{"env":[{"name":"API_TOKEN","value":"[redacted]"},{"name":"MODE","value":"fast & <loose>"}]}`
+	if got := redactAll(`{"env": [{"name":"API_TOKEN","value":"t-1"}, {"name":"MODE","value":"fast & <loose>"}]}`); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	for _, text := range []string{`{ "b": 1,  "a": [1.50, 12345678901234567890] }`, `[ ]`, `{"a":1} trailing`, `{`} {
+		if got := redactAll(text); got != text {
+			t.Errorf("got %q, want %q unchanged", got, text)
+		}
+	}
+}

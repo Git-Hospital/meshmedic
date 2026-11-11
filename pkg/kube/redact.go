@@ -1,6 +1,9 @@
 package kube
 
 import (
+	"bytes"
+	"encoding/json"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -96,6 +99,9 @@ func redactTree(v any, scope string, changed func(key, value string) bool) any {
 		}
 		return out
 	case string:
+		if j, ok := redactJSONText(t, scope, changed); ok {
+			return j
+		}
 		r := redactLogText(t)
 		if r == t {
 			return t
@@ -107,4 +113,33 @@ func redactTree(v any, scope string, changed func(key, value string) bool) any {
 	default:
 		return v
 	}
+}
+
+// redactJSONText handles a string that holds a JSON object or list, such as the annotation
+// kubectl.kubernetes.io/last-applied-configuration, where `kubectl apply` keeps the applied spec
+// (#33). Its env entries are objects inside a string, which the name=value match does not see, so
+// the text is parsed, redacted like any other tree, and written back as compact JSON. ok is false,
+// and the string is left to the name=value match, when it is not JSON or holds nothing to redact.
+func redactJSONText(text, scope string, changed func(key, value string) bool) (string, bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[") {
+		return "", false
+	}
+	dec := json.NewDecoder(strings.NewReader(trimmed))
+	dec.UseNumber() // large integers stay as written
+	var parsed any
+	if err := dec.Decode(&parsed); err != nil || dec.More() {
+		return "", false
+	}
+	out := redactTree(parsed, scope, changed)
+	if reflect.DeepEqual(parsed, out) {
+		return "", false
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(out); err != nil {
+		return "", false
+	}
+	return strings.TrimSuffix(buf.String(), "\n"), true
 }
