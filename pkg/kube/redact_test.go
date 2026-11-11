@@ -262,10 +262,12 @@ func TestRedactLastAppliedFailsClosed(t *testing.T) {
 	}
 }
 
-// Secret-like name=value pairs nested in the annotation JSON, in args and in other strings.
+// A secret carried only as JSON structure (env entries, also inside an initContainer) can be
+// redacted only by parsing the annotation; text redaction cannot see it.
 func TestRedactLastAppliedNested(t *testing.T) {
-	applied := `{"spec":{"template":{"spec":{"initContainers":[{"name":"init","command":["sh","-c","export DB_PASSWORD=fake-pw-xyz; run"]}],` +
-		`"containers":[{"name":"app","args":["--db-password=fake-pw-xyz","API_KEY=fake-key-abc"]}]}}}}`
+	applied := `{"spec":{"template":{"spec":{"initContainers":[{"name":"init","env":[{"name":"DB_PASSWORD","value":"fake-pw-xyz"}],` +
+		`"command":["sh","-c","export DB_PASSWORD=fake-pw-xyz; run"]}],` +
+		`"containers":[{"name":"app","env":[{"name":"API_KEY","value":"fake-key-abc"}],"args":["--db-password=fake-pw-xyz"]}]}}}}`
 	got, err := ExtractField(deploymentWithAnnotation(applied), "metadata")
 	if err != nil {
 		t.Fatal(err)
@@ -274,6 +276,89 @@ func TestRedactLastAppliedNested(t *testing.T) {
 		if strings.Contains(got, leak) {
 			t.Errorf("nested value leaks %q: %s", leak, got)
 		}
+	}
+}
+
+// Anything after the first JSON document fails closed, including a stray closing bracket, which
+// Decoder.More does not count as more data. Whitespace alone is fine.
+func TestRedactLastAppliedTrailingData(t *testing.T) {
+	doc := `{"env":[{"name":"DB_PASSWORD","value":"fake-pw-xyz"}]}`
+	for _, bad := range []string{doc + `}`, doc + `] x`, doc + `]`, `{}{}`, doc + ` x`, doc + doc} {
+		got, err := ExtractField(deploymentWithAnnotation(bad), "metadata.annotations")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(got, "fake-pw-xyz") {
+			t.Errorf("%q leaks: %s", bad, got)
+		}
+		if !strings.Contains(got, `"`+lastApplied+`":"[redacted]"`) {
+			t.Errorf("%q not replaced by the marker: %s", bad, got)
+		}
+	}
+	for _, ok := range []string{doc + " ", doc + "\n", doc + " \t\r\n"} {
+		got, err := ExtractField(deploymentWithAnnotation(ok), "metadata.annotations")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(got, "fake-pw-xyz") {
+			t.Errorf("%q leaks: %s", ok, got)
+		}
+		if strings.Contains(got, `"`+lastApplied+`":"[redacted]"`) || !strings.Contains(got, "DB_PASSWORD") {
+			t.Errorf("%q with trailing whitespace was not parsed and redacted normally: %s", ok, got)
+		}
+	}
+}
+
+// A secret-like env name hides its value whatever type the value has: the API server rejects
+// non-string values, but a hand-written annotation is never validated.
+func TestRedactNonStringEnvValue(t *testing.T) {
+	values := map[string]string{
+		"object": `{"x":"fake-pw-xyz"}`,
+		"number": `12345`,
+		"array":  `["fake-pw-xyz"]`,
+		"bool":   `true`,
+	}
+	for kind, v := range values {
+		entry := `{"name":"DB_PASSWORD","value":` + v + `}`
+		// On the annotation path.
+		got, err := ExtractField(deploymentWithAnnotation(`{"env":[`+entry+`]}`), "metadata.annotations")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(got, "fake-pw-xyz") || strings.Contains(got, "12345") || strings.Contains(got, "true") {
+			t.Errorf("%s value leaks on the annotation path: %s", kind, got)
+		}
+		if !strings.Contains(got, "[redacted]") {
+			t.Errorf("%s value not marked on the annotation path: %s", kind, got)
+		}
+		// On a plain object.
+		var obj any
+		if err := json.Unmarshal([]byte(entry), &obj); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(redactAll(obj))
+		if strings.Contains(string(b), "fake-pw-xyz") || strings.Contains(string(b), "12345") || strings.Contains(string(b), "true") {
+			t.Errorf("%s value leaks on a plain object: %s", kind, b)
+		}
+		if !strings.Contains(string(b), "[redacted]") {
+			t.Errorf("%s value not marked on a plain object: %s", kind, b)
+		}
+	}
+}
+
+// Two different non-JSON annotation values print alike once redacted, so the diff must say that
+// they changed, and show neither.
+func TestDiffTemplatesNonJSONAnnotationChanged(t *testing.T) {
+	tmpl := func(v string) map[string]any {
+		return map[string]any{"metadata": map[string]any{"annotations": map[string]any{lastApplied: v}}}
+	}
+	oldR, newR := redactTemplates(tmpl("not json fake-old-1"), tmpl("not json fake-new-2"))
+	b, _ := json.Marshal([]any{oldR, newR})
+	if strings.Contains(string(b), "fake-old-1") || strings.Contains(string(b), "fake-new-2") {
+		t.Errorf("diff input leaks: %s", b)
+	}
+	if !strings.Contains(string(b), "[redacted, changed]") {
+		t.Errorf("changed non-JSON annotation not marked: %s", b)
 	}
 }
 

@@ -3,6 +3,7 @@ package kube
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"regexp"
 	"strings"
 )
@@ -67,7 +68,7 @@ func redactAll(v any) any {
 }
 
 // redactTree copies v and replaces, in every object shaped like a Kubernetes env entry (a string
-// name and a string value) with a secret-like name, the value, and in every other string the values
+// name and a value) with a secret-like name, the value, and in every other string the values
 // of secret-like name=value pairs. changed is asked, with a key for the value's place in the tree
 // and the plain value, whether to mark it changed. scope names the place: the object keys on the
 // way down and the names of named objects such as containers, never list indexes.
@@ -75,7 +76,7 @@ func redactTree(v any, scope string, changed func(key, value string) bool) any {
 	switch t := v.(type) {
 	case map[string]any:
 		name, okName := t["name"].(string)
-		value, okValue := t["value"].(string)
+		rawValue := t["value"]
 		inner := scope
 		if okName {
 			inner = scope + "/" + name
@@ -88,7 +89,14 @@ func redactTree(v any, scope string, changed func(key, value string) bool) any {
 			}
 			out[k] = redactTree(e, inner+"."+k, changed)
 		}
-		if okName && okValue && secretLike(name) {
+		if okName && rawValue != nil && secretLike(name) {
+			// Any non-nil value is hidden, whatever its type: the API server only accepts strings,
+			// but a hand-written annotation is never validated. A non-string is compared by its JSON.
+			value, isString := rawValue.(string)
+			if !isString {
+				b, _ := json.Marshal(rawValue)
+				value = string(b)
+			}
 			out["value"] = redacted
 			if changed(scope+"\x00env\x00"+name, value) {
 				out["value"] = redactedChanged
@@ -134,7 +142,12 @@ func redactLastApplied(value, scope string, changed func(key, value string) bool
 	dec := json.NewDecoder(strings.NewReader(value))
 	dec.UseNumber() // keep large numbers as written
 	var parsed any
-	if err := dec.Decode(&parsed); err != nil || dec.More() {
+	if err := dec.Decode(&parsed); err != nil {
+		return failed()
+	}
+	// Exactly one document: nothing but whitespace may follow. Decoder.More is no test for this,
+	// since it reports false before a stray closing bracket.
+	if _, err := dec.Token(); err != io.EOF {
 		return failed()
 	}
 	var buf bytes.Buffer
