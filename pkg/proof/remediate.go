@@ -222,8 +222,13 @@ func PlanRemediation(scenarios []catalog.Scenario, s Spec) RemediationPlan {
 		return plan
 	}
 	// SpecContext has already required one non-empty context on every
-	// command of a spec that applies a patch, so this always pins it.
+	// command of a spec that applies a patch, so this always pins it. The
+	// generated command is held to the same shape as the declared ones.
 	plan.Apply = []string{"kubectl", "--context=" + kubeCtx, "apply", "-f", "-"}
+	if why := uncheckable(plan.Apply); why != "" {
+		plan.Err = fmt.Errorf("the apply command %q cannot be checked against the cluster: %s", strings.Join(plan.Apply, " "), why)
+		return plan
+	}
 	plan.Patch = patch
 	plan.Revert = s.Remediation.Revert
 	return plan
@@ -240,10 +245,12 @@ func PlanRemediation(scenarios []catalog.Scenario, s Spec) RemediationPlan {
 // first inject command alone, in one spelling of the flag.
 //
 // A spec that applies a patch is held to more, and fails closed: every
-// command must be a direct kubectl with exactly one --context and no
-// --kubeconfig, --server or --cluster, because those are the only commands
-// whose cluster can be read from their arguments. A detection-only spec keeps the looser rule it always
-// had, in which a command that is not kubectl is not checked.
+// command must have the shape uncheckable accepts, kubectl --context=NAME
+// first, no cluster overrides, and an allowlisted subcommand, because only
+// then can the cluster it reaches be read from its arguments. A
+// detection-only spec keeps the looser rule it always had, in which a
+// command that is not kubectl is not checked and the context is read on a
+// best-effort basis.
 func SpecContext(s Spec) (string, error) {
 	if s.Remediation != nil {
 		for _, group := range []struct {
@@ -253,7 +260,7 @@ func SpecContext(s Spec) (string, error) {
 			for _, c := range group.cmds {
 				if why := uncheckable(c.Run); why != "" {
 					return "", fmt.Errorf("%s command %q cannot be checked against the cluster: %s. "+
-						"A spec that applies a patch must run every command as a direct kubectl with exactly one --context and no --kubeconfig",
+						"A spec that applies a patch must run every command as kubectl --context=NAME followed by an allowed subcommand, with no other cluster override",
 						group.name, strings.Join(c.Run, " "), why)
 				}
 			}
@@ -290,10 +297,12 @@ func SpecContext(s Spec) (string, error) {
 		strings.Join(parts, ", "))
 }
 
-// pinnedContext reports the context a kubectl argv pins, in either spelling
-// of the flag, and whether the argv is kubectl at all. kubectl uses the last
-// --context it is given, so this does too; reading the first one checked a
-// context the command would not use.
+// pinnedContext reports the context a kubectl argv appears to pin, in either
+// spelling of the flag, and whether the argv is kubectl at all. It reads the
+// last --context token, as kubectl does when the flag is repeated. It is a
+// best-effort reading for detection-only specs and not a guarantee: another
+// flag can take a --context token as its value, which is why a spec that
+// applies a patch must also pass uncheckable.
 func pinnedContext(argv []string) (string, bool) {
 	if len(argv) == 0 || filepath.Base(argv[0]) != "kubectl" {
 		return "", false
@@ -312,50 +321,81 @@ func pinnedContext(argv []string) (string, bool) {
 	return kubeCtx, true
 }
 
+// remediationSubcommands are the kubectl subcommands a spec that applies a
+// patch may run. It is an allowlist because anything unknown is how kubectl
+// reaches a plugin, which ignores --context, and `config` can rewrite what a
+// context points to for every command after it. The shipped specs use apply,
+// delete, patch, rollout, scale, set and wait; annotate, label and create are
+// the others a remediation plainly needs.
+var remediationSubcommands = map[string]bool{
+	"annotate": true, "apply": true, "create": true, "delete": true, "label": true,
+	"patch": true, "rollout": true, "scale": true, "set": true, "wait": true,
+}
+
 // uncheckable says why the cluster one command reaches cannot be read from
-// its argv, or returns "" when it can: a direct kubectl, exactly one
-// non-empty --context, no --kubeconfig, and no --server or --cluster. A shell,
-// env or any other wrapper can reach any cluster, a kubeconfig can give a
-// familiar context name to a different one, and --server or --cluster
+// its argv, or returns "" when it can. The rule is positional so that no
+// other flag can swallow the context as its value:
+//
+//   - argv[0] is kubectl and argv[1] is --context=NAME, the only --context
+//     token anywhere in the command;
+//   - no --kubeconfig, --server, --cluster or -s token in any spelling;
+//   - between them and the subcommand only -n or --namespace with a value,
+//     and the subcommand is on the allowlist.
+//
+// A shell, env or any other wrapper can reach any cluster, a kubeconfig can
+// give a familiar context name to a different one, and --server or --cluster
 // override the context's own.
 func uncheckable(argv []string) string {
-	if len(argv) == 0 || filepath.Base(argv[0]) != "kubectl" {
+	if len(argv) == 0 || argv[0] != "kubectl" {
 		name := "nothing"
 		if len(argv) > 0 {
 			name = argv[0]
 		}
 		return fmt.Sprintf("it runs %s rather than kubectl directly", name)
 	}
-	contexts := 0
-	for i := 1; i < len(argv); i++ {
-		a := argv[i]
+	if len(argv) < 2 || argv[1] == "--context" {
+		return "it does not start kubectl --context=NAME; write the context as one token, --context=NAME, directly after kubectl"
+	}
+	if v, ok := strings.CutPrefix(argv[1], "--context="); !ok || v == "" {
+		return "it does not start kubectl --context=NAME; write the context as one token, --context=NAME, directly after kubectl, so no other flag can take it as its value"
+	}
+	for _, a := range argv[2:] {
+		flag := strings.SplitN(a, "=", 2)[0]
 		switch {
-		case a == "--kubeconfig" || strings.HasPrefix(a, "--kubeconfig="):
+		case flag == "--context":
+			return "it carries a second --context, and only the one directly after kubectl is allowed"
+		case flag == "--kubeconfig":
 			return "it carries --kubeconfig, which can point the same context name at another cluster"
-		case a == "--server" || strings.HasPrefix(a, "--server=") || a == "-s" || strings.HasPrefix(a, "-s="),
-			a == "--cluster" || strings.HasPrefix(a, "--cluster="):
-			return fmt.Sprintf("it carries %s, which sends the command to another API server whatever its --context says",
-				strings.SplitN(a, "=", 2)[0])
-		case a == "--context":
-			if i+1 >= len(argv) || argv[i+1] == "" || strings.HasPrefix(argv[i+1], "-") {
-				return "its --context flag has no value"
-			}
-			contexts++
-			i++
-		case strings.HasPrefix(a, "--context="):
-			if a == "--context=" {
-				return "its --context flag has no value"
-			}
-			contexts++
+		case flag == "--server" || flag == "--cluster":
+			return fmt.Sprintf("it carries %s, which sends the command to another API server whatever its --context says", flag)
+		case strings.HasPrefix(a, "-s"):
+			// -s is kubectl's server flag and takes its value glued on as
+			// well, so every single-dash token starting with s is refused.
+			// No shipped spec uses one for anything else.
+			return fmt.Sprintf("it carries %s, and every single-dash token starting with -s is refused because -s, glued to a value or not, is kubectl's server override", a)
 		}
 	}
-	switch contexts {
-	case 0:
-		return "it pins no --context"
-	case 1:
-		return ""
+	i := 2
+	for i < len(argv) && strings.HasPrefix(argv[i], "-") {
+		switch a := argv[i]; {
+		case a == "-n" || a == "--namespace":
+			if i+1 >= len(argv) || argv[i+1] == "" || strings.HasPrefix(argv[i+1], "-") {
+				return fmt.Sprintf("its %s flag has no value", a)
+			}
+			i += 2
+		case strings.HasPrefix(a, "--namespace=") && a != "--namespace=":
+			i++
+		default:
+			return fmt.Sprintf("it puts %s before the subcommand, where only -n or --namespace with a value is allowed", a)
+		}
 	}
-	return fmt.Sprintf("it carries %d --context flags, and kubectl would silently use the last", contexts)
+	if i >= len(argv) {
+		return "it names no subcommand"
+	}
+	if !remediationSubcommands[argv[i]] {
+		return fmt.Sprintf("its subcommand %q is not one a remediation spec may run (allowed: annotate, apply, create, delete, label, patch, rollout, scale, set, wait); anything else can be a plugin or rewrite the kubeconfig", argv[i])
+	}
+	return ""
 }
 
 // sustainFor is how long the signal must stay clear before the patch is

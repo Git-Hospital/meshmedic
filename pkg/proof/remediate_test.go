@@ -37,7 +37,7 @@ func remediationSpec(entry string) Spec {
 		Summary:     "a fault and the fix it proposes",
 		Target:      map[string]string{"namespace": "demo"},
 		Inject:      []Command{{Run: []string{"kubectl", "--context=kind-test", "set", "env", "x"}}},
-		Reset:       []Command{{Run: []string{"kubectl", "--context=kind-test", "reset-fault"}}},
+		Reset:       []Command{{Run: []string{"kubectl", "--context=kind-test", "delete", "reset-fault"}}},
 		FiresWithin: Duration(time.Minute),
 		Expect:      Expect{Names: []string{"x"}},
 		Remediation: &RemediationCheck{

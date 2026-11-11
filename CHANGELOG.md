@@ -211,18 +211,23 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - `FAIL`: the patch was applied, or the cluster refused it, and it was
     watched not ending the incident within `clearsWithin`.
   - `BLIND`: the run says nothing about the patch. A suspended machine or an
-    interrupt, at any point including while kubectl apply runs, voids it. So
-    does a run that did not clear when what the observer missed could have
-    hidden a clear: some stretch of ticks with no reading in breach, counting
-    blind, no-series and NaN ticks as if they had been clear, lasted the
+    interrupt voids it at any point, including while the fault is injected
+    and while kubectl apply runs. Before the patch, it is BLIND when a
+    measured clear follows the first reading in breach, because the fault did
+    not hold without the patch, and when the breach did not hold within
+    `firesWithin` and at least one tick of that wait could not be measured
+    (blind, no series, NaN or missing), because a gap restarts the hold.
+    After the patch, a run that did not clear is BLIND when what the observer
+    missed could have hidden a clear: some stretch of ticks with no reading in
+    breach, counting unmeasured ticks as if they had been clear, lasted the
     sustain. One blind tick in a run watched in breach on every other tick is
-    a FAIL, and a signal that stays without series is BLIND. A breach that
-    falls back under the threshold before the patch goes on is BLIND too,
-    because the fault did not hold without the patch.
+    a FAIL, and a signal that stays without series is BLIND.
   - `ERROR`: the run could not be set up, which says nothing about the patch:
-    a spec that cannot run as written, a deadline the breach hold or the clear
-    cannot fit inside, a fault that did not inject, or an incident that never
-    formed within `firesWithin`.
+    a spec that cannot run as written, including a command the context rule
+    refuses; a `firesWithin` or `clearsWithin` the sustain cannot fit inside;
+    an inject command that failed without an interrupt; or, with every tick of
+    the wait measured, a breach that never began or began but had not held
+    for the sustain when `firesWithin` ran out.
   - `unchecked`: the entry proposes a patch and no spec checks it. `skipped`:
     the entry is report-only. Neither runs anything.
 
@@ -242,12 +247,18 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whole recovery window.
 
   A spec with a remediation block must run every inject, reset and revert
-  command as a direct kubectl with exactly one `--context`, in either
-  spelling, and no `--kubeconfig`, `--server` or `--cluster`; anything else,
-  including `sh -c` and `env`, is refused by name before anything runs. Detection-only specs keep the
-  looser rule, and every spec now reads `--context` the way kubectl does,
-  using the last one given. `error-surge-outlier-ejection` gets `clearsWithin:
-  6m`, room for ejection, a drained 2m rate window and a 120s held clear, and
+  command, and the generated apply, in one checkable shape, or nothing runs
+  and the refusal names the command: `kubectl` with `--context=NAME` as the
+  very next token and no other `--context` anywhere; no `--kubeconfig`,
+  `--server`, `--cluster` or single-dash `-s` token in any spelling; nothing
+  before the subcommand except `-n` or `--namespace` with a value; and a
+  subcommand from an allowlist (annotate, apply, create, delete, label,
+  patch, rollout, scale, set, wait). That refuses `sh -c`, `env`, plugins,
+  `kubectl config` and a `--context` another flag could take as its value.
+  Detection-only specs keep their looser best-effort check, which reads the
+  last `--context` token and skips commands that are not kubectl.
+  `error-surge-outlier-ejection` gets `clearsWithin: 6m`, room for ejection,
+  a drained 2m rate window and a 120s held clear, and
   a guard test now requires every remediation deadline to cover the signal's
   rate window plus the sustain plus a minute. The confirmation prints the
   patch, its apply command and its revert. None of this has had a live run

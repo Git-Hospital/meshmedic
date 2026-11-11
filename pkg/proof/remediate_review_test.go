@@ -288,18 +288,20 @@ func TestRemediationNoBreachIsAnErrorNotAPatchVerdict(t *testing.T) {
 	}
 }
 
-// Finding 4. kubectl uses the last --context it is given, so reading the first
-// one checked a context the command does not use. A detection-only spec keeps
-// its looser rule, but reads the flag the way kubectl does.
-func TestSpecContextReadsTheFlagTheWayKubectlDoes(t *testing.T) {
+// Finding 4, the detection-only half. A spec without a remediation block keeps
+// its looser rule: the context is read from the last --context token, and a
+// command whose shape cannot be checked is not refused. This is a best-effort
+// reading for the preflight, not a guarantee about where kubectl goes; only a
+// spec that applies a patch is held to the strict shape below.
+func TestSpecContextDetectionOnlyReadsTheLastContextToken(t *testing.T) {
 	s := remediationSpec("error-surge")
 	s.Remediation = nil
 	s.Inject = []Command{{Run: []string{"kubectl", "--context=kind-test", "--context=other", "set", "env", "x"}}}
-	s.Reset = []Command{{Run: []string{"kubectl", "--context", "other", "reset-fault"}}}
+	s.Reset = []Command{{Run: []string{"kubectl", "--context", "other", "delete", "reset-fault"}}}
 
 	got, err := SpecContext(s)
 	if err != nil || got != "other" {
-		t.Fatalf("SpecContext = %q, %v; want other, the context kubectl would use", got, err)
+		t.Fatalf("SpecContext = %q, %v; want other", got, err)
 	}
 }
 
@@ -313,6 +315,18 @@ func TestRemediationRefusesACommandWhoseClusterCannotBeChecked(t *testing.T) {
 	}{
 		{"two contexts", "inject", []string{"kubectl", "--context=kind-test", "--context=prod", "set", "env", "x"}},
 		{"two contexts, spaced", "revert", []string{"kubectl", "--context", "kind-test", "--context", "prod", "delete", "the-patch"}},
+		// The four bypasses a re-check found against a real kubectl.
+		{"a context swallowed as the namespace", "revert", []string{"kubectl", "-n", "--context=kind-test", "delete", "the-patch"}},
+		{"a server glued to -s", "reset", []string{"kubectl", "--context=kind-test", "-shttps://other:6443", "delete", "reset-fault"}},
+		{"a config rewrite", "inject", []string{"kubectl", "--context=kind-test", "config", "set", "clusters.kind-test.server", "https://other"}},
+		{"a plugin", "revert", []string{"kubectl", "foo", "--context=kind-test"}},
+		{"the context in two tokens", "revert", []string{"kubectl", "--context", "kind-test", "delete", "the-patch"}},
+		{"a second context later", "revert", []string{"kubectl", "--context=kind-test", "delete", "the-patch", "--context=kind-test"}},
+		{"a namespace with no value", "reset", []string{"kubectl", "--context=kind-test", "-n"}},
+		{"a namespace value that is a flag", "reset", []string{"kubectl", "--context=kind-test", "-n", "-v=9", "delete", "reset-fault"}},
+		{"an unknown subcommand", "revert", []string{"kubectl", "--context=kind-test", "foo", "the-patch"}},
+		{"an unlisted global flag", "revert", []string{"kubectl", "--context=kind-test", "-v=9", "delete", "the-patch"}},
+		{"no subcommand", "revert", []string{"kubectl", "--context=kind-test"}},
 		{"through a shell", "revert", []string{"sh", "-c", "kubectl --context=kind-test delete the-patch"}},
 		{"through env", "reset", []string{"env", "KUBECONFIG=/prod", "kubectl", "--context=kind-test", "reset-fault"}},
 		{"a kubeconfig", "revert", []string{"kubectl", "--kubeconfig=/prod", "--context=kind-test", "delete", "the-patch"}},
@@ -353,7 +367,36 @@ func TestRemediationRefusesACommandWhoseClusterCannotBeChecked(t *testing.T) {
 			if !strings.Contains(text, strings.Join(c.argv, " ")) {
 				t.Errorf("the refusal does not name the command %q: %s", strings.Join(c.argv, " "), text)
 			}
+			if c.name == "the context in two tokens" && !strings.Contains(text, "--context=NAME") {
+				t.Errorf("the refusal does not tell the author to write --context=NAME: %s", text)
+			}
 		})
+	}
+}
+
+// The shapes the shipped specs use, and the generated apply, are accepted.
+func TestRemediationAcceptsTheShapesShippedSpecsUse(t *testing.T) {
+	for _, argv := range [][]string{
+		{"kubectl", "--context=kind-test", "-n", "demo", "set", "env", "deploy/x", "A=1"},
+		{"kubectl", "--context=kind-test", "-n", "demo", "delete", "destinationrule", "x", "--ignore-not-found"},
+		{"kubectl", "--context=kind-test", "-n", "demo", "patch", "deploy/x", "--type=merge", "-p", "{}"},
+		{"kubectl", "--context=kind-test", "-n", "demo", "rollout", "status", "deploy/x", "--timeout=180s"},
+		{"kubectl", "--context=kind-test", "-n", "demo", "scale", "deploy/x", "--replicas=0"},
+		{"kubectl", "--context=kind-test", "-n", "demo", "wait", "--for=delete", "pod", "-l", "app=x"},
+		{"kubectl", "--context=kind-test", "--namespace", "demo", "delete", "x"},
+		{"kubectl", "--context=kind-test", "--namespace=demo", "delete", "x"},
+		{"kubectl", "--context=kind-test", "apply", "-f", "-"},
+	} {
+		if why := uncheckable(argv); why != "" {
+			t.Errorf("%q refused: %s", strings.Join(argv, " "), why)
+		}
+	}
+	plan := PlanRemediation([]catalog.Scenario{remediableEntry("error-surge")}, remediationSpec("error-surge"))
+	if plan.Err != nil {
+		t.Fatalf("plan: %v", plan.Err)
+	}
+	if why := uncheckable(plan.Apply); why != "" {
+		t.Errorf("the generated apply %q fails its own rule: %s", strings.Join(plan.Apply, " "), why)
 	}
 }
 

@@ -25,7 +25,7 @@ func remediationSpec() proof.Spec {
 		Entry:  "error-surge",
 		Target: map[string]string{"namespace": "demo"},
 		Inject: []proof.Command{{Run: []string{"kubectl", "--context=kind-test", "set", "env", "x"}}},
-		Reset:  []proof.Command{{Run: []string{"kubectl", "--context=kind-test", "reset-fault"}}},
+		Reset:  []proof.Command{{Run: []string{"kubectl", "--context=kind-test", "delete", "reset-fault"}}},
 		Remediation: &proof.RemediationCheck{
 			Revert: []proof.Command{{Run: []string{"kubectl", "--context=kind-test", "delete", "the-patch"}}},
 		},
@@ -50,7 +50,7 @@ func TestConfirmationShowsThePatchBeforeApplyingIt(t *testing.T) {
 		"| kind: DestinationRule",
 		"|   namespace: demo",
 		"revert  kubectl --context=kind-test delete the-patch",
-		"reset   kubectl --context=kind-test reset-fault",
+		"reset   kubectl --context=kind-test delete reset-fault",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("confirmation is missing %q:\n%s", want, out)

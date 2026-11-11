@@ -329,15 +329,18 @@ func TestRemediationRefusesCommandsThatTargetDifferentContexts(t *testing.T) {
 	}
 }
 
-// The context is the spec's, wherever and however it is written. The first
-// version read only the first inject command, and only the --context=X form.
-func TestRemediationAppliesThroughTheSpecsContextInEitherForm(t *testing.T) {
+// The context the patch is applied through is the spec's own, read from its
+// commands rather than assumed. The first version read only the first inject
+// command. Since the context guard, a spec that applies a patch writes it in
+// one form only, --context=NAME directly after kubectl; the two-token form is
+// refused, see TestRemediationRefusesACommandWhoseClusterCannotBeChecked.
+func TestRemediationAppliesThroughTheSpecsContext(t *testing.T) {
 	r, rec, _, _ := remediationRig(t, remediableEntry("error-surge"),
 		breachUntilPatched(func(int) reading { return value(20) }))
 	s := remediationSpec("error-surge")
-	s.Inject = []Command{
-		{Run: []string{"kubectl", "--context", "kind-test", "set", "env", "x"}},
-	}
+	s.Inject = []Command{{Run: []string{"kubectl", "--context=kind-other", "set", "env", "x"}}}
+	s.Reset = []Command{{Run: []string{"kubectl", "--context=kind-other", "delete", "reset-fault"}}}
+	s.Remediation.Revert = []Command{{Run: []string{"kubectl", "--context=kind-other", "delete", "the-patch"}}}
 
 	r.Remediate(context.Background(), s)
 
@@ -350,7 +353,7 @@ func TestRemediationAppliesThroughTheSpecsContextInEitherForm(t *testing.T) {
 	if apply == "" {
 		t.Fatal("no apply command was run")
 	}
-	if !strings.Contains(apply, "--context=kind-test") {
+	if !strings.Contains(apply, "--context=kind-other") {
 		t.Errorf("the patch was applied without the fault's context: %s", apply)
 	}
 }
