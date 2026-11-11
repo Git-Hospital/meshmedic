@@ -40,7 +40,14 @@ match `SHA256SUMS`, or that holds a file the sums do not list.
 5. Publisher: the GitHub owner (lower-cased) in the first source link that
    points at github.com, else the Artifact Hub repository name. A source link
    is a package link named source, sources, chart source or helm chart source.
-6. Skip a chart when its publisher already has 2 candidates. Skipped charts
+6. Pin the version: the highest version, by semantic-version precedence
+   (1.10.0 above 1.9.0), among the package detail's `available_versions` that
+   has no pre-release part (no `-` suffix; `+build` metadata is fine). Artifact
+   Hub's `prerelease` flag is ignored. When the newest listed version was a
+   pre-release that got passed over, it is recorded as `skippedPrerelease`. A
+   package with no stable version is skipped as `no-stable-version`. The
+   detail's `content_url` describes the newest version, so it is not copied.
+7. Skip a chart when its publisher already has 2 candidates. Skipped charts
    never use up a publisher's places.
 
 Every skipped package is listed with its rank and reason. `candidates.json`

@@ -1,0 +1,30 @@
+{
+ "package_id": "00000000-0000-4000-8000-180545196040",
+ "name": "build-metadata",
+ "normalized_name": "build-metadata",
+ "keywords": null,
+ "links": [
+  {
+   "name": "source",
+   "url": "https://github.com/pin-d/c"
+  }
+ ],
+ "version": "1.2.3+build5",
+ "deprecated": false,
+ "available_versions": [
+  {
+   "version": "1.2.3+build5"
+  },
+  {
+   "version": "1.2.2"
+  }
+ ],
+ "data": {
+  "type": ""
+ },
+ "repository": {
+  "name": "example-repo",
+  "url": "https://charts.example.test",
+  "kind": 0
+ }
+}

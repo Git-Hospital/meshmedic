@@ -13,9 +13,12 @@
   }
  ],
  "version": "1.0.0",
- "prerelease": false,
  "deprecated": false,
- "content_url": "https://charts.example.test/cni-keyword-1.0.0.tgz",
+ "available_versions": [
+  {
+   "version": "1.0.0"
+  }
+ ],
  "data": {
   "type": ""
  },

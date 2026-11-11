@@ -77,6 +77,32 @@
     "url": "https://charts.example.test",
     "kind": 0
    }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-444506952403",
+   "name": "no-links",
+   "normalized_name": "no-links",
+   "stars": 147,
+   "deprecated": false,
+   "version": "1.0.0",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-588880870504",
+   "name": "cni-keyword",
+   "normalized_name": "cni-keyword",
+   "stars": 146,
+   "deprecated": false,
+   "version": "1.0.0",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
   }
  ]
 }

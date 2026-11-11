@@ -393,9 +393,9 @@ func TestFetchStoresRawBodiesAndSums(t *testing.T) {
 			}
 		}
 	}
-	// 25 fixture packages, one deprecated: 5 searches + 24 details.
-	if len(d.reqs) != 5+24 {
-		t.Errorf("made %d requests, want 29", len(d.reqs))
+	// 30 fixture packages, one deprecated: 5 searches + 29 details.
+	if len(d.reqs) != 5+29 {
+		t.Errorf("made %d requests, want 34", len(d.reqs))
 	}
 	// Stored bytes are the served bytes, and the sums verify.
 	got, _ := os.ReadFile(filepath.Join(dir, "pkg-cilium__cilium.json"))
@@ -547,5 +547,56 @@ func rewriteSums(t *testing.T, dir string) {
 	}
 	if err := writeSums(filepath.Join(dir, sumsName), sums); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestVersionPinning(t *testing.T) {
+	o, _ := buildStore(t, store)
+	cases := []struct{ pkg, pinned, passed string }{
+		{"alpha-newest", "15.4.2", "16.0.0-alpha1"}, // newest is a pre-release, older stable exists
+		{"rc-unflagged", "2.1.1", "2.2.0-rc.1"},     // the flag is ignored
+		{"build-metadata", "1.2.3+build5", ""},      // build metadata is stable
+		{"ten-above-nine", "1.10.0", ""},            // numeric, not textual, order
+		{"kube-prometheus-stack", "93.2.0", ""},
+	}
+	for _, c := range cases {
+		got := cand(o, c.pkg, "example-repo")
+		if c.pkg == "kube-prometheus-stack" {
+			got = cand(o, c.pkg, "prometheus-community")
+		}
+		if got == nil || got.Version != c.pinned || got.SkippedPrerelease != c.passed {
+			t.Errorf("%s: %+v, want %s skipping %q", c.pkg, got, c.pinned, c.passed)
+		}
+	}
+	s := skipped(o, "only-prerelease", "example-repo")
+	if s == nil || s.Class != "no-stable-version" || !strings.HasPrefix(s.Reason, "no-stable-version") {
+		t.Errorf("only-prerelease: %+v", s)
+	}
+	if cand(o, "only-prerelease", "example-repo") != nil {
+		t.Error("a package with no stable version must not be a candidate")
+	}
+	for _, e := range []string{`"content_url":`, `"prerelease":`} {
+		if bytes.Contains(mustRead(t, filepath.Join("testdata", "candidates.golden.json")), []byte(e)) {
+			t.Errorf("output still carries %s, which describes the newest version", e)
+		}
+	}
+}
+
+func mustRead(t *testing.T, p string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestPinVersion(t *testing.T) {
+	p, s, ok := pinVersion([]string{"1.9.0", "1.10.0", "v1.2.0", "1.11.0-rc.1", "junk"}, "1.11.0-rc.1")
+	if !ok || p != "1.10.0" || s != "1.11.0-rc.1" {
+		t.Fatalf("%q %q %v", p, s, ok)
+	}
+	if _, _, ok := pinVersion([]string{"1.0.0-alpha", "1.0.0-rc.1"}, "1.0.0-rc.1"); ok {
+		t.Fatal("only pre-releases must not pin")
 	}
 }

@@ -1,6 +1,19 @@
 {
  "packages": [
   {
+   "package_id": "523fac59-94c4-4166-890e-68b138136d70",
+   "name": "consul",
+   "normalized_name": "consul",
+   "stars": 90,
+   "deprecated": false,
+   "version": "2.1.0",
+   "repository": {
+    "name": "hashicorp",
+    "url": "https://helm.releases.hashicorp.com",
+    "kind": 0
+   }
+  },
+  {
    "package_id": "bc2bff04-e334-440d-9a2a-ae616b2f1389",
    "name": "argo-cd",
    "normalized_name": "argo-cd",
@@ -36,19 +49,6 @@
    "repository": {
     "name": "cloudpirates-redis",
     "url": "oci://registry-1.docker.io/cloudpirates/redis",
-    "kind": 0
-   }
-  },
-  {
-   "package_id": "543c2852-a29c-42a0-bbd2-a56030b6d298",
-   "name": "prometheus-operator-crds",
-   "normalized_name": "prometheus-operator-crds",
-   "stars": 35,
-   "deprecated": false,
-   "version": "33.0.2",
-   "repository": {
-    "name": "prometheus-community",
-    "url": "https://prometheus-community.github.io/helm-charts",
     "kind": 0
    }
   }

@@ -1,6 +1,19 @@
 {
  "packages": [
   {
+   "package_id": "543c2852-a29c-42a0-bbd2-a56030b6d298",
+   "name": "prometheus-operator-crds",
+   "normalized_name": "prometheus-operator-crds",
+   "stars": 35,
+   "deprecated": false,
+   "version": "33.0.2",
+   "repository": {
+    "name": "prometheus-community",
+    "url": "https://prometheus-community.github.io/helm-charts",
+    "kind": 0
+   }
+  },
+  {
    "package_id": "38ef6ee4-85bb-4f41-911b-99da9a5e4cca",
    "name": "prometheus-pushgateway",
    "normalized_name": "prometheus-pushgateway",

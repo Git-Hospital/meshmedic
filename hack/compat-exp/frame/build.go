@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -86,11 +87,12 @@ func (e exclusionEntry) matches(repo, name string, keywords []string) bool {
 // --- stored input ---------------------------------------------------------------
 
 type detail struct {
-	Name       string   `json:"name"`
-	Version    string   `json:"version"`
-	ContentURL string   `json:"content_url"`
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Available []struct {
+		Version string `json:"version"`
+	} `json:"available_versions"`
 	Deprecated bool     `json:"deprecated"`
-	Prerelease bool     `json:"prerelease"`
 	Keywords   []string `json:"keywords"`
 	Links      []struct {
 		URL  string `json:"url"`
@@ -155,19 +157,18 @@ func verifyDir(dir string) (string, map[string][]byte, error) {
 // --- output ---------------------------------------------------------------------
 
 type Candidate struct {
-	Rank            int    `json:"rank"`
-	Stars           int    `json:"stars"`
-	Package         string `json:"package"`
-	Repository      string `json:"repository"`
-	RepositoryURL   string `json:"repository_url"`
-	Publisher       string `json:"publisher"`
-	PublisherSource string `json:"publisher_source"`
-	PublisherLink   string `json:"publisher_link,omitempty"`
-	Repo            string `json:"repo,omitempty"`
-	Chart           string `json:"chart"`
-	Version         string `json:"version"`
-	Prerelease      bool   `json:"prerelease"`
-	ContentURL      string `json:"content_url"`
+	Rank              int    `json:"rank"`
+	Stars             int    `json:"stars"`
+	Package           string `json:"package"`
+	Repository        string `json:"repository"`
+	RepositoryURL     string `json:"repository_url"`
+	Publisher         string `json:"publisher"`
+	PublisherSource   string `json:"publisher_source"`
+	PublisherLink     string `json:"publisher_link,omitempty"`
+	Repo              string `json:"repo,omitempty"`
+	Chart             string `json:"chart"`
+	Version           string `json:"version"`
+	SkippedPrerelease string `json:"skippedPrerelease,omitempty"`
 }
 
 type Skipped struct {
@@ -359,8 +360,17 @@ func build(files map[string][]byte, inputSHA string, ex *exclusionFile, exSHA st
 			skip("publisher-cap", fmt.Sprintf("publisher cap: %q already has %d charts in the list", pub, publisherCap))
 			continue
 		}
-		if d.Version == "" {
-			return nil, fmt.Errorf("package %s/%s has no version in its detail", repo, name)
+		var listed []string
+		for _, v := range d.Available {
+			listed = append(listed, v.Version)
+		}
+		if len(listed) == 0 && d.Version != "" {
+			listed = []string{d.Version}
+		}
+		pinned, passed, found := pinVersion(listed, d.Version)
+		if !found {
+			skip("no-stable-version", "no-stable-version: none of the listed versions is free of a pre-release part")
+			continue
 		}
 		perPublisher[pub]++
 		rurl := p.Repository.URL
@@ -371,7 +381,7 @@ func build(files map[string][]byte, inputSHA string, ex *exclusionFile, exSHA st
 		out.Candidates = append(out.Candidates, Candidate{
 			Rank: rank, Stars: p.Stars, Package: name, Repository: repo, RepositoryURL: rurl,
 			Publisher: pub, PublisherSource: how, PublisherLink: link,
-			Repo: crepo, Chart: chart, Version: d.Version, Prerelease: d.Prerelease, ContentURL: d.ContentURL,
+			Repo: crepo, Chart: chart, Version: pinned, SkippedPrerelease: passed,
 		})
 	}
 	out.Counts = Counts{Ranked: len(ranked), Candidates: len(out.Candidates), Skipped: len(out.Skipped), Publishers: len(perPublisher)}
@@ -473,4 +483,71 @@ func chartsFile(in, out string) error {
 		return err
 	}
 	return os.WriteFile(out, data, 0o644)
+}
+
+// parseVersion reads MAJOR.MINOR.PATCH (more numeric parts allowed), with an
+// optional leading v. pre reports a pre-release part; build metadata after +
+// is dropped and never affects precedence or stability.
+func parseVersion(v string) (nums []int, pre bool, ok bool) {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if i := strings.IndexByte(v, '+'); i >= 0 {
+		v = v[:i]
+	}
+	if i := strings.IndexByte(v, '-'); i >= 0 {
+		pre = true
+		v = v[:i]
+	}
+	if v == "" {
+		return nil, false, false
+	}
+	for _, p := range strings.Split(v, ".") {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return nil, false, false
+		}
+		nums = append(nums, n)
+	}
+	return nums, pre, true
+}
+
+func cmpNums(a, b []int) int {
+	for i := 0; i < len(a) || i < len(b); i++ {
+		var x, y int
+		if i < len(a) {
+			x = a[i]
+		}
+		if i < len(b) {
+			y = b[i]
+		}
+		if x != y {
+			if x < y {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+// pinVersion returns the highest listed version with no pre-release part, by
+// semantic-version precedence, ignoring Artifact Hub's prerelease flag. When
+// the newest listed version (newest) is a pre-release that was passed over, it
+// is returned as passed. found is false when no stable version is listed.
+func pinVersion(listed []string, newest string) (pinned, passed string, found bool) {
+	var best []int
+	for _, v := range listed {
+		nums, pre, ok := parseVersion(v)
+		if !ok || pre {
+			continue
+		}
+		if !found || cmpNums(nums, best) > 0 {
+			best, pinned, found = nums, v, true
+		}
+	}
+	if found {
+		if _, pre, ok := parseVersion(newest); ok && pre {
+			passed = newest
+		}
+	}
+	return
 }

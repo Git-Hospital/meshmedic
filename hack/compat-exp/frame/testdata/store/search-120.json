@@ -1,32 +1,6 @@
 {
  "packages": [
   {
-   "package_id": "00000000-0000-4000-8000-444506952403",
-   "name": "no-links",
-   "normalized_name": "no-links",
-   "stars": 147,
-   "deprecated": false,
-   "version": "1.0.0",
-   "repository": {
-    "name": "example-repo",
-    "url": "https://charts.example.test",
-    "kind": 0
-   }
-  },
-  {
-   "package_id": "00000000-0000-4000-8000-588880870504",
-   "name": "cni-keyword",
-   "normalized_name": "cni-keyword",
-   "stars": 146,
-   "deprecated": false,
-   "version": "1.0.0",
-   "repository": {
-    "name": "example-repo",
-    "url": "https://charts.example.test",
-    "kind": 0
-   }
-  },
-  {
    "package_id": "cc720a54-333c-4b12-a191-c971ab4435fa",
    "name": "istiod",
    "normalized_name": "istiod",
@@ -40,15 +14,67 @@
    }
   },
   {
-   "package_id": "523fac59-94c4-4166-890e-68b138136d70",
-   "name": "consul",
-   "normalized_name": "consul",
-   "stars": 90,
+   "package_id": "00000000-0000-4000-8000-526551682241",
+   "name": "alpha-newest",
+   "normalized_name": "alpha-newest",
+   "stars": 140,
    "deprecated": false,
-   "version": "2.1.0",
+   "version": "16.0.0-alpha1",
    "repository": {
-    "name": "hashicorp",
-    "url": "https://helm.releases.hashicorp.com",
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-275883253951",
+   "name": "rc-unflagged",
+   "normalized_name": "rc-unflagged",
+   "stars": 139,
+   "deprecated": false,
+   "version": "2.2.0-rc.1",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-154889418229",
+   "name": "only-prerelease",
+   "normalized_name": "only-prerelease",
+   "stars": 138,
+   "deprecated": false,
+   "version": "0.1.0-beta.2",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-180545196040",
+   "name": "build-metadata",
+   "normalized_name": "build-metadata",
+   "stars": 137,
+   "deprecated": false,
+   "version": "1.2.3+build5",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
+    "kind": 0
+   }
+  },
+  {
+   "package_id": "00000000-0000-4000-8000-769641971543",
+   "name": "ten-above-nine",
+   "normalized_name": "ten-above-nine",
+   "stars": 136,
+   "deprecated": false,
+   "version": "1.9.0",
+   "repository": {
+    "name": "example-repo",
+    "url": "https://charts.example.test",
     "kind": 0
    }
   }

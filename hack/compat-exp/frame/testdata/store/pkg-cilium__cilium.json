@@ -18,9 +18,993 @@
   }
  ],
  "version": "1.21.0-pre.4",
- "prerelease": false,
  "deprecated": false,
- "content_url": "https://helm.cilium.io/cilium-1.21.0-pre.4.tgz",
+ "available_versions": [
+  {
+   "version": "1.21.0-pre.4"
+  },
+  {
+   "version": "1.18.16"
+  },
+  {
+   "version": "1.20.4"
+  },
+  {
+   "version": "1.19.10"
+  },
+  {
+   "version": "1.20.3"
+  },
+  {
+   "version": "1.19.9"
+  },
+  {
+   "version": "1.18.15"
+  },
+  {
+   "version": "1.21.0-pre.3"
+  },
+  {
+   "version": "1.20.2"
+  },
+  {
+   "version": "1.19.8"
+  },
+  {
+   "version": "1.18.14"
+  },
+  {
+   "version": "1.21.0-pre.2"
+  },
+  {
+   "version": "1.18.13"
+  },
+  {
+   "version": "1.19.7"
+  },
+  {
+   "version": "1.20.1"
+  },
+  {
+   "version": "1.21.0-pre.0"
+  },
+  {
+   "version": "1.20.0"
+  },
+  {
+   "version": "1.20.0-rc.1"
+  },
+  {
+   "version": "1.19.6"
+  },
+  {
+   "version": "1.17.18"
+  },
+  {
+   "version": "1.18.12"
+  },
+  {
+   "version": "1.20.0-rc.0"
+  },
+  {
+   "version": "1.20.0-pre.4"
+  },
+  {
+   "version": "1.19.5"
+  },
+  {
+   "version": "1.17.17"
+  },
+  {
+   "version": "1.18.11"
+  },
+  {
+   "version": "1.20.0-pre.3"
+  },
+  {
+   "version": "1.17.16"
+  },
+  {
+   "version": "1.18.10"
+  },
+  {
+   "version": "1.19.4"
+  },
+  {
+   "version": "1.20.0-pre.2"
+  },
+  {
+   "version": "1.19.3"
+  },
+  {
+   "version": "1.18.9"
+  },
+  {
+   "version": "1.17.15"
+  },
+  {
+   "version": "1.20.0-pre.1"
+  },
+  {
+   "version": "1.19.2"
+  },
+  {
+   "version": "1.18.8"
+  },
+  {
+   "version": "1.17.14"
+  },
+  {
+   "version": "1.20.0-pre.0"
+  },
+  {
+   "version": "1.19.1"
+  },
+  {
+   "version": "1.18.7"
+  },
+  {
+   "version": "1.17.13"
+  },
+  {
+   "version": "1.19.0"
+  },
+  {
+   "version": "1.19.0-rc.1"
+  },
+  {
+   "version": "1.19.0-rc.0"
+  },
+  {
+   "version": "1.17.12"
+  },
+  {
+   "version": "1.18.6"
+  },
+  {
+   "version": "1.16.19"
+  },
+  {
+   "version": "1.19.0-pre.4"
+  },
+  {
+   "version": "1.16.18"
+  },
+  {
+   "version": "1.18.5"
+  },
+  {
+   "version": "1.17.11"
+  },
+  {
+   "version": "1.19.0-pre.3"
+  },
+  {
+   "version": "1.17.10"
+  },
+  {
+   "version": "1.18.4"
+  },
+  {
+   "version": "1.16.17"
+  },
+  {
+   "version": "1.19.0-pre.2"
+  },
+  {
+   "version": "1.17.9"
+  },
+  {
+   "version": "1.18.3"
+  },
+  {
+   "version": "1.16.16"
+  },
+  {
+   "version": "1.19.0-pre.1"
+  },
+  {
+   "version": "1.16.15"
+  },
+  {
+   "version": "1.17.8"
+  },
+  {
+   "version": "1.18.2"
+  },
+  {
+   "version": "1.16.13"
+  },
+  {
+   "version": "1.19.0-pre.0"
+  },
+  {
+   "version": "1.18.1"
+  },
+  {
+   "version": "1.17.7"
+  },
+  {
+   "version": "1.16.12"
+  },
+  {
+   "version": "1.18.0"
+  },
+  {
+   "version": "1.17.6"
+  },
+  {
+   "version": "1.15.19"
+  },
+  {
+   "version": "1.18.0-rc.1"
+  },
+  {
+   "version": "1.18.0-rc.0"
+  },
+  {
+   "version": "1.17.5"
+  },
+  {
+   "version": "1.16.11"
+  },
+  {
+   "version": "1.15.18"
+  },
+  {
+   "version": "1.18.0-pre.3"
+  },
+  {
+   "version": "1.17.4"
+  },
+  {
+   "version": "1.16.10"
+  },
+  {
+   "version": "1.15.17"
+  },
+  {
+   "version": "1.18.0-pre.2"
+  },
+  {
+   "version": "1.18.0-pre.0"
+  },
+  {
+   "version": "1.18.0-pre.1"
+  },
+  {
+   "version": "1.17.3"
+  },
+  {
+   "version": "1.16.9"
+  },
+  {
+   "version": "1.15.16"
+  },
+  {
+   "version": "1.16.8"
+  },
+  {
+   "version": "1.17.2"
+  },
+  {
+   "version": "1.15.15"
+  },
+  {
+   "version": "1.16.7"
+  },
+  {
+   "version": "1.15.14"
+  },
+  {
+   "version": "1.17.1"
+  },
+  {
+   "version": "1.17.0"
+  },
+  {
+   "version": "1.17.0-rc.2"
+  },
+  {
+   "version": "1.16.6"
+  },
+  {
+   "version": "1.15.13"
+  },
+  {
+   "version": "1.14.19"
+  },
+  {
+   "version": "1.17.0-rc.1"
+  },
+  {
+   "version": "1.17.0-rc.0"
+  },
+  {
+   "version": "1.16.5"
+  },
+  {
+   "version": "1.15.12"
+  },
+  {
+   "version": "1.14.18"
+  },
+  {
+   "version": "1.17.0-pre.3"
+  },
+  {
+   "version": "1.14.17"
+  },
+  {
+   "version": "1.15.11"
+  },
+  {
+   "version": "1.16.4"
+  },
+  {
+   "version": "1.17.0-pre.2"
+  },
+  {
+   "version": "1.14.16"
+  },
+  {
+   "version": "1.16.3"
+  },
+  {
+   "version": "1.15.10"
+  },
+  {
+   "version": "1.17.0-pre.1"
+  },
+  {
+   "version": "1.16.2"
+  },
+  {
+   "version": "1.15.9"
+  },
+  {
+   "version": "1.14.15"
+  },
+  {
+   "version": "1.17.0-pre.0"
+  },
+  {
+   "version": "1.16.1"
+  },
+  {
+   "version": "1.15.8"
+  },
+  {
+   "version": "1.14.14"
+  },
+  {
+   "version": "1.16.0"
+  },
+  {
+   "version": "1.16.0-rc.2"
+  },
+  {
+   "version": "1.13.18"
+  },
+  {
+   "version": "1.14.13"
+  },
+  {
+   "version": "1.15.7"
+  },
+  {
+   "version": "1.16.0-rc.1"
+  },
+  {
+   "version": "1.16.0-rc.0"
+  },
+  {
+   "version": "1.13.17"
+  },
+  {
+   "version": "1.14.12"
+  },
+  {
+   "version": "1.15.6"
+  },
+  {
+   "version": "1.16.0-pre.3"
+  },
+  {
+   "version": "1.13.16"
+  },
+  {
+   "version": "1.14.11"
+  },
+  {
+   "version": "1.15.5"
+  },
+  {
+   "version": "1.16.0-pre.2"
+  },
+  {
+   "version": "1.15.4"
+  },
+  {
+   "version": "1.14.10"
+  },
+  {
+   "version": "1.13.15"
+  },
+  {
+   "version": "1.16.0-pre.1"
+  },
+  {
+   "version": "1.13.14"
+  },
+  {
+   "version": "1.14.9"
+  },
+  {
+   "version": "1.15.3"
+  },
+  {
+   "version": "1.14.8"
+  },
+  {
+   "version": "1.13.13"
+  },
+  {
+   "version": "1.15.2"
+  },
+  {
+   "version": "1.16.0-pre.0"
+  },
+  {
+   "version": "1.15.1"
+  },
+  {
+   "version": "1.12.19"
+  },
+  {
+   "version": "1.13.12"
+  },
+  {
+   "version": "1.14.7"
+  },
+  {
+   "version": "1.15.0"
+  },
+  {
+   "version": "1.14.6"
+  },
+  {
+   "version": "1.13.11"
+  },
+  {
+   "version": "1.12.18"
+  },
+  {
+   "version": "1.15.0-rc.1"
+  },
+  {
+   "version": "1.15.0-rc.0"
+  },
+  {
+   "version": "1.14.5"
+  },
+  {
+   "version": "1.13.10"
+  },
+  {
+   "version": "1.12.17"
+  },
+  {
+   "version": "1.15.0-pre.3"
+  },
+  {
+   "version": "1.14.4"
+  },
+  {
+   "version": "1.13.9"
+  },
+  {
+   "version": "1.12.16"
+  },
+  {
+   "version": "1.15.0-pre.2"
+  },
+  {
+   "version": "1.14.3"
+  },
+  {
+   "version": "1.12.15"
+  },
+  {
+   "version": "1.13.8"
+  },
+  {
+   "version": "1.15.0-pre.1"
+  },
+  {
+   "version": "1.12.14"
+  },
+  {
+   "version": "1.13.7"
+  },
+  {
+   "version": "1.14.2"
+  },
+  {
+   "version": "1.15.0-pre.0"
+  },
+  {
+   "version": "1.14.1"
+  },
+  {
+   "version": "1.12.13"
+  },
+  {
+   "version": "1.11.20"
+  },
+  {
+   "version": "1.13.6"
+  },
+  {
+   "version": "1.13.5"
+  },
+  {
+   "version": "1.12.12"
+  },
+  {
+   "version": "1.11.19"
+  },
+  {
+   "version": "1.14.0"
+  },
+  {
+   "version": "1.14.0-rc.1"
+  },
+  {
+   "version": "1.14.0-rc.0"
+  },
+  {
+   "version": "1.14.0-snapshot.4"
+  },
+  {
+   "version": "1.13.4"
+  },
+  {
+   "version": "1.12.11"
+  },
+  {
+   "version": "1.11.18"
+  },
+  {
+   "version": "1.14.0-snapshot.3"
+  },
+  {
+   "version": "1.13.3"
+  },
+  {
+   "version": "1.12.10"
+  },
+  {
+   "version": "1.11.17"
+  },
+  {
+   "version": "1.14.0-snapshot.2"
+  },
+  {
+   "version": "1.13.2"
+  },
+  {
+   "version": "1.12.9"
+  },
+  {
+   "version": "1.11.16"
+  },
+  {
+   "version": "1.14.0-snapshot.1"
+  },
+  {
+   "version": "1.13.1"
+  },
+  {
+   "version": "1.12.8"
+  },
+  {
+   "version": "1.11.15"
+  },
+  {
+   "version": "1.14.0-snapshot.0"
+  },
+  {
+   "version": "1.13.0"
+  },
+  {
+   "version": "1.12.7"
+  },
+  {
+   "version": "1.11.14"
+  },
+  {
+   "version": "1.10.20"
+  },
+  {
+   "version": "1.12.6"
+  },
+  {
+   "version": "1.11.13"
+  },
+  {
+   "version": "1.10.19"
+  },
+  {
+   "version": "1.13.0-rc5"
+  },
+  {
+   "version": "1.13.0-rc4"
+  },
+  {
+   "version": "1.12.5"
+  },
+  {
+   "version": "1.11.12"
+  },
+  {
+   "version": "1.10.18"
+  },
+  {
+   "version": "1.13.0-rc3"
+  },
+  {
+   "version": "1.10.17"
+  },
+  {
+   "version": "1.11.11"
+  },
+  {
+   "version": "1.12.4"
+  },
+  {
+   "version": "1.13.0-rc2"
+  },
+  {
+   "version": "1.12.3"
+  },
+  {
+   "version": "1.11.10"
+  },
+  {
+   "version": "1.10.16"
+  },
+  {
+   "version": "1.13.0-rc1"
+  },
+  {
+   "version": "1.12.2"
+  },
+  {
+   "version": "1.11.9"
+  },
+  {
+   "version": "1.10.15"
+  },
+  {
+   "version": "1.13.0-rc0"
+  },
+  {
+   "version": "1.12.1"
+  },
+  {
+   "version": "1.11.8"
+  },
+  {
+   "version": "1.10.14"
+  },
+  {
+   "version": "1.12.0"
+  },
+  {
+   "version": "1.11.7"
+  },
+  {
+   "version": "1.10.13"
+  },
+  {
+   "version": "1.9.18"
+  },
+  {
+   "version": "1.12.0-rc3"
+  },
+  {
+   "version": "1.11.6"
+  },
+  {
+   "version": "1.10.12"
+  },
+  {
+   "version": "1.9.17"
+  },
+  {
+   "version": "1.11.5"
+  },
+  {
+   "version": "1.10.11"
+  },
+  {
+   "version": "1.9.16"
+  },
+  {
+   "version": "1.12.0-rc2"
+  },
+  {
+   "version": "1.11.4"
+  },
+  {
+   "version": "1.10.10"
+  },
+  {
+   "version": "1.9.15"
+  },
+  {
+   "version": "1.12.0-rc1"
+  },
+  {
+   "version": "1.11.3"
+  },
+  {
+   "version": "1.10.9"
+  },
+  {
+   "version": "1.9.14"
+  },
+  {
+   "version": "1.12.0-rc0"
+  },
+  {
+   "version": "1.11.2"
+  },
+  {
+   "version": "1.10.8"
+  },
+  {
+   "version": "1.9.13"
+  },
+  {
+   "version": "1.11.1"
+  },
+  {
+   "version": "1.10.7"
+  },
+  {
+   "version": "1.9.12"
+  },
+  {
+   "version": "1.10.6"
+  },
+  {
+   "version": "1.11.0"
+  },
+  {
+   "version": "1.11.0-rc3"
+  },
+  {
+   "version": "1.11.0-rc2"
+  },
+  {
+   "version": "1.11.0-rc1"
+  },
+  {
+   "version": "1.9.11"
+  },
+  {
+   "version": "1.8.13"
+  },
+  {
+   "version": "1.10.5"
+  },
+  {
+   "version": "1.11.0-rc0"
+  },
+  {
+   "version": "1.10.4"
+  },
+  {
+   "version": "1.9.10"
+  },
+  {
+   "version": "1.8.12"
+  },
+  {
+   "version": "1.8.11"
+  },
+  {
+   "version": "1.9.9"
+  },
+  {
+   "version": "1.10.3"
+  },
+  {
+   "version": "1.10.2"
+  },
+  {
+   "version": "1.10.1"
+  },
+  {
+   "version": "1.9.8"
+  },
+  {
+   "version": "1.10.0"
+  },
+  {
+   "version": "1.9.7"
+  },
+  {
+   "version": "1.8.10"
+  },
+  {
+   "version": "1.10.0-rc2"
+  },
+  {
+   "version": "1.10.0-rc1"
+  },
+  {
+   "version": "1.9.6"
+  },
+  {
+   "version": "1.8.9"
+  },
+  {
+   "version": "1.7.16"
+  },
+  {
+   "version": "1.10.0-rc0"
+  },
+  {
+   "version": "1.9.5"
+  },
+  {
+   "version": "1.8.8"
+  },
+  {
+   "version": "1.7.15"
+  },
+  {
+   "version": "1.7.14"
+  },
+  {
+   "version": "1.8.7"
+  },
+  {
+   "version": "1.9.4"
+  },
+  {
+   "version": "1.7.13"
+  },
+  {
+   "version": "1.9.3"
+  },
+  {
+   "version": "1.9.2"
+  },
+  {
+   "version": "1.9.1"
+  },
+  {
+   "version": "1.8.6"
+  },
+  {
+   "version": "1.7.12"
+  },
+  {
+   "version": "1.9.0"
+  },
+  {
+   "version": "1.9.0-rc3"
+  },
+  {
+   "version": "1.8.5"
+  },
+  {
+   "version": "1.7.11"
+  },
+  {
+   "version": "1.9.0-rc2"
+  },
+  {
+   "version": "1.9.0-rc1"
+  },
+  {
+   "version": "1.8.4"
+  },
+  {
+   "version": "1.7.10"
+  },
+  {
+   "version": "1.6.12"
+  },
+  {
+   "version": "1.8.3"
+  },
+  {
+   "version": "1.7.9"
+  },
+  {
+   "version": "1.7.8"
+  },
+  {
+   "version": "1.9.0-rc0"
+  },
+  {
+   "version": "1.7.7"
+  },
+  {
+   "version": "1.6.11"
+  },
+  {
+   "version": "1.8.2"
+  },
+  {
+   "version": "1.7.6"
+  },
+  {
+   "version": "1.8.1"
+  },
+  {
+   "version": "1.6.10"
+  },
+  {
+   "version": "1.8.0"
+  },
+  {
+   "version": "1.8.0-rc4"
+  },
+  {
+   "version": "1.8.0-rc3"
+  },
+  {
+   "version": "1.7.5"
+  },
+  {
+   "version": "1.6.9"
+  },
+  {
+   "version": "1.8.0-rc2"
+  },
+  {
+   "version": "1.8.0-rc1"
+  },
+  {
+   "version": "1.7.4"
+  },
+  {
+   "version": "1.7.3"
+  },
+  {
+   "version": "1.7.2"
+  },
+  {
+   "version": "1.6.8"
+  },
+  {
+   "version": "1.7.1"
+  },
+  {
+   "version": "1.6.7"
+  },
+  {
+   "version": "1.7.0"
+  },
+  {
+   "version": "1.7.0-rc4"
+  },
+  {
+   "version": "1.7.0-rc3"
+  },
+  {
+   "version": "1.6.6"
+  },
+  {
+   "version": "1.6.5"
+  }
+ ],
  "data": {
   "type": ""
  },
