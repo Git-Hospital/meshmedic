@@ -122,6 +122,9 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
+          # No cache of any kind: a later, more trusted job must never restore
+          # something an earlier job on a runner with hostile charts wrote.
+          cache: false
       - name: ledger check
         env:
           GUARD_MODE: ${{ inputs.mode }}
@@ -132,6 +135,47 @@ jobs:
           else
             echo "ledger check: not needed in mode $GUARD_MODE"
           fi
+
+      # The record of what this run was, for the analysis to decide whether it
+      # is admissible. Written here from workflow context and the checked-out
+      # commit only: nothing in it comes from a chart, a record or a cluster.
+      # chartsFile is the file the guard resolved (the mode's default when the
+      # input is empty), chartsSha256 its hash at headSha, freezeTagSha the
+      # commit the freeze tag points to ("" before the tag exists), fixId ""
+      # outside certify.
+      - name: run metadata
+        env:
+          MD_MODE: ${{ inputs.mode }}
+          MD_ISTIO: ${{ inputs.istio }}
+          MD_CHARTS_FILE: ${{ inputs.charts_file }}
+          MD_FIX_ID: ${{ inputs.fix_id }}
+          MD_HEAD_SHA: ${{ github.sha }}
+          MD_RUN_ID: ${{ github.run_id }}
+          MD_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          case "$MD_MODE" in
+            acceptance) charts_file=hack/compat-exp/acceptance-charts.json ;;
+            qualify) charts_file="${MD_CHARTS_FILE:-hack/compat-exp/candidates-charts.json}" ;;
+            *) charts_file="${MD_CHARTS_FILE:-hack/compat-exp/charts-exp.json}" ;;
+          esac
+          charts_sha="$(sha256sum "$charts_file" | cut -d' ' -f1)"
+          freeze_sha="$(git rev-parse -q --verify 'refs/tags/compat-exp-freeze^{commit}' || true)"
+          mkdir -p run-metadata
+          jq -n \
+            --arg mode "$MD_MODE" --arg istio "$MD_ISTIO" --arg chartsFile "$charts_file" \
+            --arg chartsSha256 "$charts_sha" --arg fixId "$MD_FIX_ID" --arg headSha "$MD_HEAD_SHA" \
+            --arg freezeTagSha "$freeze_sha" --argjson runId "$MD_RUN_ID" --argjson runAttempt "$MD_RUN_ATTEMPT" \
+            '{mode: $mode, istio: $istio, chartsFile: $chartsFile, chartsSha256: $chartsSha256, fixId: $fixId,
+              headSha: $headSha, freezeTagSha: $freezeTagSha, runId: $runId, runAttempt: $runAttempt}' \
+            >run-metadata/run-metadata.json
+          cat run-metadata/run-metadata.json
+      # actions/upload-artifact v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: run-metadata-${{ github.run_id }}-${{ github.run_attempt }}
+          path: run-metadata/run-metadata.json
+          if-no-files-found: error
 
   # The matrix, computed from the chart list. guard.sh fails the run if it
   # would pass 256 jobs (GitHub's limit per run).
@@ -379,12 +423,45 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
+          # No cache of any kind: a later, more trusted job must never restore
+          # something an earlier job on a runner with hostile charts wrote.
+          cache: false
+      # One directory per artifact (results/exp-<run>-<chart>-<world>/), never
+      # merged: with merge-multiple a job whose chart is hostile could write a
+      # file under another chart's name and replace that chart's record.
       # actions/download-artifact v4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: exp-${{ github.run_id }}-*
           path: results
-          merge-multiple: true
+      # The records are data and nothing else: no step sources, evals or runs
+      # anything under results/; only difftable reads it, as JSON. A record must
+      # also say it belongs to the artifact it came from (chart id and world),
+      # or the report does not run.
+      - name: check records
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          rm -rf results/*/debug
+          shopt -s nullglob
+          dirs=(results/exp-"$RUN_ID"-*/)
+          if [ "${#dirs[@]}" -eq 0 ]; then echo "no observe artifacts were downloaded" >&2; exit 1; fi
+          if [ -n "$(find results -type l -print -quit)" ]; then echo "a symbolic link in the downloaded records" >&2; exit 1; fi
+          for d in "${dirs[@]}"; do
+            d="${d%/}"
+            name="${d#results/exp-"$RUN_ID"-}"
+            world="${name##*-}"
+            chart="${name%-*}"
+            if ! [[ "$world" =~ ^W[0-9]$ && -n "$chart" && "$chart" != "$name" ]]; then echo "artifact $d has no chart and world in its name" >&2; exit 1; fi
+            while IFS= read -r -d '' f; do
+              if ! jq -e --arg c "$chart" --arg w "$world" '.chart == $c and .world == $w' "$f" >/dev/null; then
+                echo "record $f is not a record of chart $chart in world $world (the artifact it came from)" >&2
+                exit 1
+              fi
+            done < <(find "$d" -type f -name '*.json' -print0)
+          done
+          echo "records checked: ${#dirs[@]} artifacts"
       # The experiment has no W2 (it matched W1 in every row of pilot 1), so
       # difftable compares W1 and W3. Certification passes the fix entry's own
       # cell worlds and ignore file.
@@ -395,7 +472,6 @@ jobs:
           IGNORE_FILE: ${{ needs.plan.outputs.ignore }}
         run: |
           set -euo pipefail
-          rm -rf results/debug
           args=(-worlds W1,W3)
           if [ -n "$CELL_WORLDS" ]; then args+=(-cell-worlds "$CELL_WORLDS"); fi
           if [ -n "$IGNORE_FILE" ]; then args+=(-ignore "$IGNORE_FILE"); fi

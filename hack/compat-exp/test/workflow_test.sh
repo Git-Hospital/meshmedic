@@ -84,13 +84,76 @@ eq "select job runs select.sh" "$(jq -r '.jobs.select.steps[] | select(.name == 
 eq "the qualify and observe jobs read the plan's chart list" "$(q '[.jobs.qualify.env.CHARTS_FILE, .jobs.observe.env.CHARTS_FILE] | unique | length')" 1
 
 # the post-run tools: ledger check in the guard job for certify and recheck, nothing else on the runner
-eq "the guard job sets up Go for the ledger tool" "$(jq -c '[.jobs.guard.steps[] | .uses // empty | sub("@.*"; "")]' "$j")" '["actions/checkout","actions/setup-go"]'
-eq "the ledger check step runs after the guard step" "$(jq -c '[.jobs.guard.steps[] | .name // empty]' "$j")" '["guard","ledger check"]'
+eq "the guard job sets up Go for the ledger tool and uploads the run metadata" "$(jq -c '[.jobs.guard.steps[] | .uses // empty | sub("@.*"; "")]' "$j")" '["actions/checkout","actions/setup-go","actions/upload-artifact"]'
+eq "the ledger check step runs after the guard step, the metadata after both" "$(jq -c '[.jobs.guard.steps[] | .name // empty]' "$j")" '["guard","ledger check","run metadata"]'
 eq "the ledger check runs the ledger tool in certify and recheck only" "$(jq -c '.jobs.guard.steps[] | select(.name == "ledger check") | .run | [contains("= certify"), contains("= recheck"), contains("go run ./hack/compat-exp/ledger/cmd/ledger check")]' "$j")" '[true,true,true]'
 eq "the ledger check takes the mode through env" "$(jq -c '.jobs.guard.steps[] | select(.name == "ledger check") | .env | keys' "$j")" '["GUARD_MODE"]'
 eq "the notice step for the other tools is gone" "$(grep -c 'post-run tools present\|not invoked here' "$wf" || true)" 0
 eq "no run block calls crossrun, static.sh or staticcheck" "$(jq -r '[.jobs[].steps[]? | .run // empty] | join(" ")' "$j" | grep -c 'crossrun\|static\.sh\|staticcheck' || true)" 0
 eq "ledger is called only in the guard job" "$(jq -c '[.jobs | to_entries[] | select(.value.steps | map(.run // "") | join(" ") | test("ledger")) | .key]' "$j")" '["guard"]'
+
+# C2 (a): no cache of any kind that a later, more trusted job could restore
+eq "every setup-go step sets cache: false" "$(jq -c '[.jobs[].steps[]? | select((.uses // "") | startswith("actions/setup-go")) | .with.cache] | unique' "$j")" '[false]'
+eq "there is at least one setup-go step" "$(jq -c '[.jobs[].steps[]? | select((.uses // "") | startswith("actions/setup-go"))] | length > 0' "$j")" true
+eq "no actions/cache anywhere" "$(grep -c 'actions/cache' "$wf" || true)" 0
+
+# C2 (b): the report job is its own job and treats the records as data
+eq "report is a job of its own, after observe, with no step shared with observe" "$(q '[.jobs.report.needs, (.jobs.report | has("strategy"))]')" '[["plan","observe"],false]'
+eq "report downloads every observe artifact into its own directory (no merge-multiple anywhere in it)" "$(jq -c '[.jobs.report.steps[] | select((.uses // "") | startswith("actions/download-artifact")) | .with | has("merge-multiple")]' "$j")" '[false]'
+eq "observe artifact name is fixed by chart and world" "$(jq -r '.jobs.observe.steps[] | select((.uses // "") | startswith("actions/upload-artifact")) | .with.name' "$j")" 'exp-${{ github.run_id }}-${{ matrix.chart }}-${{ matrix.world }}'
+eq "the records are checked before difftable runs" "$(jq -c '[.jobs.report.steps[] | .name // empty]' "$j")" '["check records","difftable"]'
+eq "nothing in report sources, evals or executes a downloaded file" "$(jq -r '.jobs.report.steps[] | .run // empty' "$j" | grep -Ec '(^|[^[:alnum:]_])(source|eval|exec|chmod|bash|sh|python[0-9]*|node)[[:space:]]+[^|]*results|(^|[[:space:];&|])\.[[:space:]]+[^ ]*results|\./results|\$\(.*results/[^)]*\.sh' || true)" 0
+eq "the only thing report runs from the tree is difftable" "$(jq -r '.jobs.report.steps[] | .run // empty' "$j" | grep -c 'go run \./hack/compat-pilot/difftable' )" 2
+eq "nothing but report reads exp- artifacts" "$(jq -c '[.jobs | to_entries[] | select(.value.steps | map(.with.pattern // "") | any(startswith("exp-"))) | .key]' "$j")" '["report"]'
+
+# The check step, run for real on fixtures: a record that does not name its
+# own artifact's chart and world stops the report.
+step_run() { jq -r --arg job "$1" --arg step "$2" '.jobs[$job].steps[] | select(.name == $step) | .run' "$j"; }
+check_run="$(step_run report "check records")"
+work="$(mktemp -d)"
+trap 'rm -f "$j"; rm -rf "$work"' EXIT
+mkrec() { # dir chart world
+  mkdir -p "$1"; printf '{"chart":"%s","world":"%s","run":1,"obs":{}}\n' "$2" "$3" >"$1/$2.$3.run1.json"
+}
+fresh() { rm -rf "$work/c"; mkdir -p "$work/c"; }
+run_check() { (cd "$work/c" && RUN_ID=77 bash -c "$check_run") >/dev/null 2>&1; }
+fresh; mkrec "$work/c/results/exp-77-redis-W1" redis W1; mkrec "$work/c/results/exp-77-redis-fix-W3" redis-fix W3
+if run_check; then ok "check records: matching records pass (a chart id with hyphens too)"; else fail "check records: matching records failed"; fi
+fresh; mkrec "$work/c/results/exp-77-redis-W1" redis W1; mkrec "$work/c/results/exp-77-valkey-W1" redis W1
+if run_check; then fail "check records: another chart's record in an artifact passed"; else ok "check records: a record of another chart fails"; fi
+fresh; mkrec "$work/c/results/exp-77-redis-W1" redis W3
+if run_check; then fail "check records: a record of another world passed"; else ok "check records: a record of another world fails"; fi
+fresh; mkrec "$work/c/results/exp-77-redis-W1" redis W1; echo '[1]' >"$work/c/results/exp-77-redis-W1/x.json"
+if run_check; then fail "check records: a json file that is no record passed"; else ok "check records: a json file that is no record fails"; fi
+fresh; mkrec "$work/c/results/exp-77-redis-W1" redis W1; ln -s /etc/hosts "$work/c/results/exp-77-redis-W1/link.json"
+if run_check; then fail "check records: a symbolic link passed"; else ok "check records: a symbolic link fails"; fi
+fresh; mkdir -p "$work/c/results"
+if run_check; then fail "check records: no artifacts passed"; else ok "check records: no artifacts fails"; fi
+fresh; mkrec "$work/c/results/exp-77-redis-W1" redis W1; mkdir -p "$work/c/results/exp-77-redis-W1/debug"; echo 'not json' >"$work/c/results/exp-77-redis-W1/debug/pods.json"
+if run_check; then ok "check records: results/*/debug is dropped, not parsed"; else fail "check records: debug files were parsed"; fi
+
+# C2 (c): the run metadata, written by the guard job from workflow context only
+meta_run="$(step_run guard "run metadata")"
+eq "the metadata step takes everything through env" "$(jq -c '.jobs.guard.steps[] | select(.name == "run metadata") | .env | keys' "$j")" '["MD_CHARTS_FILE","MD_FIX_ID","MD_HEAD_SHA","MD_ISTIO","MD_MODE","MD_RUN_ATTEMPT","MD_RUN_ID"]'
+eq "the metadata artifact is named by run id and attempt" "$(jq -r '.jobs.guard.steps[] | select((.uses // "") | startswith("actions/upload-artifact")) | [.with.name, .with.path, .with["if-no-files-found"]] | join(" ")' "$j")" 'run-metadata-${{ github.run_id }}-${{ github.run_attempt }} run-metadata/run-metadata.json error'
+eq "the metadata step reads no result, record or plan file" "$(grep -c 'results\|plan/\|charts\.json"' <<<"$meta_run" || true)" 0
+fresh
+(
+  cd "$work/c"
+  git init -q . && git config user.email t@t && git config user.name t
+  mkdir -p hack/compat-exp && echo '[{"id":"a"}]' >hack/compat-exp/acceptance-charts.json && echo '[]' >hack/compat-exp/charts-exp.json
+  git add . && git commit -q -m c && git tag compat-exp-freeze
+) >/dev/null 2>&1
+meta() { # mode charts_file fix_id
+  (cd "$work/c" && MD_MODE="$1" MD_ISTIO=1.31.3 MD_CHARTS_FILE="$2" MD_FIX_ID="$3" MD_HEAD_SHA=abc123 MD_RUN_ID=77 MD_RUN_ATTEMPT=2 bash -c "$meta_run" >/dev/null 2>&1 && cat run-metadata/run-metadata.json)
+}
+head_tag="$(git -C "$work/c" rev-parse HEAD)"
+want_sha="$(sha256sum "$work/c/hack/compat-exp/acceptance-charts.json" | cut -d' ' -f1)"
+eq "metadata, acceptance: exact fields" "$(meta acceptance "" "" | jq -c --arg sha "$want_sha" --arg tag "$head_tag" '. == {mode:"acceptance", istio:"1.31.3", chartsFile:"hack/compat-exp/acceptance-charts.json", chartsSha256:$sha, fixId:"", headSha:"abc123", freezeTagSha:$tag, runId:77, runAttempt:2}')" true
+eq "metadata, certify: default charts file and the fix id" "$(meta certify "" fix-a | jq -c '[.chartsFile, .fixId, .mode]')" '["hack/compat-exp/charts-exp.json","fix-a","certify"]'
+eq "metadata has exactly the nine fields" "$(meta observe "" "" | jq -c 'keys')" '["chartsFile","chartsSha256","fixId","freezeTagSha","headSha","istio","mode","runAttempt","runId"]'
+git -C "$work/c" tag -d compat-exp-freeze >/dev/null
+eq "metadata: freezeTagSha is empty before the tag exists" "$(meta acceptance "" "" | jq -r '.freezeTagSha')" ""
 
 # the workflow is in the guard's frozen list, and the guard exists
 eq "the workflow is a frozen file" "$(grep -c '^  \.github/workflows/compat-exp\.yml$' "$guard")" 1

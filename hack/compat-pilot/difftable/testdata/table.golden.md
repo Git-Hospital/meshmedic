@@ -2,12 +2,12 @@
 
 A finding is an observation that held in every W0 run and differed in every run of another world (3 runs each).
 
-| chart | version | W1 sidecar+init | W2 sidecar+cni | W3 ambient |
-|---|---|---|---|---|
-| db | 9.0.0 | differs (1) | same | undecided |
-| redis | 1.0.0 | same | same | differs (1) |
-| redis-fix | 1.0.0 | same | same | same |
-| web | 2.3.1 | flaky (1) | same | undecided |
+| chart | version | W0 installs | W1 sidecar+init | W2 sidecar+cni | W3 ambient |
+|---|---|---|---|---|---|
+| db | 9.0.0 | 3/3 ok | differs (1) | same | undecided |
+| redis | 1.0.0 | 3/3 ok | same | same | differs (1) |
+| redis-fix | 1.0.0 | 3/3 ok | same | same | same |
+| web | 2.3.1 | 3/3 ok | flaky (1) | same | undecided |
 
 ## Certificates
 

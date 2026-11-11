@@ -24,12 +24,16 @@ type Report struct {
 
 // ChartReport is one chart, or one fix entry, across the compared worlds.
 type ChartReport struct {
-	Chart        string        `json:"chart"`
-	ChartVersion string        `json:"chartVersion"`
-	FixOf        string        `json:"fixOf,omitempty"`
-	Environment  string        `json:"environment,omitempty"`
-	Worlds       []WorldReport `json:"worlds"`
-	Certificate  *CertReport   `json:"certificate,omitempty"`
+	Chart        string `json:"chart"`
+	ChartVersion string `json:"chartVersion"`
+	FixOf        string `json:"fixOf,omitempty"`
+	Environment  string `json:"environment,omitempty"`
+	// OracleInstall counts the oracle world's installs from obs["helm:install"]
+	// of its records, so a "same" verdict over installs that failed everywhere
+	// is visible.
+	OracleInstall OracleInstall `json:"oracleInstall"`
+	Worlds        []WorldReport `json:"worlds"`
+	Certificate   *CertReport   `json:"certificate,omitempty"`
 }
 
 // WorldReport is one chart in one mesh world, held against the oracle.
@@ -85,6 +89,10 @@ type CertReport struct {
 	// WorldsNotCompared lists the worlds with no verdict that the ignore file
 	// let the certificate pass (key "*"); they are not in Ignored.
 	WorldsNotCompared []IgnoreCell `json:"worldsNotCompared"`
+	// IgnoredChanged lists ignored cells whose value under the fix differs
+	// from the base's ("ignored cell changed under the fix"); any entry fails
+	// the certificate.
+	IgnoredChanged []IgnoredChange `json:"ignoredChanged"`
 }
 
 func verdictWord(c Comparison) string {
@@ -117,7 +125,8 @@ func (a *analysis) report() Report {
 		certs[c.Fix] = c
 	}
 	for _, chart := range a.charts {
-		cr := ChartReport{Chart: chart, Worlds: []WorldReport{}, Environment: environment(a.byChart[chart])}
+		cr := ChartReport{Chart: chart, Worlds: []WorldReport{}, Environment: environment(a.byChart[chart]),
+			OracleInstall: oracleInstall(a.byChart[chart][oracleWorld])}
 		for _, rs := range a.byChart[chart] {
 			if len(rs) > 0 {
 				cr.ChartVersion, cr.FixOf = rs[0].ChartVersion, rs[0].FixOf
@@ -141,7 +150,7 @@ func (a *analysis) report() Report {
 		if c, ok := certs[chart]; ok {
 			cr.Certificate = &CertReport{Fix: c.Fix, Base: c.Base, Certified: c.Certified(),
 				Cleared: nonNil(c.Cleared), Problems: nonNil(c.Problems),
-				CellWorlds: nonNil(c.CellWorlds), Ignored: nonNil(c.Ignored), WorldsNotCompared: nonNil(c.NotCompared)}
+				CellWorlds: nonNil(c.CellWorlds), Ignored: nonNil(c.Ignored), WorldsNotCompared: nonNil(c.NotCompared), IgnoredChanged: nonNil(c.IgnoredChanged)}
 		}
 		r.Charts = append(r.Charts, cr)
 	}

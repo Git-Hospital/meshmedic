@@ -236,7 +236,16 @@ func analyze(records []Record, minRuns int, opts CertifyOpts) (*analysis, error)
 			used[e] = true
 		}
 	}
+	fixOnly := map[IgnoreCell]bool{}
+	for _, c := range certs {
+		for _, e := range c.FixOnly {
+			fixOnly[e] = true
+		}
+	}
 	for _, e := range opts.Ignore {
+		if !used[e] && fixOnly[e] {
+			return nil, fmt.Errorf("ignore entry %s %s %q matches a cell that differs only with the fix; the ignore list may hold only cells of the base chart (rule 5)", e.Chart, e.World, e.Key)
+		}
 		if !used[e] {
 			return nil, fmt.Errorf("ignore entry %s %s %q matches no cell of any fix entry (stale list?)", e.Chart, e.World, e.Key)
 		}
@@ -250,11 +259,11 @@ func (a *analysis) table(w io.Writer) error {
 	p := func(format string, a ...any) { fmt.Fprintf(w, format, a...) }
 	p("# Compat pilot\n\n")
 	p("A finding is an observation that held in every %s run and differed in every run of another world (%d runs each).\n\n", oracleWorld, minRuns)
-	p("| chart | version |")
+	p("| chart | version | %s installs |", oracleWorld)
 	for _, world := range meshWorlds {
 		p(" %s %s |", world, worldLabels[world])
 	}
-	p("\n|---|---|%s\n", strings.Repeat("---|", len(meshWorlds)))
+	p("\n|---|---|---|%s\n", strings.Repeat("---|", len(meshWorlds)))
 	for _, chart := range charts {
 		version := ""
 		for _, rs := range byChart[chart] {
@@ -267,7 +276,7 @@ func (a *analysis) table(w io.Writer) error {
 		for _, c := range results[chart] {
 			cells = append(cells, c.Verdict())
 		}
-		p("| %s | %s | %s |\n", chart, version, strings.Join(cells, " | "))
+		p("| %s | %s | %s | %s |\n", chart, version, oracleInstall(byChart[chart][oracleWorld]).cell(), strings.Join(cells, " | "))
 	}
 
 	if len(certs) > 0 {
@@ -289,6 +298,12 @@ func (a *analysis) table(w io.Writer) error {
 				}
 				for _, e := range c.NotCompared {
 					p("- `%s` did not compare %s (entries of %s): %s\n", c.Fix, e.World, e.Chart, e.Reason)
+				}
+				if len(c.IgnoredChanged) > 0 {
+					p("\nIgnored cell changed under the fix, so `%s` is not certified:\n\n", c.Fix)
+				}
+				for _, ch := range c.IgnoredChanged {
+					p("- ignored cell changed under the fix: %s `%s`, %s `%s`, `%s` `%s`\n", ch.World, ch.Key, c.Base, strings.Join(ch.BaseValues, "|"), c.Fix, strings.Join(ch.FixValues, "|"))
 				}
 				if len(c.Ignored) > 0 {
 					p("\nIgnored cells of `%s`, not counted as remaining findings:\n\n", c.Fix)
