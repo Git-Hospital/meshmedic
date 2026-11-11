@@ -1,0 +1,44 @@
+{
+  "charts": [
+    {
+      "id": "podinfo",
+      "publisher": "stefanprodan"
+    },
+    {
+      "id": "argo-cd",
+      "publisher": "argoproj"
+    },
+    {
+      "id": "prometheus-pushgateway",
+      "publisher": "prometheus-community"
+    },
+    {
+      "id": "kube-prometheus-stack",
+      "publisher": "prometheus-community"
+    },
+    {
+      "id": "redis",
+      "publisher": "bitnami"
+    },
+    {
+      "id": "rabbitmq",
+      "publisher": "bitnami"
+    },
+    {
+      "id": "cloudnative-pg",
+      "publisher": "cloudnative-pg"
+    },
+    {
+      "id": "nats",
+      "publisher": "nats-io"
+    },
+    {
+      "id": "grafana",
+      "publisher": "grafana-community"
+    },
+    {
+      "id": "valkey",
+      "publisher": "valkey-io"
+    }
+  ]
+}
