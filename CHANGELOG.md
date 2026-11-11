@@ -74,7 +74,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   signal, so the ordinary proof would time the remediation and call it the
   reset.
 
-  Thirteen of eighteen entries are report-only and are skipped with a reason,
+  Eleven of eighteen entries are report-only and are skipped with a reason,
   which is a design choice rather than a coverage gap and is reported as one.
   The revert is declared rather than derived, because a patch that creates an
   object and one that edits it are undone differently, and guessing from the
@@ -197,6 +197,20 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   blind and a harness to blame an entry.
 
 ### Fixed
+
+- **`meshmedic-prove remediate` could report a wrong verdict, and is now held
+  to the rule the detection proof follows.** It credited a patch on a single
+  clear reading, on a signal that returned no series or NaN, and across a
+  suspended machine; it blamed the patch, or the entry, for a blind observer
+  or a Ctrl-C. Recovery now needs a measured clear held for the entry's own
+  hold (at least three polls), and every reading that is not a measurement
+  ends the run as BLIND. A failed revert no longer skips the fault's reset,
+  and both undos are bounded. Relative thresholds are warmed first. Inject,
+  reset and revert must pin one kube context, in either spelling of the flag.
+  The confirmation prints the patch, its apply command and its revert. An
+  entry that proposes a patch nobody checks is reported as `unchecked`, not
+  as report-only, and a run that proved nothing exits 1. None of this has
+  had a live run yet.
 
 - **The prover's preflight could call a testbed quiet on the strength of a dead
   Prometheus.** Its breach check treated any query error as "no series", which

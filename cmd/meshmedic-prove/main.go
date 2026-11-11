@@ -28,6 +28,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -185,8 +186,18 @@ func main() {
 	// Print exactly what is about to be done to the cluster, then require an
 	// acknowledgement. A silence run injects nothing, so it has nothing to
 	// acknowledge and skips this.
+	//
+	// A remediation run also writes the entry's own patch, so the patch is
+	// part of what is acknowledged: rendered here, from the same plan the run
+	// executes, so what the operator read is byte for byte what is applied.
+	var plans []proof.RemediationPlan
+	if remediateMode {
+		for _, sp := range specs {
+			plans = append(plans, proof.PlanRemediation(scenarios, sp))
+		}
+	}
 	if !silenceMode {
-		requireAcknowledgement(specs, *yes)
+		requireAcknowledgement(specs, plans, *yes)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -412,14 +423,18 @@ func preflight(promURL, kubeContext string, scenarios []catalog.Scenario, specs 
 			// different one means the dossiers describe another cluster,
 			// which is how a triage proof came back full of connection
 			// errors while the traffic was fine.
+			//
+			// Reset and revert count too. A spec whose reset or revert goes
+			// to another cluster leaves its fault, or its patch, behind on
+			// this one while reporting a clean undo.
 			pinned := map[string]bool{}
 			for _, sp := range specs {
-				for _, c := range sp.Inject {
-					for _, a := range c.Run {
-						if strings.HasPrefix(a, "--context=") {
-							pinned[strings.TrimPrefix(a, "--context=")] = true
-						}
-					}
+				c, err := proof.SpecContext(sp)
+				if err != nil {
+					return sp.Entry + ": " + err.Error(), false
+				}
+				if c != "" {
+					pinned[c] = true
 				}
 			}
 			if len(pinned) == 0 {
@@ -577,25 +592,64 @@ func breachedPreflight(v float64, op string, threshold float64) bool {
 
 // confirmed prints every command that will be run against the cluster and
 // returns whether the operator has acknowledged it.
-func confirmed(specs []proof.Spec, acknowledged bool) bool {
-	fmt.Fprintln(os.Stderr, "meshmedic-prove INJECTS FAULTS into the cluster it is pointed at.")
-	fmt.Fprintf(os.Stderr, "It will run the following against %d entries:\n\n", len(specs))
+//
+// plans is set for a remediation run, and then the patch each entry will
+// apply is printed in full with the command that applies it and the revert
+// that undoes it. Without that the acknowledgement covered the fault and not
+// the change written on top of it, which is the part an operator is least
+// able to guess.
+func confirmed(w io.Writer, specs []proof.Spec, plans []proof.RemediationPlan, acknowledged bool) bool {
+	byEntry := map[string]proof.RemediationPlan{}
+	for _, p := range plans {
+		byEntry[p.Entry] = p
+	}
+	fmt.Fprintln(w, "meshmedic-prove INJECTS FAULTS into the cluster it is pointed at.")
+	if plans != nil {
+		fmt.Fprintln(w, "This run also APPLIES each entry's own patch on top of the fault.")
+	}
+	fmt.Fprintf(w, "It will run the following against %d entries:\n\n", len(specs))
 	for _, sp := range specs {
-		fmt.Fprintf(os.Stderr, "  %s\n", sp.Entry)
+		fmt.Fprintf(w, "  %s\n", sp.Entry)
+		plan, remediating := byEntry[sp.Entry]
+		switch {
+		case !remediating:
+		case plan.Err != nil:
+			fmt.Fprintf(w, "    not run: %v\n", plan.Err)
+			continue
+		case plan.Skipped != "":
+			fmt.Fprintf(w, "    not run: %s\n", plan.Skipped)
+			continue
+		case plan.Unchecked != "":
+			fmt.Fprintf(w, "    not run: %s\n", plan.Unchecked)
+			continue
+		}
 		for _, c := range sp.Inject {
-			fmt.Fprintf(os.Stderr, "    inject  %s\n", strings.Join(c.Run, " "))
+			fmt.Fprintf(w, "    inject  %s\n", strings.Join(c.Run, " "))
+		}
+		if remediating {
+			fmt.Fprintf(w, "    apply   %s, once the entry is in breach, with this on stdin:\n", strings.Join(plan.Apply, " "))
+			for _, line := range strings.Split(strings.TrimRight(plan.Patch, "\n"), "\n") {
+				fmt.Fprintf(w, "            | %s\n", line)
+			}
+			for _, c := range plan.Revert {
+				fmt.Fprintf(w, "    revert  %s\n", strings.Join(c.Run, " "))
+			}
 		}
 		for _, c := range sp.Reset {
-			fmt.Fprintf(os.Stderr, "    reset   %s\n", strings.Join(c.Run, " "))
+			fmt.Fprintf(w, "    reset   %s\n", strings.Join(c.Run, " "))
 		}
 	}
-	fmt.Fprintln(os.Stderr, "\nEvery proof resets what it injected, including on failure and on interrupt.")
-	fmt.Fprintln(os.Stderr, "Point this at a testbed. Never at anything you care about.")
+	if plans != nil {
+		fmt.Fprintln(w, "\nEvery run reverts the patch it applied and resets what it injected, including on failure and on interrupt.")
+	} else {
+		fmt.Fprintln(w, "\nEvery proof resets what it injected, including on failure and on interrupt.")
+	}
+	fmt.Fprintln(w, "Point this at a testbed. Never at anything you care about.")
 	if acknowledged {
-		fmt.Fprintln(os.Stderr, "\n--yes-inject-faults given, proceeding.")
+		fmt.Fprintln(w, "\n--yes-inject-faults given, proceeding.")
 		return true
 	}
-	fmt.Fprintln(os.Stderr, "\nRefusing to run without --yes-inject-faults.")
+	fmt.Fprintln(w, "\nRefusing to run without --yes-inject-faults.")
 	return false
 }
 
@@ -786,8 +840,8 @@ func selectSpecs(specs []proof.Spec, want []string) (selected []proof.Spec, miss
 // cluster and refuses to continue without a yes. A tool that mutates a mesh
 // should never do it because someone pasted a command without reading it, and
 // the printed list is the difference between an informed act and an accident.
-func requireAcknowledgement(specs []proof.Spec, yes bool) {
-	if !confirmed(specs, yes) {
+func requireAcknowledgement(specs []proof.Spec, plans []proof.RemediationPlan, yes bool) {
+	if !confirmed(os.Stderr, specs, plans, yes) {
 		os.Exit(2)
 	}
 }
@@ -918,7 +972,7 @@ func summarizeRemediation(results []proof.RemediationResult) int {
 	fmt.Println()
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "ENTRY\tRESULT\tAT FIRE\tAFTER FIX\tTHRESHOLD\tCLEARED IN\tDETAIL")
-	var passed, failed, blind, skipped int
+	var passed, failed, blind, skipped, unchecked int
 	for _, r := range results {
 		switch r.Verdict() {
 		case "pass":
@@ -927,6 +981,8 @@ func summarizeRemediation(results []proof.RemediationResult) int {
 			blind++
 		case "skipped":
 			skipped++
+		case "unchecked":
+			unchecked++
 		default:
 			failed++
 		}
@@ -940,7 +996,7 @@ func summarizeRemediation(results []proof.RemediationResult) int {
 		if r.Cleared {
 			in = r.ClearedAfter.Round(time.Second).String()
 		}
-		detail := r.Skipped
+		detail := r.Skipped + r.Unchecked
 		if detail == "" {
 			detail = strings.Join(r.Failures, "; ")
 		}
@@ -952,18 +1008,35 @@ func summarizeRemediation(results []proof.RemediationResult) int {
 	}
 	w.Flush()
 
-	fmt.Printf("\n%d remedies attempted: %d proved, %d failed, %d blind, %d skipped\n",
-		len(results), passed, failed, blind, skipped)
+	fmt.Printf("\n%d remedies attempted: %d proved, %d failed, %d blind; %d unchecked, %d skipped\n",
+		passed+failed+blind, passed, failed, blind, unchecked, skipped)
 	if skipped > 0 {
 		// Said, not warned about. Most of this catalog proposes a dossier
 		// rather than a patch, and that is a design choice rather than a gap.
-		fmt.Printf("%d entries propose no patch, so there was no fix to prove.\n", skipped)
+		fmt.Printf("%d entries are report-only and propose no patch, so there was no fix to prove.\n", skipped)
+	}
+	if unchecked > 0 {
+		// The other silence, and it is a gap. Printing it under the line
+		// above once told the operator these entries propose no patch.
+		fmt.Printf("%d entries propose a patch that no spec checks yet: nothing has shown those patches work.\n"+
+			"  Add a remediation block to their spec.\n", unchecked)
+	}
+	if blind > 0 {
+		fmt.Printf("%d run(s) said nothing about their patch: the harness could not measure it.\n"+
+			"  Fix the observer and re-run those; do not read them as failures or as passes.\n", blind)
 	}
 	if failed > 0 {
 		fmt.Printf("%d entries reported an incident and proposed a change that did not stop it.\n", failed)
 		return 1
 	}
 	if blind > 0 {
+		return 1
+	}
+	// A run that proved nothing is not a success, however clean it looks.
+	// Every entry skipped, or none selected, used to exit 0, which a script
+	// reads as "the remedies work".
+	if passed == 0 {
+		fmt.Println("No remedy was proven by this run, so it exits non-zero.")
 		return 1
 	}
 	return 0
