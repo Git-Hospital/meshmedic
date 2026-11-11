@@ -94,15 +94,12 @@ func newRemediationRunner(t *testing.T, scenarios []catalog.Scenario, script det
 // place, and the signal recovers anyway. Removing the fault first would prove
 // only that the fault caused the incident, which the ordinary proof covers.
 func TestRemediationProvesTheFixWorksWithTheFaultStillThere(t *testing.T) {
-	tick := 0
-	entry := remediableEntry("error-surge")
-	// Breaches for three ticks, then recovers: the patch lands on tick 3.
-	script := scriptedProm{tick: &tick, values: map[string][]float64{
-		"error-surge": {150, 150, 150, 20, 20, 20},
-	}}
-	rec := &recorder{}
-	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-	r := newRemediationRunner(t, []catalog.Scenario{entry}, script, rec, &tick, &now)
+	// In breach while the fault is in, clear once the patch lands. Keyed on
+	// what was done to the cluster rather than on a tick count, because a
+	// signal that falls on a schedule is a fault decaying by itself, which
+	// the harness now refuses to credit.
+	r, rec, _, _ := remediationRig(t, remediableEntry("error-surge"),
+		breachUntilPatched(func(int) reading { return value(20) }))
 
 	res := r.Remediate(context.Background(), remediationSpec("error-surge"))
 
@@ -140,12 +137,8 @@ func TestRemediationProvesTheFixWorksWithTheFaultStillThere(t *testing.T) {
 // target's own parameters. A proof that applies something else has proven
 // something else.
 func TestRemediationAppliesTheEntrysOwnRenderedPatch(t *testing.T) {
-	tick := 0
-	entry := remediableEntry("error-surge")
-	script := scriptedProm{tick: &tick, values: map[string][]float64{"error-surge": {150, 20}}}
-	rec := &recorder{}
-	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-	r := newRemediationRunner(t, []catalog.Scenario{entry}, script, rec, &tick, &now)
+	r, rec, _, _ := remediationRig(t, remediableEntry("error-surge"),
+		breachUntilPatched(func(int) reading { return value(20) }))
 
 	res := r.Remediate(context.Background(), remediationSpec("error-surge"))
 	if len(rec.stdin) != 1 {
@@ -255,8 +248,8 @@ func TestRemediationDoesNotPatchAClusterThatIsFine(t *testing.T) {
 	if len(rec.stdin) != 0 {
 		t.Errorf("something was piped to the cluster anyway: %v", rec.stdin)
 	}
-	if !strings.Contains(strings.Join(res.Failures, " "), "no incident to remedy") {
-		t.Errorf("the failure should say there was no incident, got: %v", res.Failures)
+	if res.Verdict() != "ERROR" || !strings.Contains(strings.Join(res.Errors, " "), "no incident to remedy") {
+		t.Errorf("verdict = %s, want ERROR saying there was no incident, got: %v", res.Verdict(), res.Errors)
 	}
 }
 
@@ -264,12 +257,8 @@ func TestRemediationDoesNotPatchAClusterThatIsFine(t *testing.T) {
 // remediation applied through a different context is a change to somebody
 // else's mesh.
 func TestRemediationAppliesThroughTheSameContextAsTheFault(t *testing.T) {
-	tick := 0
-	entry := remediableEntry("error-surge")
-	script := scriptedProm{tick: &tick, values: map[string][]float64{"error-surge": {150, 20}}}
-	rec := &recorder{}
-	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-	r := newRemediationRunner(t, []catalog.Scenario{entry}, script, rec, &tick, &now)
+	r, rec, _, _ := remediationRig(t, remediableEntry("error-surge"),
+		breachUntilPatched(func(int) reading { return value(20) }))
 
 	r.Remediate(context.Background(), remediationSpec("error-surge"))
 	var applyArgv []string

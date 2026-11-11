@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 
@@ -109,8 +110,69 @@ func TestRemediationSummaryFailsWhenNothingWasProven(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := summarizeRemediation(c.results); got != c.want {
+			if got := summarizeRemediation(io.Discard, c.results); got != c.want {
 				t.Errorf("exit = %d, want %d", got, c.want)
+			}
+		})
+	}
+}
+
+// Review finding 3, the summary half. A setup error, a cleanup failure after a
+// held clear, and a patch that did not work are three different facts, and
+// the summary told all three as "proposed a change that did not stop it".
+func TestRemediationSummaryNamesWhatFailed(t *testing.T) {
+	cases := []struct {
+		name    string
+		results []proof.RemediationResult
+		want    int
+		says    []string
+		never   []string
+	}{
+		{
+			name:    "a setup error",
+			results: []proof.RemediationResult{{Entry: "a", Errors: []string{"inject failed"}}},
+			want:    1,
+			says:    []string{"ERROR", "could not be set up"},
+			never:   []string{"did not stop it", "did not end"},
+		},
+		{
+			name: "a pass whose cleanup failed",
+			results: []proof.RemediationResult{{Entry: "a", Fired: true, Applied: true, Cleared: true,
+				CleanupErrors: []string{"RESET FAILED (x): boom"}}},
+			want:  1,
+			says:  []string{"PASS", "FAILED", "the patch ended the incident", "may still carry"},
+			never: []string{"did not stop it", "did not end"},
+		},
+		{
+			name:    "a patch that did not work",
+			results: []proof.RemediationResult{{Entry: "a", Fired: true, Applied: true, Reverted: true, Reset: true, Failures: []string{"still in breach"}}},
+			want:    1,
+			says:    []string{"FAIL", "did not end a held breach"},
+		},
+		{
+			name:    "a clean pass",
+			results: []proof.RemediationResult{{Entry: "a", Fired: true, Applied: true, Cleared: true, Reverted: true, Reset: true}},
+			want:    0,
+			says:    []string{"PASS", "1 proved"},
+			never:   []string{"FAILED"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if got := summarizeRemediation(&buf, c.results); got != c.want {
+				t.Errorf("exit = %d, want %d", got, c.want)
+			}
+			out := buf.String()
+			for _, s := range c.says {
+				if !strings.Contains(out, s) {
+					t.Errorf("summary does not say %q:\n%s", s, out)
+				}
+			}
+			for _, s := range c.never {
+				if strings.Contains(out, s) {
+					t.Errorf("summary says %q:\n%s", s, out)
+				}
 			}
 		})
 	}

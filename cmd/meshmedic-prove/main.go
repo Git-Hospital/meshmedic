@@ -261,8 +261,8 @@ func main() {
 			}
 			res := runner.Remediate(ctx, sp)
 			results = append(results, res)
-			logger.Printf("[%d/%d] %s: %s (%s)", i+1, len(specs), sp.Entry, res.Verdict(), res.Duration.Round(time.Second))
-			for _, f := range res.Failures {
+			logger.Printf("[%d/%d] %s: %s, cleanup %s (%s)", i+1, len(specs), sp.Entry, res.Verdict(), res.Cleanup(), res.Duration.Round(time.Second))
+			for _, f := range append(append(append([]string{}, res.Errors...), res.Failures...), res.CleanupErrors...) {
 				logger.Printf("    %s", f)
 			}
 			if ctx.Err() != nil {
@@ -272,7 +272,7 @@ func main() {
 		if *resultsPath != "" {
 			writeRemediation(*resultsPath, results, logger)
 		}
-		os.Exit(summarizeRemediation(results))
+		os.Exit(summarizeRemediation(os.Stdout, results))
 	}
 
 	results := make([]proof.Result, 0, len(specs))
@@ -627,7 +627,7 @@ func confirmed(w io.Writer, specs []proof.Spec, plans []proof.RemediationPlan, a
 			fmt.Fprintf(w, "    inject  %s\n", strings.Join(c.Run, " "))
 		}
 		if remediating {
-			fmt.Fprintf(w, "    apply   %s, once the entry is in breach, with this on stdin:\n", strings.Join(plan.Apply, " "))
+			fmt.Fprintf(w, "    apply   %s, once the breach has held for the entry's hold, with this on stdin:\n", strings.Join(plan.Apply, " "))
 			for _, line := range strings.Split(strings.TrimRight(plan.Patch, "\n"), "\n") {
 				fmt.Fprintf(w, "            | %s\n", line)
 			}
@@ -967,24 +967,37 @@ func writeSilence(path string, reports []proof.SilenceReport, logger *log.Logger
 	logger.Printf("silence reports written to %s", path)
 }
 
-// summarizeRemediation prints what applying each entry's own patch proved.
-func summarizeRemediation(results []proof.RemediationResult) int {
-	fmt.Println()
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "ENTRY\tRESULT\tAT FIRE\tAFTER FIX\tTHRESHOLD\tCLEARED IN\tDETAIL")
-	var passed, failed, blind, skipped, unchecked int
+// summarizeRemediation prints what applying each entry's own patch proved,
+// and returns the exit code.
+//
+// Each verdict gets its own sentence, because each says something different:
+// ERROR is about the spec or the testbed, BLIND about the observer, FAIL about
+// the patch. The cleanup is a separate column and a separate sentence, so a
+// patch that ended the incident is still reported as having done so when the
+// undo after it failed, and the run still exits non-zero.
+func summarizeRemediation(out io.Writer, results []proof.RemediationResult) int {
+	fmt.Fprintln(out)
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "ENTRY\tRESULT\tAT FIRE\tAFTER FIX\tTHRESHOLD\tCLEARED IN\tCLEANUP\tDETAIL")
+	var passed, failed, blind, errored, skipped, unchecked int
+	var dirty []proof.RemediationResult
 	for _, r := range results {
 		switch r.Verdict() {
-		case "pass":
+		case "PASS":
 			passed++
 		case "BLIND":
 			blind++
+		case "ERROR":
+			errored++
 		case "skipped":
 			skipped++
 		case "unchecked":
 			unchecked++
 		default:
 			failed++
+		}
+		if len(r.CleanupErrors) > 0 {
+			dirty = append(dirty, r)
 		}
 		atFire, after, in := "-", "-", "-"
 		if r.Fired {
@@ -998,45 +1011,62 @@ func summarizeRemediation(results []proof.RemediationResult) int {
 		}
 		detail := r.Skipped + r.Unchecked
 		if detail == "" {
-			detail = strings.Join(r.Failures, "; ")
+			detail = strings.Join(append(append(append([]string{}, r.Errors...), r.Failures...), r.CleanupErrors...), "; ")
 		}
 		if detail == "" {
 			detail = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%.4g\t%s\t%s\n",
-			r.Entry, r.Verdict(), atFire, after, r.Threshold, in, detail)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%.4g\t%s\t%s\t%s\n",
+			r.Entry, r.Verdict(), atFire, after, r.Threshold, in, r.Cleanup(), detail)
 	}
 	w.Flush()
 
-	fmt.Printf("\n%d remedies attempted: %d proved, %d failed, %d blind; %d unchecked, %d skipped\n",
-		passed+failed+blind, passed, failed, blind, unchecked, skipped)
+	fmt.Fprintf(out, "\n%d remedies attempted: %d proved, %d failed, %d blind, %d errored; %d unchecked, %d skipped\n",
+		passed+failed+blind+errored, passed, failed, blind, errored, unchecked, skipped)
 	if skipped > 0 {
 		// Said, not warned about. Most of this catalog proposes a dossier
 		// rather than a patch, and that is a design choice rather than a gap.
-		fmt.Printf("%d entries are report-only and propose no patch, so there was no fix to prove.\n", skipped)
+		fmt.Fprintf(out, "%d entries are report-only and propose no patch, so there was no fix to prove.\n", skipped)
 	}
 	if unchecked > 0 {
 		// The other silence, and it is a gap. Printing it under the line
 		// above once told the operator these entries propose no patch.
-		fmt.Printf("%d entries propose a patch that no spec checks yet: nothing has shown those patches work.\n"+
+		fmt.Fprintf(out, "%d entries propose a patch that no spec checks yet: nothing has shown those patches work.\n"+
 			"  Add a remediation block to their spec.\n", unchecked)
 	}
+	if errored > 0 {
+		fmt.Fprintf(out, "%d run(s) could not be set up: a spec that cannot run as written, a fault that did not inject, or an incident that never formed.\n"+
+			"  They say nothing about the patch. Fix the spec or the testbed and re-run them.\n", errored)
+	}
 	if blind > 0 {
-		fmt.Printf("%d run(s) said nothing about their patch: the harness could not measure it.\n"+
+		fmt.Fprintf(out, "%d run(s) said nothing about their patch: the harness could not measure it.\n"+
 			"  Fix the observer and re-run those; do not read them as failures or as passes.\n", blind)
 	}
 	if failed > 0 {
-		fmt.Printf("%d entries reported an incident and proposed a change that did not stop it.\n", failed)
-		return 1
+		fmt.Fprintf(out, "%d patch(es) did not end a held breach: applied and watched not ending it, or refused by the cluster.\n", failed)
 	}
-	if blind > 0 {
+	if len(dirty) > 0 {
+		// Loud, and apart from the verdicts. What the patch did was watched
+		// before the undo ran, so a failed undo does not change it; it does
+		// mean the next run may start on a testbed that still carries this
+		// one's patch or fault.
+		fmt.Fprintf(out, "%d run(s) could not undo what they did: the testbed may still carry a patch or a fault. Check it before the next run.\n", len(dirty))
+		for _, r := range dirty {
+			if r.Passed() {
+				fmt.Fprintf(out, "  %s: the patch ended the incident; the cleanup after it failed.\n", r.Entry)
+				continue
+			}
+			fmt.Fprintf(out, "  %s: %s, and the cleanup after it failed.\n", r.Entry, r.Verdict())
+		}
+	}
+	if failed > 0 || blind > 0 || errored > 0 || len(dirty) > 0 {
 		return 1
 	}
 	// A run that proved nothing is not a success, however clean it looks.
 	// Every entry skipped, or none selected, used to exit 0, which a script
 	// reads as "the remedies work".
 	if passed == 0 {
-		fmt.Println("No remedy was proven by this run, so it exits non-zero.")
+		fmt.Fprintln(out, "No remedy was proven by this run, so it exits non-zero.")
 		return 1
 	}
 	return 0

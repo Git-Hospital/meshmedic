@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -118,6 +119,10 @@ func ran(rec *recorder, fragment string) bool {
 // Hypothesis 1. A revert that fails must not leave the fault behind as well:
 // the reset is a separate undo with a separate purpose, and skipping it because
 // an unrelated command failed leaves the testbed broken twice over.
+//
+// The failed revert is its own fact. The patch held a clear before it, so the
+// patch's result stays a pass, and the cleanup is reported as failed beside
+// it; the command exits non-zero on the cleanup alone.
 func TestRemediationResetsTheFaultEvenWhenTheRevertFails(t *testing.T) {
 	r, rec, _, _ := remediationRig(t, remediableEntry("error-surge"),
 		breachUntilPatched(func(int) reading { return value(20) }))
@@ -131,11 +136,17 @@ func TestRemediationResetsTheFaultEvenWhenTheRevertFails(t *testing.T) {
 	if res.Reverted {
 		t.Error("a failed revert was recorded as reverted")
 	}
-	if res.Passed() {
-		t.Error("a run that could not undo its own patch must not pass")
+	if !res.Reset {
+		t.Error("the reset succeeded and was not recorded")
 	}
-	if !strings.Contains(strings.Join(res.Failures, " "), "REVERT FAILED") {
-		t.Errorf("failures = %v, want the failed revert named", res.Failures)
+	if !res.Passed() {
+		t.Errorf("the failed revert rewrote the patch's own result: %s %v", res.Verdict(), res.Failures)
+	}
+	if res.Cleanup() != "FAILED" || !strings.Contains(strings.Join(res.CleanupErrors, " "), "REVERT FAILED") {
+		t.Errorf("cleanup = %s %v, want the failed revert named", res.Cleanup(), res.CleanupErrors)
+	}
+	if len(res.Failures) != 0 {
+		t.Errorf("a cleanup failure was filed against the patch: %v", res.Failures)
 	}
 }
 
@@ -238,6 +249,7 @@ func TestRemediationRequiresTheClearToHold(t *testing.T) {
 		return value(150)
 	}))
 	s := remediationSpec("error-surge")
+	s.FiresWithin = Duration(2 * time.Minute) // room for the 60s breach hold
 	s.Remediation.ClearsWithin = Duration(4 * time.Minute)
 
 	res := r.Remediate(context.Background(), s)
@@ -260,6 +272,7 @@ func TestRemediationPassesWhenTheClearHoldsForTheEntrysHold(t *testing.T) {
 	entry.Signal.For = "60s"
 	r, _, _, _ := remediationRig(t, entry, breachUntilPatched(func(int) reading { return value(20) }))
 	s := remediationSpec("error-surge")
+	s.FiresWithin = Duration(2 * time.Minute) // room for the 60s breach hold
 	s.Remediation.ClearsWithin = Duration(3 * time.Minute)
 
 	res := r.Remediate(context.Background(), s)
@@ -290,8 +303,8 @@ func TestRemediationRefusesAClearsWithinInsideTheSustain(t *testing.T) {
 	if len(rec.argv) != 0 {
 		t.Errorf("an unwinnable spec touched the cluster: %v", rec.argv)
 	}
-	if !strings.Contains(strings.Join(res.Failures, " "), "clearsWithin") {
-		t.Errorf("failures = %v, want the deadline named", res.Failures)
+	if res.Verdict() != "ERROR" || !strings.Contains(strings.Join(res.Errors, " "), "clearsWithin") {
+		t.Errorf("verdict = %s, errors = %v, want ERROR naming the deadline", res.Verdict(), res.Errors)
 	}
 }
 
@@ -311,8 +324,8 @@ func TestRemediationRefusesCommandsThatTargetDifferentContexts(t *testing.T) {
 	if len(rec.argv) != 0 {
 		t.Errorf("commands ran against two clusters: %v", rec.argv)
 	}
-	if !strings.Contains(strings.Join(res.Failures, " "), "context") {
-		t.Errorf("failures = %v, want the context mismatch named", res.Failures)
+	if res.Verdict() != "ERROR" || !strings.Contains(strings.Join(res.Errors, " "), "context") {
+		t.Errorf("verdict = %s, errors = %v, want ERROR naming the context mismatch", res.Verdict(), res.Errors)
 	}
 }
 
@@ -569,13 +582,38 @@ func TestShippedRemediationSpecsArePlannable(t *testing.T) {
 			t.Errorf("%s: plan = %+v", sp.Entry, plan)
 			continue
 		}
+		// The signal cannot fall faster than its own rate window drains, and
+		// the clear starts counting only once it has. So the deadline needs the
+		// window, then the sustained clear, then a margin for the patch to take
+		// effect and for the ticks around both.
 		sustain := sustainFor(byID[sp.Entry], 10*time.Second)
-		if slack := sp.Remediation.ClearsWithin.D() - sustain; slack < minimumSlack {
-			t.Errorf("%s: clearsWithin %s leaves %s over a %s sustained clear", sp.Entry,
-				sp.Remediation.ClearsWithin.D(), slack, sustain)
+		window := longestRangeWindow(t, byID[sp.Entry].Signal.PromQL)
+		if slack := sp.Remediation.ClearsWithin.D() - window - sustain; slack < minimumSlack {
+			t.Errorf("%s: clearsWithin %s leaves %s over a %s rate window and a %s sustained clear", sp.Entry,
+				sp.Remediation.ClearsWithin.D(), slack, window, sustain)
 		}
 	}
 	if checked == 0 {
 		t.Fatal("no shipped spec declares a remediation check")
 	}
 }
+
+// longestRangeWindow is the widest [range] selector in a PromQL query, which
+// is how long a rate over it keeps remembering a fault after the fault stops
+// producing samples.
+func longestRangeWindow(t *testing.T, promql string) time.Duration {
+	t.Helper()
+	var longest time.Duration
+	for _, m := range rangeSelector.FindAllStringSubmatch(promql, -1) {
+		d, err := time.ParseDuration(m[1])
+		if err != nil {
+			t.Fatalf("range %q in %q: %v", m[1], promql, err)
+		}
+		if d > longest {
+			longest = d
+		}
+	}
+	return longest
+}
+
+var rangeSelector = regexp.MustCompile(`\[(\d+[smh])(?::[^\]]*)?\]`)
