@@ -271,3 +271,30 @@ func (s Spec) Validate() error {
 	}
 	return nil
 }
+
+// LoadUnprovable reads dir/UNPROVABLE.yaml and returns entry id to reason. A
+// missing file is an empty set; a malformed one is an error, because a
+// declaration that silently fails to parse would look like a missing proof.
+func LoadUnprovable(dir string) (map[string]string, error) {
+	data, err := os.ReadFile(filepath.Join(dir, unprovableFile))
+	if os.IsNotExist(err) {
+		return map[string]string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var doc struct {
+		Unprovable []struct {
+			Entry  string `yaml:"entry"`
+			Reason string `yaml:"reason"`
+		} `yaml:"unprovable"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("%s: %w", unprovableFile, err)
+	}
+	out := map[string]string{}
+	for _, u := range doc.Unprovable {
+		out[u.Entry] = strings.TrimSpace(u.Reason)
+	}
+	return out, nil
+}

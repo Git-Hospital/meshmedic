@@ -44,7 +44,6 @@ import (
 	"github.com/Git-Hospital/meshmedic/pkg/kube"
 	"github.com/Git-Hospital/meshmedic/pkg/prom"
 	"github.com/Git-Hospital/meshmedic/pkg/proof"
-	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -651,22 +650,9 @@ func listCoverage(scenarios []catalog.Scenario, specs []proof.Spec) {
 // A missing file means none are declared, which is a legitimate state and not
 // an error: it simply means every gap is of the ambiguous kind.
 func loadUnprovable() map[string]string {
-	data, err := os.ReadFile("proof/UNPROVABLE.yaml")
+	out, err := proof.LoadUnprovable("proof")
 	if err != nil {
 		return map[string]string{}
-	}
-	var doc struct {
-		Unprovable []struct {
-			Entry  string `yaml:"entry"`
-			Reason string `yaml:"reason"`
-		} `yaml:"unprovable"`
-	}
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return map[string]string{}
-	}
-	out := map[string]string{}
-	for _, u := range doc.Unprovable {
-		out[u.Entry] = strings.TrimSpace(u.Reason)
 	}
 	return out
 }

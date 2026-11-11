@@ -7,6 +7,12 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **A test now fails when a catalog entry has neither a proof nor an
+  `UNPROVABLE.yaml` declaration.** It also fails when a proof (`entry`,
+  `expect.quiet`, `expect.allowFiring`) or a declaration names an id the catalog
+  does not have, so "zero silently unverified" is enforced rather than only
+  printed by `meshmedic-prove list`. (closes #16)
+
 - **Targets with unknown scenario IDs now fail startup.** `watch` and `check`
   name the target and unknown IDs before querying Prometheus. An empty scenario
   list still selects the whole catalog. (#27, closes #14)
