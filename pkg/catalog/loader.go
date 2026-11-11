@@ -16,6 +16,8 @@ import (
 
 var validComparisons = map[string]bool{">": true, "<": true, ">=": true, "<=": true}
 
+var validSeverities = map[string]bool{"critical": true, "warning": true}
+
 // LoadDir reads every *.yaml file in dir as a Scenario, validates each one,
 // and rejects duplicate IDs. Scenarios are returned sorted by ID so output
 // is stable.
@@ -95,6 +97,18 @@ func (s Scenario) Validate() error {
 	}
 	if s.Title == "" {
 		return fmt.Errorf("title is required")
+	}
+	if strings.TrimSpace(s.Description) == "" {
+		return fmt.Errorf("description is required")
+	}
+	if !validSeverities[s.Severity] {
+		return fmt.Errorf("severity %q is not one of critical, warning", s.Severity)
+	}
+	if strings.TrimSpace(s.Rollback) == "" {
+		return fmt.Errorf("rollback is required: it is the section a reviewer relies on")
+	}
+	if s.Guardrails.MaxAppliesPerHour < 0 {
+		return fmt.Errorf("guardrails.maxAppliesPerHour must not be negative")
 	}
 	if s.Signal.PromQL == "" {
 		return fmt.Errorf("signal.promql is required")

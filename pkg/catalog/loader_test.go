@@ -43,6 +43,9 @@ func writeScenarios(t *testing.T, suppresses map[string][]string) string {
 	for id, sup := range suppresses {
 		doc := fmt.Sprintf(`id: %s
 title: %s
+severity: warning
+description: a test entry
+rollback: remove the patch
 signal:
   promql: up
   comparison: ">"
@@ -83,33 +86,68 @@ func TestLoadRejectsMutualSuppression(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsBadComparison(t *testing.T) {
-	s := Scenario{
-		ID:     "x",
-		Title:  "x",
-		Signal: Signal{PromQL: "up", Comparison: "~", Threshold: 1},
+// validScenario is the smallest scenario Validate accepts; each rejection
+// test breaks exactly one field of it, so a failure names the rule under test.
+func validScenario() Scenario {
+	return Scenario{
+		ID:          "x",
+		Title:       "x",
+		Severity:    "warning",
+		Description: "a test entry",
+		Rollback:    "remove the patch",
+		Signal:      Signal{PromQL: "up", Comparison: ">", Threshold: 1},
 		Remediation: Remediation{
 			Target:        Target{Kind: "VirtualService"},
 			PatchTemplate: "kind: VirtualService",
 		},
 	}
+}
+
+func TestValidateRejectsBadComparison(t *testing.T) {
+	s := validScenario()
+	s.Signal.Comparison = "~"
 	if err := s.Validate(); err == nil {
 		t.Fatal("want error for comparison ~, got nil")
 	}
 }
 
 func TestValidateRejectsBrokenTemplate(t *testing.T) {
-	s := Scenario{
-		ID:     "x",
-		Title:  "x",
-		Signal: Signal{PromQL: "up", Comparison: ">", Threshold: 1},
-		Remediation: Remediation{
-			Target:        Target{Kind: "VirtualService"},
-			PatchTemplate: "kind: {{.unclosed",
-		},
-	}
+	s := validScenario()
+	s.Remediation.PatchTemplate = "kind: {{.unclosed"
 	if err := s.Validate(); err == nil {
 		t.Fatal("want error for unparseable template, got nil")
+	}
+}
+
+func TestValidateAcceptsValidScenario(t *testing.T) {
+	if err := validScenario().Validate(); err != nil {
+		t.Fatalf("baseline scenario must validate: %v", err)
+	}
+}
+
+func TestValidateRejectsMissingDocumentedFields(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Scenario)
+		want   string
+	}{
+		{"empty rollback", func(s *Scenario) { s.Rollback = "" }, "rollback"},
+		{"blank rollback", func(s *Scenario) { s.Rollback = " \n " }, "rollback"},
+		{"empty description", func(s *Scenario) { s.Description = "" }, "description"},
+		{"empty severity", func(s *Scenario) { s.Severity = "" }, "severity"},
+		{"unknown severity", func(s *Scenario) { s.Severity = "info" }, "severity"},
+		{"wrong-case severity", func(s *Scenario) { s.Severity = "Critical" }, "severity"},
+		{"negative maxAppliesPerHour", func(s *Scenario) { s.Guardrails.MaxAppliesPerHour = -1 }, "maxAppliesPerHour"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := validScenario()
+			c.mutate(&s)
+			err := s.Validate()
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want an error mentioning %q", err, c.want)
+			}
+		})
 	}
 }
 

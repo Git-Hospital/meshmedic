@@ -7,6 +7,12 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Catalog validation now enforces the documented fields.** An entry with an
+  empty `description` or `rollback`, a `severity` other than `critical` or
+  `warning`, or a negative `guardrails.maxAppliesPerHour` no longer loads. All
+  18 shipped entries already satisfy this, so no entry or lock change. (closes
+  #15)
+
 - **Targets with unknown scenario IDs now fail startup.** `watch` and `check`
   name the target and unknown IDs before querying Prometheus. An empty scenario
   list still selects the whole catalog. (#27, closes #14)
