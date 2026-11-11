@@ -132,6 +132,42 @@ if run_check; then fail "check records: no artifacts passed"; else ok "check rec
 fresh; mkrec "$work/c/results/exp-77-redis-W1" redis W1; mkdir -p "$work/c/results/exp-77-redis-W1/debug"; echo 'not json' >"$work/c/results/exp-77-redis-W1/debug/pods.json"
 if run_check; then ok "check records: results/*/debug is dropped, not parsed"; else fail "check records: debug files were parsed"; fi
 
+# The select job: one directory per qualification artifact, never merged, and a record that
+# does not name the artifact's own chart stops it before select.sh runs.
+eq "no download-artifact step anywhere uses merge-multiple" "$(grep -c 'merge-multiple' <(grep -v '^[[:space:]]*#' "$wf") || true)" 0
+eq "select downloads every qualification artifact into its own directory" "$(jq -c '[.jobs.select.steps[] | select((.uses // "") | startswith("actions/download-artifact")) | .with | [has("merge-multiple"), .path, .pattern]]' "$j")" '[[false,"qual-artifacts","qual-${{ github.run_id }}-*"]]'
+eq "the records are checked before select.sh runs" "$(jq -c '[.jobs.select.steps[] | .name // empty]' "$j")" '["check records","select"]'
+eq "select.sh reads qual/, the checked copies, not the downloaded artifacts" "$(jq -r '.jobs.select.steps[] | select(.name == "select") | .run' "$j" | grep -c 'select.sh hack/compat-exp/candidates.json qual out/charts-exp.json')" 1
+eq "the charts-exp artifact keeps qual/ (the checked records) for analyze.sh" "$(jq -c '[.jobs.select.steps[] | select((.uses // "") | startswith("actions/upload-artifact")) | .with.path]' "$j")" '["out/\nqual/\n"]'
+eq "nothing in select sources, evals or executes a downloaded file" "$(jq -r '.jobs.select.steps[] | .run // empty' "$j" | grep -Ec '(^|[^[:alnum:]_])(source|eval|exec|chmod|bash|sh|python[0-9]*|node)[[:space:]]+[^|]*qual-artifacts|\./qual-artifacts' || true)" 0
+eq "nothing but select reads qual- artifacts" "$(jq -c '[.jobs | to_entries[] | select(.value.steps | map(.with.pattern // "") | any(startswith("qual-"))) | .key]' "$j")" '["select"]'
+sel_run="$(step_run select "check records")"
+mkq() { # dir chart recordid
+  mkdir -p "$1"; printf '{"id":"%s","qualified":true}\n' "$3" >"$1/$2.qualify.json"
+}
+run_sel() { (cd "$work/c" && RUN_ID=77 bash -c "$sel_run") >/dev/null 2>&1; }
+fresh; mkq "$work/c/qual-artifacts/qual-77-redis" redis redis; mkq "$work/c/qual-artifacts/qual-77-redis-fix" redis-fix redis-fix
+if run_sel; then ok "select check: matching records pass (a chart id with hyphens too)"; else fail "select check: matching records failed"; fi
+eq "  and exactly the two checked records are copied to qual/" "$(cd "$work/c/qual" && printf '%s ' *)" "redis-fix.qualify.json redis.qualify.json "
+fresh; mkq "$work/c/qual-artifacts/qual-77-redis" redis redis; mkq "$work/c/qual-artifacts/qual-77-valkey" valkey redis
+if run_sel; then fail "select check: a record of another chart passed"; else ok "select check: a record that names another chart fails"; fi
+fresh; mkq "$work/c/qual-artifacts/qual-77-redis" redis redis; mkq "$work/c/qual-artifacts/qual-77-valkey" redis redis
+if run_sel; then fail "select check: another chart's file name in an artifact passed"; else ok "select check: a record under another chart's file name fails (the artifact has no record of its own)"; fi
+fresh; mkq "$work/c/qual-artifacts/qual-77-redis" redis redis; echo 'x' >"$work/c/qual-artifacts/qual-77-redis/other.qualify.json"
+if run_sel && [ ! -e "$work/c/qual/other.qualify.json" ]; then ok "select check: an extra file in an artifact is not copied"; else fail "select check: an extra file was copied or the run failed"; fi
+fresh; mkq "$work/c/qual-artifacts/qual-77-redis" redis redis; ln -s /etc/hosts "$work/c/qual-artifacts/qual-77-redis/link.json"
+if run_sel; then fail "select check: a symbolic link passed"; else ok "select check: a symbolic link fails"; fi
+fresh; mkdir -p "$work/c/qual-artifacts/qual-77-redis"; ln -s /etc/hosts "$work/c/qual-artifacts/qual-77-redis/redis.qualify.json"
+if run_sel; then fail "select check: a record that is a symbolic link passed"; else ok "select check: a record that is a symbolic link fails"; fi
+fresh; mkdir -p "$work/c/qual-artifacts"
+if run_sel; then fail "select check: no artifacts passed"; else ok "select check: no artifacts fails"; fi
+fresh; mkdir -p "$work/c/qual-artifacts/qual-77-redis/debug"; echo 'not json' >"$work/c/qual-artifacts/qual-77-redis/debug/pods.txt"
+if run_sel; then fail "select check: an artifact with no record passed"; else ok "select check: an artifact with no record fails"; fi
+fresh; mkq "$work/c/qual-artifacts/qual-77-redis" redis redis; echo 'not json' >"$work/c/qual-artifacts/qual-77-redis/redis.qualify.json"
+if run_sel; then fail "select check: an unreadable record passed"; else ok "select check: an unreadable record fails"; fi
+fresh; mkq "$work/c/qual-artifacts/qual-77-redis" redis redis; mkq "$work/c/qual-artifacts/qual-77-redis" redis redis; mkdir -p "$work/c/qual-artifacts/qual-77-redis/debug"; echo 'x' >"$work/c/qual-artifacts/qual-77-redis/debug/pods.txt"
+if run_sel; then ok "select check: the debug directory is never read"; else fail "select check: the debug directory made it fail"; fi
+
 # C2 (c): the run metadata, written by the guard job from workflow context only
 meta_run="$(step_run guard "run metadata")"
 eq "the metadata step takes everything through env" "$(jq -c '.jobs.guard.steps[] | select(.name == "run metadata") | .env | keys' "$j")" '["MD_CHARTS_FILE","MD_CHART_IDS","MD_EVENT_NAME","MD_FIXES_FILE","MD_FIX_ID","MD_HEAD_SHA","MD_ISTIO","MD_MODE","MD_RUN_ATTEMPT","MD_RUN_ID","MD_WORKFLOW_REF"]'

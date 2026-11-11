@@ -310,16 +310,47 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      # One directory per artifact (qual-artifacts/qual-<run>-<chart>/), never
+      # merged: with merge-multiple a job whose chart is hostile could write a
+      # file under another chart's name and replace that chart's record.
       # actions/download-artifact v4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: qual-${{ github.run_id }}-*
-          path: qual
-          merge-multiple: true
+          path: qual-artifacts
+      # The records are data and nothing else: no step sources, evals or runs
+      # anything under qual-artifacts/. Of each artifact only the one file
+      # <chart>.qualify.json is taken, and only when its own id is the chart the
+      # artifact is named for; those files are copied to qual/, which select.sh
+      # reads and the charts-exp artifact keeps. Anything else, a symbolic link,
+      # no artifact at all, or a record that names another chart stops the job.
+      - name: check records
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dirs=(qual-artifacts/qual-"$RUN_ID"-*/)
+          if [ "${#dirs[@]}" -eq 0 ]; then echo "no qualification artifacts were downloaded" >&2; exit 1; fi
+          if [ -n "$(find qual-artifacts -type l -print -quit)" ]; then echo "a symbolic link in the downloaded records" >&2; exit 1; fi
+          rm -rf qual
+          mkdir qual
+          for d in "${dirs[@]}"; do
+            d="${d%/}"
+            chart="${d#qual-artifacts/qual-"$RUN_ID"-}"
+            if ! [[ "$chart" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then echo "artifact $d has no usable chart id in its name" >&2; exit 1; fi
+            rec="$d/$chart.qualify.json"
+            if [ ! -f "$rec" ]; then echo "artifact $d holds no $chart.qualify.json" >&2; exit 1; fi
+            if ! jq -e --arg c "$chart" '.id == $c' "$rec" >/dev/null; then
+              echo "record $rec is not a record of chart $chart (the artifact it came from)" >&2
+              exit 1
+            fi
+            cp -- "$rec" "qual/$chart.qualify.json"
+          done
+          echo "records checked: ${#dirs[@]} artifacts"
       - name: select
         run: |
           set -euo pipefail
-          rm -rf qual/debug
           mkdir -p out
           hack/compat-exp/select.sh hack/compat-exp/candidates.json qual out/charts-exp.json | tee -a "$GITHUB_STEP_SUMMARY"
       # actions/upload-artifact v4
