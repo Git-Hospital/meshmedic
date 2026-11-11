@@ -117,6 +117,8 @@ frozen=(
   hack/compat-exp/select.sh
   hack/compat-exp/static.sh
   hack/compat-exp/analyze.sh
+  hack/compat-exp/acceptance-check.sh
+  hack/compat-exp/acceptance-expected.json
   hack/compat-exp/guard.sh
   hack/compat-exp/causes.json
   hack/compat-exp/classification-prompt.md
@@ -139,6 +141,7 @@ frozen=(
 required_at_tag=(
   hack/compat-exp/frame hack/compat-exp/frame/exclusions.json
   hack/compat-exp/qualify.sh hack/compat-exp/select.sh hack/compat-exp/static.sh hack/compat-exp/analyze.sh
+  hack/compat-exp/acceptance-check.sh hack/compat-exp/acceptance-expected.json
   hack/compat-exp/guard.sh hack/compat-exp/causes.json hack/compat-exp/classification-prompt.md
   hack/compat-exp/staticcheck hack/compat-exp/ledger hack/compat-exp/crossrun
   hack/compat-pilot/observe.sh hack/compat-pilot/render-args.sh hack/compat-pilot/world.sh hack/compat-pilot/difftable

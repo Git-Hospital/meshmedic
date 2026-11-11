@@ -47,7 +47,7 @@ newrepo() {
     "$d/hack/compat-exp/staticcheck" "$d/hack/compat-exp/ledger" "$d/hack/compat-exp/crossrun" \
     "$d/hack/compat-pilot/difftable" "$d/.github/workflows" "$d/docs"
   for f in frame/main.go frame/exclusions.json staticcheck/main.go ledger/ledger.go crossrun/main.go; do echo "$f v1" >"$d/hack/compat-exp/$f"; done
-  for f in qualify.sh select.sh static.sh analyze.sh guard.sh classification-prompt.md candidates.json; do echo "$f v1" >"$d/hack/compat-exp/$f"; done
+  for f in qualify.sh select.sh static.sh analyze.sh acceptance-check.sh acceptance-expected.json guard.sh classification-prompt.md candidates.json; do echo "$f v1" >"$d/hack/compat-exp/$f"; done
   echo '[{"id":"c1","chart":"c1","version":"1.0.0","repo":"https://example.test/1"},{"id":"c2","chart":"c2","version":"1.0.0"}]' >"$d/hack/compat-exp/candidates-charts.json"
   # the real cause list, the contract of the guard, ledger and crossrun
   cp "$repo/hack/compat-exp/causes.json" "$d/hack/compat-exp/causes.json"
@@ -149,6 +149,14 @@ echo x >"$d/hack/compat-exp/crossrun/extra.go"
 CMD=freeze g "$d" observe
 refuses "freeze: an untracked file among the frozen paths" "untracked files"
 rm "$d/hack/compat-exp/crossrun/extra.go"
+
+# R7: the acceptance check and its expected verdicts are part of the frozen instrument
+for f in acceptance-check.sh acceptance-expected.json; do
+  echo "edited after the tag" >>"$d/hack/compat-exp/$f"
+  CMD=freeze g "$d" observe
+  refuses "freeze: a changed $f" "frozen instrument files differ"
+  git -C "$d" checkout -q -- "hack/compat-exp/$f"
+done
 
 # --- the real acceptance list passes the real guard --------------------------------
 

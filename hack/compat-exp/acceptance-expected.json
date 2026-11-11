@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "source": "docs/compat-pilot.md, Results, the table of verdicts per chart (W1 and W3 columns); hack/compat-exp/test/acceptance_check_test.sh checks that this file and that table agree",
+  "charts": [
+    {"chart": "podinfo", "W1": "differs", "W3": "same", "note": "W1: helm test fails; the test pods carry the sidecar opt-out (c-optout)"},
+    {"chart": "argo-cd", "W1": "same", "W3": "same"},
+    {"chart": "prometheus-pushgateway", "W1": "same", "W3": "same"},
+    {"chart": "kube-prometheus-stack", "W1": "same", "W3": "same"},
+    {"chart": "redis", "W1": "same", "W3": "differs"},
+    {"chart": "rabbitmq", "W1": "same", "W3": "differs"},
+    {"chart": "cloudnative-pg", "W1": "same", "W3": "same"},
+    {"chart": "nats", "W1": "same", "W3": "same"},
+    {"chart": "grafana", "W1": "same", "W3": "same"},
+    {"chart": "valkey", "W1": "same", "W3": "same", "note": "pilot 1's valkey never installed (W0 included), so its match is vacuous"}
+  ],
+  "fixes": [
+    {"fix": "redis-np-15008", "fixOf": "redis"},
+    {"fix": "redis-np-15008-patch", "fixOf": "redis"}
+  ],
+  "optOutChart": {"chart": "podinfo", "world": "W1", "key": "helm:test"},
+  "newClasses": ["apiserver", "late"]
+}
