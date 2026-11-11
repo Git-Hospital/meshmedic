@@ -7,6 +7,13 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **A catalog entry without a description, a rollback note or a known severity
+  no longer loads.** `validate`, `watch` and `check` reject an empty
+  `description` or `rollback`, a `severity` other than `critical` or `warning`,
+  and a negative `guardrails.maxAppliesPerHour`. The shipped catalog already
+  passes; a custom catalog (`--catalog`) with such an entry now fails at
+  startup and names the file and field. (closes #15)
+
 - **Targets with unknown scenario IDs now fail startup.** `watch` and `check`
   name the target and unknown IDs before querying Prometheus. An empty scenario
   list still selects the whole catalog. (#27, closes #14)
