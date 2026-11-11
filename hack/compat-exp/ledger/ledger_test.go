@@ -31,6 +31,20 @@ func countedRow() Row {
 	}
 }
 
+// withParts makes the row a combined-fix row: rule 2's certificate is the
+// combined entry's, and each part (named after its cause) was run alone.
+func withParts(r *Row, c1, c2 string) *Row {
+	no := false
+	r.Cause = c1
+	r.Fix.Entry = "redis-both"
+	r.Combined = &Combined{Entry: "redis-both", Certification: []string{"300", "400"}}
+	r.Parts = []Part{
+		{Cause: c1, Entry: "redis-" + c1, Runs: []string{"310", "410"}, ClearsAlone: &no},
+		{Cause: c2, Entry: "redis-" + c2, Runs: []string{"320", "420"}, ClearsAlone: &no},
+	}
+	return r
+}
+
 func newKey() NewKey {
 	nk := NewKey{Key: "tls-origination", Anchor: "traffic-management/tls", CertifiedFix: "x-fix", Reproduction: "hack/compat-exp/repro/x.sh"}
 	nk.Reviewer = &struct {
@@ -185,25 +199,39 @@ func TestCheck(t *testing.T) {
 			f.Rows[0] = Row{Chart: "a", World: "W1", Key: "k", Status: StatusUnresolved}
 		}, ""},
 		{"missing cell fields", func(f *File) { f.Rows[0].Key = "" }, "chart, world and key"},
-		{"parts ok", func(f *File) {
-			r := &f.Rows[0]
-			r.Combined = &Combined{Entry: "redis-both", Certification: []string{"1", "2"}}
-			r.Parts = []Part{{"ambient-np", "redis-np-15008", []string{"3"}}, {"protocol", "redis-proto", []string{"3"}}}
-		}, ""},
+		{"parts ok", func(f *File) { withParts(&f.Rows[0], "ambient-np", "protocol") }, ""},
 		{"parts credit two keys", func(f *File) {
-			r := &f.Rows[0]
-			r.Combined = &Combined{Entry: "redis-both", Certification: []string{"1", "2"}}
-			r.Parts = []Part{{"protocol", "p", []string{"3"}}, {"protocol", "q", []string{"3"}}}
+			r := withParts(&f.Rows[0], "protocol", "protocol")
+			r.Parts[1].Entry = "q"
 		}, "repeated"},
 		{"cause outside parts", func(f *File) {
-			r := &f.Rows[0]
-			r.Combined = &Combined{Entry: "redis-both", Certification: []string{"1", "2"}}
-			r.Parts = []Part{{"protocol", "p", []string{"3"}}, {"uid-1337", "q", []string{"3"}}}
+			r := withParts(&f.Rows[0], "protocol", "uid-1337")
+			r.Cause = "ambient-np"
 		}, "not one of the parts"},
 		{"parts without combined", func(f *File) {
-			r := &f.Rows[0]
-			r.Parts = []Part{{"ambient-np", "redis-np-15008", []string{"3"}}, {"protocol", "p", []string{"3"}}}
+			r := withParts(&f.Rows[0], "ambient-np", "protocol")
+			r.Combined = nil
 		}, "combined"},
+		{"fix is a part entry, not the combined entry", func(f *File) {
+			r := withParts(&f.Rows[0], "ambient-np", "protocol")
+			r.Fix.Entry = "redis-ambient-np"
+		}, "not the combined entry"},
+		{"runs.certification is not the combined runs", func(f *File) {
+			r := withParts(&f.Rows[0], "ambient-np", "protocol")
+			r.Runs.Certification = []string{"301", "401"}
+		}, "must be combined.certification"},
+		{"a part without clearsAlone", func(f *File) {
+			r := withParts(&f.Rows[0], "ambient-np", "protocol")
+			r.Parts[1].ClearsAlone = nil
+		}, "clearsAlone is missing"},
+		{"a part entry that is the combined entry", func(f *File) {
+			r := withParts(&f.Rows[0], "ambient-np", "protocol")
+			r.Parts[0].Entry = "redis-both"
+		}, "is the combined entry"},
+		{"the same part entry twice", func(f *File) {
+			r := withParts(&f.Rows[0], "ambient-np", "protocol")
+			r.Parts[1].Entry = r.Parts[0].Entry
+		}, "repeated"},
 		{"combined without parts", func(f *File) { f.Rows[0].Combined = &Combined{Entry: "x"} }, "without parts"},
 	}
 	for _, tc := range cases {

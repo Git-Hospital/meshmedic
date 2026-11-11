@@ -21,8 +21,8 @@ Unknown fields are rejected at every level. Row fields:
 | `chart`, `world`, `key` | the cell; `key` is the observation key; one row per cell |
 | `cause` | candidate cause key: in causes.json, or a `newKeys` entry |
 | `type`, `typeBasis` | `defect` or `gap`; `typeBasis.valuesKey` and/or `typeBasis.doc` decide it |
-| `fix` | `entry` (the `fixOf` target), `form` (`values` or `patch`), `patchSha256` (patch only), `helmLint` |
-| `combined`, `parts` | only when the cell needs two keys' fixes: the combined certificate, then each part run alone (`cause`, `entry`, `runs`) |
+| `fix` | `entry` (the `fixOf` target that earns rule 2's certificate: the credited cause's own entry, or the combined entry when the row has `parts`), `form` (`values` or `patch`), `patchSha256` (patch only), `helmLint` |
+| `combined`, `parts` | only when the cell needs two keys' fixes (rule 3). `combined`: `entry` (the combined fix entry) and `certification` (its two certification runs). `parts`: one per key, `cause`, `entry` (that key's fix alone), `runs` (the certification runs holding that entry alone; they show whether it returned the cell to W0's value) and `clearsAlone` (true or false, the row's statement of that result; crossrun recomputes it from `runs` and stops on a difference) |
 | `runs` | `run1`, `run2`, `certification` (workflow run ids, at least two distinct for a counted row) |
 | `recheck` | `version`, `result` (`reproduces-3of3` or `not-reproduced`), `run` |
 | `upstream` | `merged` and `link` (link required when merged) |
@@ -37,7 +37,10 @@ new keys.
 
 What `check` enforces: enums; cause known or fully recorded; no two rows for
 one cell; a cell credited to one key only (parts name distinct keys, one of
-them the cause); a counted row has everything rules 1 to 4 need (cause, type
+them the cause); with `parts`, `fix.entry` is the combined entry and
+`runs.certification` the combined runs (a part that leaves the cell differing
+cannot earn a certificate, so rule 2 is met by the combined entry's; credit
+follows the parts' own results, which crossrun reads from `parts[].runs`); a counted row has everything rules 1 to 4 need (cause, type
 and its basis, a fix with `helmLint`, two run ids, two distinct certification
 runs, a reproducing recheck, no merged upstream fix, a reviewer verdict other
 than disagree-other, a publisher); an excluded row has a reason and evidence; a c-optout row names its callers; c-optout and world-universal rows need a reviewer verdict `agree` and its run, like counted rows.

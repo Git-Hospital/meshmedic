@@ -60,15 +60,26 @@ func (a *analysis) checkCounted(w string, r *ledger.Row, cr *CellResult) {
 			a.errf("%s: runs.run2 is %s, the manifest's run 2 is %s", w, r.Runs.Run2, in.Runs[1].ID)
 		}
 	}
-	// rule 2
-	if r.Fix != nil && r.Runs != nil {
+	// rule 2. A cell that needs two keys' fixes (rule 3) is certified by the
+	// combined entry: a part that leaves the cell differing cannot earn a
+	// certificate for it, so the credited key's own part is not asked for one.
+	if len(r.Parts) > 0 {
+		switch {
+		case r.Combined == nil:
+			a.errf("%s: the row has parts but no combined entry", w)
+		case r.Fix != nil && r.Fix.Entry != r.Combined.Entry:
+			a.errf("%s: fix.entry %q is not the combined entry %q: with parts, rule 2's certificate is the combined fix's", w, r.Fix.Entry, r.Combined.Entry)
+		default:
+			for _, id := range ledger.Distinct(r.Combined.Certification) {
+				a.checkCertificate(w, id, r.Combined.Entry, r)
+			}
+			if r.Runs != nil && !sameIDs(r.Runs.Certification, r.Combined.Certification) {
+				a.errf("%s: runs.certification %v is not combined.certification %v", w, ledger.Distinct(r.Runs.Certification), ledger.Distinct(r.Combined.Certification))
+			}
+		}
+	} else if r.Fix != nil && r.Runs != nil {
 		for _, id := range ledger.Distinct(r.Runs.Certification) {
 			a.checkCertificate(w, id, r.Fix.Entry, r)
-		}
-	}
-	if r.Combined != nil {
-		for _, id := range ledger.Distinct(r.Combined.Certification) {
-			a.checkCertificate(w, id, r.Combined.Entry, r)
 		}
 	}
 	// rule 4
@@ -147,6 +158,19 @@ func (a *analysis) checkExcluded(w string, r *ledger.Row, cr *CellResult) {
 			a.errf("%s: excluded as %s, the reports do not show it (cell reasons from the reports: %s)", w, reason, listOrNone(cr.Reasons))
 		}
 	}
+}
+
+func sameIDs(a, b []string) bool {
+	x, y := ledger.Distinct(a), ledger.Distinct(b)
+	if len(x) != len(y) {
+		return false
+	}
+	for _, id := range x {
+		if !contains(y, id) {
+			return false
+		}
+	}
+	return true
 }
 
 func statusOrNone(s string) string {

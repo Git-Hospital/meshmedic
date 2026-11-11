@@ -208,9 +208,12 @@ observe_set() {
   done
   for id in "$@"; do
     for w in W0 W1 W3; do
-      local ready=true
+      local ready=true name="${id%-fix}"
       [[ "$id" == app-2 && "$w" == W3 ]] && ready=false
-      mkpods "$ready" "${id%-fix}" >"$S/pods.json"
+      # the part fixes of app-2 (rule 3): ids ending -stuck leave W3 not Ready; all of them name app-2's workload
+      [[ "$id" == app-2-*-stuck && "$w" == W3 ]] && ready=false
+      [[ "$id" == app-2-p* ]] && name=app-2
+      mkpods "$ready" "$name" >"$S/pods.json"
       observe_job "$runid" "$dir" "$cf" "$id" "$w" "${TEST_POD:-auto}" || return 1
     done
   done
@@ -484,6 +487,42 @@ done
 grep -q "does not carry the opt-out" "$T/cr-plain.out" && ok "  plain: the error says the pod does not carry the opt-out" || bad "  plain: error text: $(head -3 "$T/cr-plain.out")"
 grep -q 'testPodMeshStatus "no-new-pods"' "$T/cr-gone.out" && ok "  gone: the error says the test pod could not be recorded" || bad "  gone: error text: $(head -3 "$T/cr-gone.out")"
 eq "  gone: the record says helm test ran and its pods could not be listed" "$(jq -c '[.testPodMesh, .testPodMeshStatus, .obs["helm:test"]]' "$T/v-gone-1001/exp-1001-app-3-W1/app-3.W1.run1.json")" '[[],"no-new-pods","fail"]'
+
+# rule 3 with a combined fix (docs/compat-experiment.md section 2): app-2 needs two keys' fixes; the combined entry is
+# app-2-fix (certified in runs 1003 and 1004), and each part is run alone in two certification runs of its own, with
+# the real observe job steps and difftable. Part pa alone returns W3 to W0's value, parts pb and pc leave it differing.
+# The parts are not certified (a part that leaves the cell cannot be); credit follows the parts' results.
+jq '. + [(.[] | select(.id == "app-2-fix") | .id = "app-2-pa"), (.[] | select(.id == "app-2-fix") | .id = "app-2-pb-stuck"),
+  (.[] | select(.id == "app-2-fix") | .id = "app-2-pc-stuck")]' "$T/plan-certify/charts.json" >"$T/charts-parts.json"
+printf 'cell_worlds=W3\nignore=\n' >"$T/plan-parts.out"
+part_run() { # RUN_ID ENTRY
+  observe_set "$1" "$T/res-$1" "$T/charts-parts.json" 1.31.3 app-2 "$2" && report_job "$1" "$T/res-$1" "$T/plan-parts.out"
+}
+part_run 1006 app-2-pa; part_run 1007 app-2-pa
+part_run 1008 app-2-pb-stuck; part_run 1009 app-2-pb-stuck
+part_run 1010 app-2-pc-stuck; part_run 1011 app-2-pc-stuck
+eq "rule 3: difftable certifies the part that clears W3 and refuses the ones that leave it differing" \
+  "$(for r in 1006 1008 1010; do jq -r '.charts[] | select(.fixOf == "app-2") | .certificate.certified' "$T/report-$r.json"; done | tr '\n' ' ')" "true false false "
+parts_inputs() { # OUT PA-ENTRY PA-RUNS PA-CLEARS PB-ENTRY PB-RUNS CREDIT
+  local out="$1" pa="$2" par="$3" pac="$4" pb="$5" pbr="$6" cause="$7"
+  jq --argjson pa "$par" --argjson pb "$pbr" --argjson pac "$pac" --arg pae "$pa" --arg pbe "$pb" --arg cause "$cause" '
+    .rows |= map(if .chart == "app-2" then
+      .cause = $cause | .fix.entry = "app-2-fix" | .combined = {entry: "app-2-fix", certification: ["1003", "1004"]}
+      | .parts = [{cause: "ambient-l7", entry: $pae, runs: $pa, clearsAlone: $pac}, {cause: "protocol", entry: $pbe, runs: $pb, clearsAlone: false}]
+    else . end)' "$T/ledger.json" >"$out.ledger.json"
+  "$B/ledger" check -ledger "$out.ledger.json" -causes "$repo/hack/compat-exp/causes.json" >"$out.lc" 2>&1 || { bad "ledger check of the parts ledger"; head -3 "$out.lc"; }
+  local certs
+  certs="$(for r in "${@:8}"; do jq -n --arg id "$r" --arg d "$T" '{id: $id, report: ($d + "/report-" + $id + ".json"), istio: "1.31.3"}'; done | jq -s -c .)"
+  jq --arg l "$out.ledger.json" --argjson certs "$certs" '.ledger = $l | .certification += $certs' "$T/analysis/inputs.json" >"$out.inputs.json"
+  "$B/crossrun" -inputs "$out.inputs.json" -json "$out.json" -md "$out.md" >"$out.err" 2>&1
+}
+parts_inputs "$T/parts-a" app-2-pa '["1006","1007"]' true app-2-pb-stuck '["1008","1009"]' ambient-l7 1006 1007 1008 1009
+eq "rule 3: the part that alone clears W3 gets the cells (ambient-l7, though protocol ranks first), certified by the combined entry" "$?:$(jq -c '[.cells[] | select(.chart == "app-2" and .status == "counted") | .credit]' "$T/parts-a.json")" '0:["ambient-l7","ambient-l7"]'
+parts_inputs "$T/parts-b" app-2-pa '["1006","1007"]' true app-2-pb-stuck '["1008","1009"]' protocol 1006 1007 1008 1009
+eq "rule 3: a ledger that credits the first key although another part alone clears the cell is refused" "$?" 1
+grep -q 'rule 3 credits the cell to "ambient-l7"' "$T/parts-b.err" && ok "  and says rule 3 credits ambient-l7" || bad "  error text: $(head -3 "$T/parts-b.err")"
+parts_inputs "$T/parts-c" app-2-pc-stuck '["1010","1011"]' false app-2-pb-stuck '["1008","1009"]' protocol 1008 1009 1010 1011
+eq "rule 3: neither part alone clears the cells: the first key in the list, protocol, with the combined certificate" "$?:$(jq -c '[.cells[] | select(.chart == "app-2" and .status == "counted") | .credit]' "$T/parts-c.json")" '0:["protocol","protocol"]'
 
 # test mode: the overrides work, and every output says so
 env PATH="$T/bin:$PATH" MMC_STATE="$T/state" MMC_ANALYZE_TEST=1 CROSSRUN="$B/crossrun" LEDGER="$B/ledger" STATICCHECK="$B/staticcheck" \

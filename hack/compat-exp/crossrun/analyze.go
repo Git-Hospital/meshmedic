@@ -774,8 +774,10 @@ func contains(l []string, s string) bool {
 }
 
 // credit applies rule 3 to one ledger row: the cause itself, or, when the row
-// holds parts, the key whose part alone returns the cell to the oracle's value,
-// else the first key of the parts in cause-list order.
+// holds parts, the key whose part alone returns the cell to the oracle's value
+// (the cell's key verdict is "same" in every run of that part), else the first
+// key of the parts in cause-list order (new keys last). The results come from
+// the part runs; the row's clearsAlone must agree with them.
 func (a *analysis) credit(i int, r *ledger.Row) (string, error) {
 	if len(r.Parts) == 0 {
 		return r.Cause, nil
@@ -801,6 +803,10 @@ func (a *analysis) credit(i int, r *ledger.Row) (string, error) {
 				returns = false
 			}
 		}
+		if p.ClearsAlone == nil || *p.ClearsAlone != returns {
+			return "", fmt.Errorf("%s: part %s says clearsAlone %s, its runs %s show the cell %s alone", rowLabel(i, *r), p.Cause,
+				boolWord(p.ClearsAlone), strings.Join(p.Runs, ", "), map[bool]string{true: "returned to W0's value", false: "still differing"}[returns])
+		}
 		if returns {
 			returning = append(returning, p.Cause)
 		}
@@ -816,6 +822,16 @@ func (a *analysis) credit(i int, r *ledger.Row) (string, error) {
 		return a.in.Causes.Order(a.in.Ledger, pick[x]) < a.in.Causes.Order(a.in.Ledger, pick[y])
 	})
 	return pick[0], nil
+}
+
+func boolWord(b *bool) string {
+	switch {
+	case b == nil:
+		return "missing"
+	case *b:
+		return "true"
+	}
+	return "false"
 }
 
 func (a *analysis) certRun(id string) *CertInput {

@@ -104,7 +104,8 @@ type TypeBasis struct {
 	Doc       string `json:"doc,omitempty"`
 }
 
-// Fix is the fix entry of the credited cause.
+// Fix is the fix entry that earns rule 2's certificate: the credited cause's
+// own entry, or, when the row has parts, the combined entry.
 type Fix struct {
 	Entry       string `json:"entry"`
 	Form        string `json:"form"`
@@ -112,18 +113,24 @@ type Fix struct {
 	HelmLint    bool   `json:"helmLint"`
 }
 
-// Combined is the certificate of the combined fix, when a cell needs two
-// keys' fixes (rule 3).
+// Combined is the combined fix entry and its certification runs, when a cell
+// needs two keys' fixes (rule 3). With parts, the combined entry's certificate
+// is the one that satisfies rule 2 for the cell: a part that leaves the cell
+// differing cannot earn a certificate for it.
 type Combined struct {
 	Entry         string   `json:"entry"`
 	Certification []string `json:"certification"`
 }
 
-// Part is one key's fix run alone (rule 3).
+// Part is one key's fix run alone (rule 3). Runs are the certification runs
+// that hold the part entry and show whether it alone returned the cell to
+// W0's value; ClearsAlone is the row's statement of that result, which
+// crossrun checks against those runs.
 type Part struct {
-	Cause string   `json:"cause"`
-	Entry string   `json:"entry"`
-	Runs  []string `json:"runs"`
+	Cause       string   `json:"cause"`
+	Entry       string   `json:"entry"`
+	Runs        []string `json:"runs"`
+	ClearsAlone *bool    `json:"clearsAlone"`
 }
 
 // Runs are the workflow run ids behind rules 1 and 2.
@@ -432,15 +439,30 @@ func Check(f *File, causes *Causes) []Problem {
 			if r.Cause != "" && !partCauses[r.Cause] {
 				add(w, "cause %q is not one of the parts", r.Cause)
 			}
-			if r.Combined == nil || r.Combined.Entry == "" || len(r.Combined.Certification) < 2 {
-				add(w, "parts need combined.entry and two combined.certification runs")
-			}
-			if r.Fix != nil {
-				for _, p := range r.Parts {
-					if p.Cause == r.Cause && p.Entry != r.Fix.Entry {
-						add(w, "fix.entry %q is not the part entry %q of cause %q", r.Fix.Entry, p.Entry, p.Cause)
+			if r.Combined == nil || r.Combined.Entry == "" || len(distinct(r.Combined.Certification)) < 2 {
+				add(w, "parts need combined.entry and two distinct combined.certification runs")
+			} else {
+				entries := map[string]bool{r.Combined.Entry: true}
+				for k, p := range r.Parts {
+					if p.Entry == r.Combined.Entry {
+						add(w, "parts[%d].entry %q is the combined entry: a part is run alone", k, p.Entry)
 					}
+					if p.Entry != "" && entries[p.Entry] && p.Entry != r.Combined.Entry {
+						add(w, "parts[%d].entry %q repeated", k, p.Entry)
+					}
+					entries[p.Entry] = true
 				}
+			}
+			for k, p := range r.Parts {
+				if p.ClearsAlone == nil {
+					add(w, "parts[%d].clearsAlone is missing: say whether the part alone returned the cell to W0's value (true or false)", k)
+				}
+			}
+			if r.Fix != nil && r.Combined != nil && r.Fix.Entry != r.Combined.Entry {
+				add(w, "fix.entry %q is not the combined entry %q: with parts, rule 2's certificate is the combined fix's, because a part that leaves the cell differing cannot earn one", r.Fix.Entry, r.Combined.Entry)
+			}
+			if r.Runs != nil && r.Combined != nil && !sameSet(distinct(r.Runs.Certification), distinct(r.Combined.Certification)) {
+				add(w, "runs.certification must be combined.certification when the row has parts")
 			}
 		} else if r.Combined != nil {
 			add(w, "combined is set without parts")
@@ -543,6 +565,22 @@ func checkCounted(w string, r Row, add func(string, string, ...any)) {
 	if strings.TrimSpace(r.Publisher) == "" {
 		add(w, "counted row needs publisher")
 	}
+}
+
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := map[string]bool{}
+	for _, x := range a {
+		m[x] = true
+	}
+	for _, x := range b {
+		if !m[x] {
+			return false
+		}
+	}
+	return true
 }
 
 func distinct(ids []string) []string {
