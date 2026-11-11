@@ -125,7 +125,43 @@ func TestCheck(t *testing.T) {
 		{"counted with exclusion", func(f *File) { f.Rows[0].Exclusion = &Exclusion{Reason: ReasonFlaky, Evidence: "x"} }, "counted row has an exclusion"},
 		{"excluded ok", func(f *File) {
 			f.Rows[0] = Row{Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded,
-				Exclusion: &Exclusion{Reason: ReasonCOptout, Evidence: "test pods carry sidecar.istio.io/inject=false"}}
+				Exclusion: &Exclusion{Reason: ReasonCOptout, Evidence: "test pods carry sidecar.istio.io/inject=false", Callers: []string{"podinfo-grpc-test"}},
+				Reviewer:  &Reviewer{Verdict: VerdictAgree, Run: "9"}}
+		}, ""},
+		{"c-optout without callers", func(f *File) {
+			f.Rows[0] = Row{Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded,
+				Exclusion: &Exclusion{Reason: ReasonCOptout, Evidence: "x"}, Reviewer: &Reviewer{Verdict: VerdictAgree, Run: "9"}}
+		}, "exclusion.callers"},
+		{"c-optout with a bad caller name", func(f *File) {
+			f.Rows[0] = Row{Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded,
+				Exclusion: &Exclusion{Reason: ReasonCOptout, Evidence: "x", Callers: []string{"Pod Name"}}, Reviewer: &Reviewer{Verdict: VerdictAgree, Run: "9"}}
+		}, "not a pod name"},
+		{"c-optout names a caller twice", func(f *File) {
+			f.Rows[0] = Row{Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded,
+				Exclusion: &Exclusion{Reason: ReasonCOptout, Evidence: "x", Callers: []string{"a-test", "a-test"}}, Reviewer: &Reviewer{Verdict: VerdictAgree, Run: "9"}}
+		}, "twice"},
+		{"callers on another reason", func(f *File) {
+			f.Rows[0] = Row{Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded,
+				Exclusion: &Exclusion{Reason: ReasonFlaky, Evidence: "x", Callers: []string{"a-test"}}}
+		}, "only for c-optout"},
+		{"c-optout without a reviewer", func(f *File) {
+			f.Rows[0] = Row{Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded,
+				Exclusion: &Exclusion{Reason: ReasonCOptout, Evidence: "x", Callers: []string{"a-test"}}}
+		}, "reviewer verdict agree"},
+		{"c-optout with reviewer disagree-other", func(f *File) {
+			f.Rows[0] = Row{Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded,
+				Exclusion: &Exclusion{Reason: ReasonCOptout, Evidence: "x", Callers: []string{"a-test"}}, Reviewer: &Reviewer{Verdict: VerdictDisagreeOth, Run: "9"}}
+		}, "reviewer verdict agree"},
+		{"world-universal without a reviewer", func(f *File) {
+			f.Rows[0] = Row{Chart: "a", World: "W1", Key: "port:s:80:http", Status: StatusExcluded,
+				Exclusion: &Exclusion{Reason: ReasonWorldUniversal, Evidence: "x"}}
+		}, "reviewer verdict agree"},
+		{"world-universal with reviewer agree", func(f *File) {
+			f.Rows[0] = Row{Chart: "a", World: "W1", Key: "port:s:80:http", Status: StatusExcluded,
+				Exclusion: &Exclusion{Reason: ReasonWorldUniversal, Evidence: "x"}, Reviewer: &Reviewer{Verdict: VerdictAgree, Run: "9"}}
+		}, ""},
+		{"a mechanical exclusion needs no reviewer", func(f *File) {
+			f.Rows[0] = Row{Chart: "a", World: "W1", Key: "k", Status: StatusExcluded, Exclusion: &Exclusion{Reason: ReasonFlaky, Evidence: "x"}}
 		}, ""},
 		{"excluded without reason", func(f *File) {
 			f.Rows[0] = Row{Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded}
@@ -314,8 +350,9 @@ func pilotLedger() *File {
 		"workload:StatefulSet/rabbitmq:ready", "workload:StatefulSet/rabbitmq:restarts")
 	f.Rows = append(f.Rows, Row{
 		Chart: "podinfo", World: "W1", Key: "helm:test", Status: StatusExcluded,
-		Exclusion: &Exclusion{Reason: ReasonCOptout,
+		Exclusion: &Exclusion{Reason: ReasonCOptout, Callers: []string{"podinfo-grpc-test", "podinfo-jwt-test"},
 			Evidence: "podinfo's test pods carry sidecar.istio.io/inject=false and call podinfo in plaintext under STRICT (docs/compat-pilot.md, podinfo section)"},
+		Reviewer: &Reviewer{Verdict: VerdictAgree, Run: "fixture"},
 	})
 	return f
 }

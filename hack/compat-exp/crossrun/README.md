@@ -41,9 +41,14 @@ static-check detail, the region with the first-match trace; N_max, P_max, the
 reachable regions, the stop flags; the undecided share against 15%; the open
 cells and the region they would reach if all counted.
 
-How far c-optout is mechanised: crossrun proves that a non-client pod of the
-chart carries the world's opt-out metadata. That every failing caller is such a
-pod is a judgment: the ledger row asserts it, crossrun prints the evidence.
+How far c-optout is mechanised: the ledger row names the failing callers
+(`exclusion.callers`, pod names or prefixes as in `podMesh`). crossrun accepts
+the exclusion for the key `helm:test` only, and only when, in every record of
+both runs, each named caller is a pod in `podMesh`, is not the instrument's
+client and carries the opt-out metadata of that world. That the named callers
+are all the failing callers is a judgment: the row's reviewer verdict (agree) asserts it.
+Helm test pods are normally not in `podMesh` (it is taken before `helm test`),
+so on real records the exclusion fails; see INTERPRETATIONS.md 9.
 
 Every ambiguity of the pre-registration is listed with the reading chosen in
 INTERPRETATIONS.md.

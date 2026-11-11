@@ -26,7 +26,7 @@ Unknown fields are rejected at every level. Row fields:
 | `runs` | `run1`, `run2`, `certification` (workflow run ids, at least two distinct for a counted row) |
 | `recheck` | `version`, `result` (`reproduces-3of3` or `not-reproduced`), `run` |
 | `upstream` | `merged` and `link` (link required when merged) |
-| `exclusion` | `reason` (pull-failure, capacity, flaky, undecided, c-optout, world-universal) and `evidence` |
+| `exclusion` | `reason` (pull-failure, capacity, flaky, undecided, c-optout, world-universal), `evidence`, and for c-optout `callers`: the failing caller pods, each a pod name or a pod-name prefix as recorded in `podMesh` (matches the name itself or the prefix plus a dash) |
 | `reviewer` | `verdict` (agree, disagree-type, disagree-other) and `run` |
 | `status` | counted, excluded, unexplained, unresolved |
 | `publisher`, `note` | |
@@ -40,6 +40,6 @@ one cell; a cell credited to one key only (parts name distinct keys, one of
 them the cause); a counted row has everything rules 1 to 4 need (cause, type
 and its basis, a fix with `helmLint`, two run ids, two distinct certification
 runs, a reproducing recheck, no merged upstream fix, a reviewer verdict other
-than disagree-other, a publisher); an excluded row has a reason and evidence.
+than disagree-other, a publisher); an excluded row has a reason and evidence; a c-optout row names its callers; c-optout and world-universal rows need a reviewer verdict `agree` and its run, like counted rows.
 It cannot tell whether a claim is true: `crossrun` checks the claims against
 the difftable reports.

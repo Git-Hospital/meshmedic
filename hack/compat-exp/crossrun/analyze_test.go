@@ -305,7 +305,8 @@ func TestCOptout(t *testing.T) {
 		}
 		if asserted {
 			f.in.Ledger.Rows = []ledger.Row{{Chart: "podinfo", World: "W1", Key: testKey, Status: ledger.StatusExcluded,
-				Exclusion: &ledger.Exclusion{Reason: ledger.ReasonCOptout, Evidence: "test pods opt out"}}}
+				Exclusion: &ledger.Exclusion{Reason: ledger.ReasonCOptout, Evidence: "test pods opt out", Callers: []string{"podinfo-test"}},
+				Reviewer:  &ledger.Reviewer{Verdict: ledger.VerdictAgree, Run: "rv"}}}
 		}
 		return f
 	}
@@ -334,12 +335,12 @@ func TestCOptout(t *testing.T) {
 		}
 	})
 	t.Run("asserted but no pod opts out", func(t *testing.T) {
-		if msg := mk("", true, true).analyzeErr(t); !strings.Contains(msg, "carries the mesh opt-out") {
+		if msg := mk("", true, true).analyzeErr(t); !strings.Contains(msg, "does not carry the opt-out") {
 			t.Fatal(msg)
 		}
 	})
 	t.Run("opt-out value true is not an opt-out", func(t *testing.T) {
-		if msg := mk("true", true, true).analyzeErr(t); !strings.Contains(msg, "carries the mesh opt-out") {
+		if msg := mk("true", true, true).analyzeErr(t); !strings.Contains(msg, "does not carry the opt-out") {
 			t.Fatal(msg)
 		}
 	})
