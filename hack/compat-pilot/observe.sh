@@ -33,19 +33,19 @@ run="${3:?run number}"
 out="${4:?output dir}"
 
 here="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=render-args.sh
+source "$here/render-args.sh"
 state="${MMC_STATE:-$PWD/.mmc-state}"
 cluster="mmc-$(tr '[:upper:]' '[:lower:]' <<<"$world")"
 export KUBECONFIG="$state/$cluster.kubeconfig"
-ns=pilot
+ns="$mmc_ns"
 settle="${MMC_SETTLE:-30}"
 late="${MMC_LATE:-120}"
 
 # Helm gets its own config and cache as well: a repository list left on the
 # operator's machine changes how `--repo` resolves, and has been seen to make
 # it fail outright on a stale cache entry for an unrelated repository.
-export HELM_CONFIG_HOME="$state/helm/config" HELM_CACHE_HOME="$state/helm/cache"
-export HELM_REPOSITORY_CONFIG="$HELM_CONFIG_HOME/repositories.yaml"
-export HELM_REPOSITORY_CACHE="$HELM_CACHE_HOME/repository"
+mmc_helm_env "$state"
 
 # Once this run has created the namespace, giving up must not leave it
 # behind: every later run on the world would fail on "namespace exists".
@@ -74,18 +74,9 @@ contexts="$(kubectl config get-contexts -o name)"
 charts_file="${CHARTS_FILE:-$here/charts.json}"
 spec="$(jq -ce --arg id "$id" '.[] | select(.id == $id)' "$charts_file")" ||
   { echo "no chart '$id' in $charts_file" >&2; exit 2; }
-chart="$(jq -r .chart <<<"$spec")"
-version="$(jq -r .version <<<"$spec")"
-repo="$(jq -r '.repo // empty' <<<"$spec")"
-deadline="$(jq -r '.deadline // "8m"' <<<"$spec")"
-fixof="$(jq -r '.fixOf // empty' <<<"$spec")"
-# A candidate fix installs under the release name of the chart it fixes, so
-# every resource, and so every observation key, is named the same and the two
-# can be compared key by key.
-release="${fixof:-$id}"
-# A read loop rather than mapfile, which the bash 3.2 macOS ships lacks.
-values=()
-while IFS= read -r v; do values+=("$v"); done < <(jq -r '.values[]?' <<<"$spec")
+# chart, version, repo, deadline, fixof, release and values come from the one
+# place static.sh renders from as well (render-args.sh).
+mmc_load_spec "$spec" "$id"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -181,9 +172,9 @@ kubectl -n "$ns" wait pod/mmc-client --for=condition=Ready --timeout=180s >/dev/
 
 # --- install ----------------------------------------------------------------
 
-args=(install "$release" "$chart_src" --namespace "$ns" --version "$version"
+args=(install "$release" "$chart_src" "${mmc_target[@]}"
   --wait --wait-for-jobs --timeout "$deadline")
-[[ -n "$repo" ]] && args+=(--repo "$repo")
+args+=(${mmc_repo_args[@]+"${mmc_repo_args[@]}"})
 # A local directory carries its own version, and --repo makes no sense for it.
 [[ -n "$patch_rel" ]] && args=(install "$release" "$chart_src" --namespace "$ns"
   --wait --wait-for-jobs --timeout "$deadline")

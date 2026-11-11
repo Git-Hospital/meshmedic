@@ -30,6 +30,7 @@ jqok() { [[ "$(jq -r "$3" "$2" 2>/dev/null)" == "true" ]] && ok "$1" || { bad "$
 
 mkdir -p "$T/repo/hack/compat-pilot" "$T/repo/hack/compat-exp/patches" "$T/bin" "$T/state" "$T/stub"
 cp "$repo/hack/compat-pilot/observe.sh" "$T/repo/hack/compat-pilot/observe.sh"
+cp "$repo/hack/compat-pilot/render-args.sh" "$T/repo/hack/compat-pilot/render-args.sh"
 cp "$repo/hack/compat-pilot/charts.json" "$T/repo/hack/compat-pilot/charts.json"
 export STUB_DIR="$T/stub"
 
