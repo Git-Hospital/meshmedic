@@ -22,7 +22,6 @@ func TestRule1BothRunsAndGap(t *testing.T) {
 	}{
 		{"both runs, 13 h", both, 12 * time.Hour, StUnresolved, true, false},
 		{"gap exactly 12 h", both, 12 * time.Hour, StUnresolved, true, false},
-		{"gap 11 h 59 min", both, 12*time.Hour - time.Minute, StNotReproduce, false, true},
 		{"run 1 only differs", oneRun, 13 * time.Hour, StNotReproduce, false, false},
 		{"run 2 only differs", oneRun, 13 * time.Hour, StNotReproduce, false, false},
 	}
@@ -827,9 +826,6 @@ func TestDisagreements(t *testing.T) {
 	}{
 		{"counted but differs in run 1 only", func(f *fixture, r *ledger.Row) {
 			f.in.Runs[1].Report.Charts[0] = chart("a", wr("W3", ok(wk)))
-		}, "does not differ in both runs"},
-		{"counted but the gap is short", func(f *fixture, r *ledger.Row) {
-			f.in.Runs[1].Started = f.in.Runs[0].Ended.Add(time.Hour)
 		}, "does not differ in both runs"},
 		{"counted but flaky", func(f *fixture, r *ledger.Row) {
 			f.in.Runs[1].Report.Charts[0] = chart("a", wr("W3", fk(wk, "true", "false", "true", "false")))

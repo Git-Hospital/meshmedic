@@ -181,11 +181,14 @@ type Hypothetical struct {
 
 // Result is crossrun's whole output.
 type Result struct {
-	Schema         int              `json:"schema"`
-	Run1           string           `json:"run1"`
-	Run2           string           `json:"run2,omitempty"`
-	GapHours       float64          `json:"gapHours,omitempty"`
-	GapOK          bool             `json:"gapOk"`
+	Schema   int     `json:"schema"`
+	Run1     string  `json:"run1"`
+	Run2     string  `json:"run2,omitempty"`
+	GapHours float64 `json:"gapHours,omitempty"`
+	GapOK    bool    `json:"gapOk"`
+	// Final is false for run 1 only: that output serves the futility check
+	// after run 1 and declares no region.
+	Final          bool             `json:"final"`
 	Warnings       []string         `json:"warnings"`
 	Cells          []CellResult     `json:"cells"`
 	Universal      []UniversalRow   `json:"worldUniversal"`
@@ -365,12 +368,16 @@ func Analyze(in *Inputs) (*Result, error) {
 	if len(in.Runs) == 2 {
 		gap := in.Runs[1].Started.Sub(in.Runs[0].Ended)
 		res.GapHours = gap.Hours()
-		a.gapOK = gap >= GapHours*time.Hour
-		if !a.gapOK {
-			res.Warnings = append(res.Warnings, fmt.Sprintf(
-				"run 2 started %.2f h after run 1 ended, rule 1 needs at least %d h: no cell holds in both runs under rule 1", gap.Hours(), GapHours))
+		// A short gap is an operator slip, not a result: no region, no futility
+		// verdict (INTERPRETATIONS.md 2).
+		if gap < GapHours*time.Hour {
+			return nil, fmt.Errorf("run 2 (%s) started at %s, only %.2f h after run 1 (%s) ended at %s; rule 1 needs at least %d h. "+
+				"This is not a result (no region, no futility verdict): run the sample again at least %d h after run 1 ended",
+				in.Runs[1].ID, in.Runs[1].Started.Format(time.RFC3339), gap.Hours(), in.Runs[0].ID, in.Runs[0].Ended.Format(time.RFC3339), GapHours, GapHours)
 		}
+		a.gapOK = true
 	}
+	res.Final = len(in.Runs) == 2
 	res.GapOK = a.gapOK
 
 	var uworlds []UndecidedWorld
@@ -469,9 +476,6 @@ func (a *analysis) enumerate() {
 			cr.Status = StExcluded
 		case allFinding && len(states) == 1:
 			cr.Status = StAwaitRun2
-		case allFinding && !a.gapOK:
-			cr.Status = StNotReproduce
-			cr.Detail = fmt.Sprintf("run 2 started less than %d h after run 1 ended (rule 1)", GapHours)
 		case allFinding:
 			cr.Status = StUnresolved // refined in assignStatus
 		default:

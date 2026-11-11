@@ -8,7 +8,8 @@
 //
 // FILE "-" is stdout. With neither flag the markdown goes to stdout. Exit 0 on
 // success, 1 when the ledger and the reports disagree (the error names the
-// row), 2 on a usage or read error.
+// row) or run 2 started under 12 h after run 1 ended (no output is written),
+// 2 on a usage or read error.
 package main
 
 import (

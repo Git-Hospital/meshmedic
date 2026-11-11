@@ -17,8 +17,10 @@ where the maintainer may want the other reading before the freeze.
 
 - Sentence: rule 1, "the second started at least 12 h after the first ended".
 - Ambiguity: the reports carry no times, and what happens when the gap is short is not said.
-- Reading: the manifest gives `started` and `ended` per run (RFC 3339); a gap under 12 h (exactly 12 h passes) makes no cell hold under rule 1, status `not-reproduced`, with a prominent warning. It is not an error.
-- Alternative: stop with an error, since the instrument was run wrongly.
+- Reading: the manifest gives `started` and `ended` per run (RFC 3339). With run 2 given, a gap under 12 h (exactly 12 h passes; a run 2 that starts before run 1 ended is a gap under 12 h) is an error: crossrun exits 1 naming both times and writes no result, so no region and no futility verdict. An operator slip must not read as "Drop" (every cell not reproduced, N_max 0, region E).
+- Which times: analyze.sh takes them conservatively against workflow reruns. End of run 1 is the latest `completedAt` of any job in any attempt (`gh run view ID --attempt N --json jobs` for every attempt 1..`attempt`, N from `gh run view ID --json attempt`). Start of run 2 is the earliest `startedAt` of any job in any attempt, and not later than the run's own `startedAt`. Jobs with no real time (skipped jobs report a zero time) are ignored. A run that is not completed is refused.
+- Run 1 only (analyze.sh without --run2, the futility check "after run 1"): cells that differ in run 1 are `awaiting-run-2` and count as pending toward N_max and P_max. No region is final: the result has `final: false`, the region is "none", the markdown starts with "RUN 1 ONLY" and prints no region or first-match table. The stop flag `stopDrop` is then only a statement about the bounds.
+- Alternative: warn and report region E (the first implementation).
 
 ## 3. "Differs in two workflow runs", "W0 3 of 3 in both"
 

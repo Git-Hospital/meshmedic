@@ -10,7 +10,7 @@ and the reports disagree it stops with an error naming the row.
     go run ./hack/compat-exp/crossrun -inputs inputs.json [-json out.json] [-md out.md]
 
 `-` is stdout; with neither flag the markdown goes to stdout. Exit 0 ok, 1 the
-ledger and the reports disagree (error names the row), 2 usage or read error.
+ledger and the reports disagree or run 2 started under 12 h after run 1 ended (error names the row or both times; no output is written), 2 usage or read error.
 Output is deterministic: the same inputs give the same bytes.
 
 ## Inputs
@@ -22,7 +22,7 @@ Output is deterministic: the same inputs give the same bytes.
      "recheck": {"id", "report", "istio"},            optional
      "causes": "...", "ledger": "...", "frame": "...", "static": "..." (optional)}
 
-- `runs`: run 1, then run 2 once it exists (with run 1 only, cells wait for run 2 and the futility bound still works). `started` and `ended` are RFC 3339; the 12 h gap comes from them.
+- `runs`: run 1, then run 2 once it exists (with run 1 only, cells wait for run 2 and the futility bound still works). `started` and `ended` are RFC 3339; the 12 h gap comes from them; a gap under 12 h is an error, not a result. With run 1 only the output says "run 1 only", has `final: false` and declares no region.
 - `report`: `difftable -json` output of one workflow run's records (hack/compat-exp/DIFFTABLE-JSON.md). Certification and recheck runs use the same shape; a certification report holds the fix entries with their `certificate`.
 - `records`: the observation records of that run (hack/compat-exp/RECORD.md); only `podMesh` is read, for c-optout evidence.
 - `causes`: hack/compat-exp/causes.json, the real file: an object whose list is under `keys`, in rank order, each entry with `key`, `worlds` and `staticCheck` (a check id, or null for a key without a static check). No other shape is read.

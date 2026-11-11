@@ -106,8 +106,13 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 	}
 	res.Metrics, _ = metricsOf(cs, sFn)
 	sort.Slice(res.Static, func(i, j int) bool { return res.Static[i].Key < res.Static[j].Key })
-	res.Region = Region(res.Metrics)
-	res.Trace = Trace(res.Metrics)
+	if res.Final {
+		res.Region = Region(res.Metrics)
+		res.Trace = Trace(res.Metrics)
+	} else {
+		res.Trace = []RowTrace{}
+		res.Region = RegionRow{Region: "none", Condition: "run 1 only", Outcome: "run 1 only: no final region; the futility bound below is the only verdict"}
+	}
 
 	// open cells
 	pendingPubs := map[string]bool{}
@@ -195,6 +200,9 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 	}
 	hm, _ := metricsOf(hyp, hsFn)
 	res.IfAllCounted = Hypothetical{Cells: len(open), Metrics: hm, Region: Region(hm)}
+	if !res.Final {
+		res.IfAllCounted.Region = RegionRow{Region: "none", Condition: "run 1 only", Outcome: "run 1 only: no final region"}
+	}
 
 	// results
 	for _, cr := range a.cells {
@@ -254,7 +262,7 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 		}
 	}
 	if res.Run2 == "" {
-		res.Warnings = append(res.Warnings, "only run 1 given: no cell can hold under rule 1 yet; cells are awaiting run 2")
+		res.Warnings = append(res.Warnings, "run 1 only: no cell can hold under rule 1 yet and no region is final; cells are awaiting run 2, and differing cells count as pending toward N_max and P_max")
 	}
 	if res.Warnings == nil {
 		res.Warnings = []string{}

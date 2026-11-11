@@ -26,9 +26,9 @@ func RenderMarkdown(r *Result) []byte {
 
 	w("# crossrun\n\n")
 	if r.Run2 != "" {
-		w("Run 1 %s, run 2 %s, gap %.2f h (%s).\n\n", r.Run1, r.Run2, r.GapHours, okWord(r.GapOK, "at least 12 h", "UNDER 12 h"))
+		w("Run 1 %s, run 2 %s, gap %.2f h (at least 12 h).\n\n", r.Run1, r.Run2, r.GapHours)
 	} else {
-		w("Run 1 %s only; no run 2 yet.\n\n", r.Run1)
+		w("**RUN 1 ONLY (%s): no final region.** This output serves the futility check after run 1 (section 7); differing cells count as pending toward N_max and P_max.\n\n", r.Run1)
 	}
 	for _, x := range r.Warnings {
 		w("- WARNING: %s\n", x)
@@ -39,16 +39,24 @@ func RenderMarkdown(r *Result) []byte {
 
 	w("## Decision\n\n")
 	w("%s\n\n", r.Metrics)
-	w("Region **%s**: %s (%s).\n\n", r.Region.Region, r.Region.Outcome, r.Region.Condition)
-	w("| row | matched | failed clauses |\n|---|---|---|\n")
-	for _, t := range r.Trace {
-		w("| %s | %v | %s |\n", t.Region, t.Matched, strings.Join(t.Failed, ", "))
+	if r.Final {
+		w("Region **%s**: %s (%s).\n\n", r.Region.Region, r.Region.Outcome, r.Region.Condition)
+		w("| row | matched | failed clauses |\n|---|---|---|\n")
+		for _, t := range r.Trace {
+			w("| %s | %v | %s |\n", t.Region, t.Matched, strings.Join(t.Failed, ", "))
+		}
+	} else {
+		w("No region: run 1 only (the metrics above are partial).\n")
 	}
 	if !r.SComputed {
 		w("\nS is not computed (no static check results); it is 0 here.\n")
 	}
-	w("\nIf every unresolved, unexplained or awaiting cell counted (%d cells): %s, region %s.\n\n",
-		r.IfAllCounted.Cells, r.IfAllCounted.Metrics, r.IfAllCounted.Region.Region)
+	if r.Final {
+		w("\nIf every unresolved, unexplained or awaiting cell counted (%d cells): %s, region %s.\n\n",
+			r.IfAllCounted.Cells, r.IfAllCounted.Metrics, r.IfAllCounted.Region.Region)
+	} else {
+		w("\nIf every awaiting cell counted (%d cells): %s.\n\n", r.IfAllCounted.Cells, r.IfAllCounted.Metrics)
+	}
 
 	w("## Futility (section 7)\n\n")
 	f := r.Futility

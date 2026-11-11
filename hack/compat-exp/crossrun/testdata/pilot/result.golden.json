@@ -4,6 +4,7 @@
   "run2": "40119399052",
   "gapHours": 13.883333333333333,
   "gapOk": true,
+  "final": true,
   "warnings": [
     "no static check results given: S is 0 and regions B and E are decided without it (S is a lower bound)"
   ],
