@@ -126,7 +126,7 @@ func RenderMarkdown(r *Result) []byte {
 				ws = append(ws, fmt.Sprintf("%s %d of %d same flagged", x.World, x.FlaggedSame, x.SameCharts))
 			}
 			if s.NoCheck {
-				ws = append(ws, "no static check")
+				ws = append(ws, s.NoCheckReason)
 			}
 			w("| %s | %s | %v | %s | %v |\n", s.Key, s.Check, s.FlagsAll, strings.Join(ws, "; "), s.Qualifies)
 		}

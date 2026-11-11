@@ -132,6 +132,9 @@ type StaticKey struct {
 	// NoCheck: the key has no static check (staticCheck null in causes.json),
 	// so it cannot be in S.
 	NoCheck bool `json:"noStaticCheck,omitempty"`
+	// NoCheckReason says why: NoCheckNull for a frozen key whose staticCheck is
+	// null, NoCheckAfterFreeze for a key admitted after the freeze.
+	NoCheckReason string `json:"noStaticCheckReason,omitempty"`
 	// NotApplicable lists counted findings in a world the check does not apply
 	// to. A check that cannot look at a world cannot flag a finding there, so
 	// the key does not qualify (and the cell is not reported as "not flagged").
@@ -663,15 +666,26 @@ func (c *CellResult) classKey() string {
 	return c.Class
 }
 
-// checkID is the id of the key's static check. ok is false for a frozen key
-// whose causes.json entry has staticCheck null. A key outside causes.json (a
-// new key) uses its own name as the check id.
-func (a *analysis) checkID(key string) (id string, ok bool) {
-	if a.in.Causes.Has(key) {
-		id, ok = a.in.Causes.Static[key]
-		return id, ok
+// Why a key has no static check.
+const (
+	NoCheckNull        = "no static check: staticCheck is null in causes.json"
+	NoCheckAfterFreeze = "no static check: admitted after the freeze"
+)
+
+// checkID is the id of the key's static check. ok is false, with the reason,
+// for a frozen key whose causes.json entry has staticCheck null and for a key
+// outside causes.json: a key admitted after the freeze has no check in the
+// frozen instrument, so it never earns S and static results are not required
+// for it.
+func (a *analysis) checkID(key string) (id string, ok bool, why string) {
+	if !a.in.Causes.Has(key) {
+		return "", false, NoCheckAfterFreeze
 	}
-	return key, true
+	id, ok = a.in.Causes.Static[key]
+	if !ok {
+		return "", false, NoCheckNull
+	}
+	return id, true, ""
 }
 
 // staticRow finds the static result for a chart, world and check. applicable

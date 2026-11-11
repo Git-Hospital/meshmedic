@@ -263,7 +263,7 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 
 // staticKey runs the S test for one key over its counted cells.
 func (a *analysis) staticKey(key string, cells []counted) StaticKey {
-	check, hasCheck := a.checkID(key)
+	check, hasCheck, why := a.checkID(key)
 	sk := StaticKey{Key: key, Check: check, FlagsAll: true, Qualifies: true, Worlds: []StaticWorld{}, CountedFor: []ledger.Cell{}}
 	worlds := map[string]bool{}
 	for _, c := range cells {
@@ -272,7 +272,7 @@ func (a *analysis) staticKey(key string, cells []counted) StaticKey {
 	}
 	sort.Slice(sk.CountedFor, func(i, j int) bool { return cellLess(sk.CountedFor[i], sk.CountedFor[j]) })
 	if !hasCheck {
-		sk.NoCheck, sk.FlagsAll, sk.Qualifies = true, false, false
+		sk.NoCheck, sk.NoCheckReason, sk.FlagsAll, sk.Qualifies = true, why, false, false
 		return sk
 	}
 	naWorld := map[string]bool{}
