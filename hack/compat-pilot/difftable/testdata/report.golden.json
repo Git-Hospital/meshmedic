@@ -548,7 +548,13 @@
         "cleared": [
           "W3"
         ],
-        "problems": []
+        "problems": [],
+        "cellWorlds": [
+          "W1",
+          "W2",
+          "W3"
+        ],
+        "ignored": []
       }
     },
     {

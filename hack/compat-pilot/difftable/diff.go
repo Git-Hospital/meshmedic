@@ -408,34 +408,117 @@ func Compare(chart, world string, w0, wn []Record, minRuns int) (Comparison, Ora
 // entry whose fixOf names the chart it repairs, installed under the same
 // release name so that its observations line up key by key.
 type Certificate struct {
-	Fix, Base string
-	Cleared   []string // mesh worlds where the base differed and the fix does not
-	Problems  []string // why it is not certified
+	Fix, Base  string
+	Cleared    []string     // mesh worlds where the base differed and the fix does not
+	Problems   []string     // why it is not certified
+	CellWorlds []string     // the worlds the fix had to clear; all mesh worlds unless limited
+	Ignored    []IgnoreCell // every cell of the ignore list this certificate did not count
 }
 
 // Certified needs at least one cleared world and nothing else wrong. A fix for
 // a chart that never differed has nothing to prove.
 func (c Certificate) Certified() bool { return len(c.Problems) == 0 && len(c.Cleared) > 0 }
 
+// IgnoreCell names a cell that certification must not count as a remaining
+// finding, and why. Key "*" names a whole world that could not be decided.
+type IgnoreCell struct {
+	Chart  string `json:"chart"`
+	World  string `json:"world"`
+	Key    string `json:"key"`
+	Reason string `json:"reason"`
+}
+
+// wholeWorld is the Key of an ignore entry for a world with no verdict.
+const wholeWorld = "*"
+
+// CertifyOpts narrows a certification to one cell. The zero value is the
+// original rule: every mesh world must come out clean.
+type CertifyOpts struct {
+	// CellWorlds are the worlds the fix must clear. In the other mesh worlds
+	// the fix may differ from the oracle only where the base does too; a new
+	// difference there fails it. Empty means every mesh world.
+	CellWorlds []string
+	// Ignore lists cells that remain and do not count (ADR rule 5). Entries
+	// for other charts are carried through untouched.
+	Ignore []IgnoreCell
+}
+
 // Certify holds a fix to three conditions: in every mesh world it behaves like
 // its own W0 (so the finding is gone, 3 of 3, and nothing new broke), with no
 // flaky keys either; and its W0 behaves like the base chart's W0, because a
 // fix that changes the chart without a mesh is a different chart.
 func Certify(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0, baseW0 []Record, minRuns int) Certificate {
-	c := Certificate{Fix: fix, Base: base}
+	return CertifyWith(fix, base, fixCmp, baseCmp, fixW0, baseW0, minRuns, CertifyOpts{})
+}
+
+// CertifyWith is Certify limited to a cell's worlds and with an ignore list.
+// The entries of the list that name this fix or its base and match a cell are
+// returned in Certificate.Ignored; an entry that matches nothing is left for
+// the caller to refuse.
+func CertifyWith(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0, baseW0 []Record, minRuns int, opts CertifyOpts) Certificate {
+	c := Certificate{Fix: fix, Base: base, CellWorlds: opts.CellWorlds}
+	if len(c.CellWorlds) == 0 {
+		c.CellWorlds = meshWorlds
+	}
+	inCell := map[string]bool{}
+	for _, w := range c.CellWorlds {
+		inCell[w] = true
+	}
 	for _, w := range meshWorlds {
 		f, b := fixCmp[w], baseCmp[w]
+		ignore := map[string]bool{}
+		for _, e := range opts.Ignore {
+			if e.World != w || (e.Chart != fix && e.Chart != base) {
+				continue
+			}
+			if e.Key == wholeWorld {
+				if f.Undecided != "" || b.Undecided != "" {
+					ignore[wholeWorld] = true
+					c.Ignored = append(c.Ignored, e)
+				}
+				continue
+			}
+			if hasKey(f.Findings, e.Key) || hasKey(f.Flaky, e.Key) || hasKey(b.Findings, e.Key) || hasKey(b.Flaky, e.Key) {
+				ignore[e.Key] = true
+				c.Ignored = append(c.Ignored, e)
+			}
+		}
+		fFind, fFlaky, bFind := without(f.Findings, ignore), without(f.Flaky, ignore), without(b.Findings, ignore)
 		switch {
 		case f.Undecided != "":
-			c.Problems = append(c.Problems, w+" undecided: "+f.Undecided)
-		case len(f.Findings) > 0:
-			c.Problems = append(c.Problems, fmt.Sprintf("%s still differs from %s: %s", w, oracleWorld, keyList(f.Findings)))
-		case len(f.Flaky) > 0:
-			c.Problems = append(c.Problems, fmt.Sprintf("%s flaky: %s", w, keyList(f.Flaky)))
-		case len(b.Findings) > 0:
+			if !ignore[wholeWorld] {
+				c.Problems = append(c.Problems, w+" undecided: "+f.Undecided)
+			}
+		case !inCell[w]:
+			// Not the cell being certified: what the base does here is its
+			// own business, but a difference the base does not have is new.
+			var fresh []Difference
+			for _, d := range append(append([]Difference{}, fFind...), fFlaky...) {
+				if !hasKey(b.Findings, d.Key) && !hasKey(b.Flaky, d.Key) {
+					fresh = append(fresh, d)
+				}
+			}
+			if len(fresh) > 0 {
+				c.Problems = append(c.Problems, fmt.Sprintf("%s differs from %s where %s does not: %s", w, oracleWorld, base, keyList(fresh)))
+			}
+		case len(fFind) > 0:
+			c.Problems = append(c.Problems, fmt.Sprintf("%s still differs from %s: %s", w, oracleWorld, keyList(fFind)))
+		case len(fFlaky) > 0:
+			c.Problems = append(c.Problems, fmt.Sprintf("%s flaky: %s", w, keyList(fFlaky)))
+		case len(bFind) > 0:
 			c.Cleared = append(c.Cleared, w)
 		}
 	}
+	sort.Slice(c.Ignored, func(i, j int) bool {
+		a, b := c.Ignored[i], c.Ignored[j]
+		if a.World != b.World {
+			return a.World < b.World
+		}
+		if a.Key != b.Key {
+			return a.Key < b.Key
+		}
+		return a.Chart < b.Chart
+	})
 	w0, _ := Compare(fix, oracleWorld, baseW0, fixW0, minRuns)
 	switch {
 	case w0.Undecided != "":
@@ -449,6 +532,29 @@ func Certify(fix, base string, fixCmp, baseCmp map[string]Comparison, fixW0, bas
 		c.Problems = append(c.Problems, base+" has no finding for this fix to clear")
 	}
 	return c
+}
+
+func hasKey(ds []Difference, key string) bool {
+	for _, d := range ds {
+		if d.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// without drops the differences whose key is in the set.
+func without(ds []Difference, drop map[string]bool) []Difference {
+	if len(drop) == 0 {
+		return ds
+	}
+	var out []Difference
+	for _, d := range ds {
+		if !drop[d.Key] {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 func keyList(ds []Difference) string {

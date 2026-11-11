@@ -8,11 +8,17 @@
 //
 // Usage:
 //
-//	go run ./hack/compat-pilot/difftable [-runs 3] [-oracle W0] [-worlds W1,W2,W3] [-json] RESULTS_DIR
+//	go run ./hack/compat-pilot/difftable [-runs 3] [-oracle W0] [-worlds W1,W2,W3] [-json] [-cell-worlds W3] [-ignore FILE] RESULTS_DIR
 //
 // The first pilot holds every mesh world against W0. The second tests Istio
 // features that do not exist without a mesh, so it holds the ambient worlds
 // against W1, sidecar mode, where those features are documented to work.
+//
+// By default a fix is certified only when no mesh world differs from its
+// oracle. -cell-worlds limits that to the worlds of the cell being certified
+// (the others are still checked for differences the base chart does not have)
+// and -ignore names cells that remain and do not count; every ignored cell is
+// printed with its reason, and an entry that matches no cell is an error.
 //
 // With -json the table is replaced by a machine-readable report, documented in
 // hack/compat-exp/DIFFTABLE-JSON.md.
@@ -49,10 +55,12 @@ func main() {
 	oracle := flag.String("oracle", "W0", "the world every other world is held against")
 	worlds := flag.String("worlds", "W1,W2,W3", "the worlds compared with the oracle, comma separated")
 	asJSON := flag.Bool("json", false, "write the machine-readable report instead of the table")
+	cell := flag.String("cell-worlds", "", "certify only these worlds (a subset of -worlds); the other worlds are checked for new differences")
+	ignoreFile := flag.String("ignore", "", "a JSON list of {chart, world, key, reason} cells that certification does not count")
 	flag.Parse()
 	oracleWorld, meshWorlds = *oracle, strings.Split(*worlds, ",")
 	if flag.NArg() != 1 || *minRuns < 1 || !validWorlds(oracleWorld, meshWorlds) {
-		fmt.Fprintln(os.Stderr, "usage: difftable [-runs 3] [-oracle W0] [-worlds W1,W2,W3] [-json] RESULTS_DIR")
+		fmt.Fprintln(os.Stderr, "usage: difftable [-runs 3] [-oracle W0] [-worlds W1,W2,W3] [-json] [-cell-worlds W3] [-ignore FILE] RESULTS_DIR")
 		os.Exit(2)
 	}
 	records, err := load(flag.Arg(0))
@@ -64,11 +72,27 @@ func main() {
 		fmt.Fprintln(os.Stderr, "no records under", flag.Arg(0))
 		os.Exit(3)
 	}
-	out := render
-	if *asJSON {
-		out = renderJSON
+	opts := CertifyOpts{}
+	if *cell != "" {
+		opts.CellWorlds = strings.Split(*cell, ",")
+		if !validCellWorlds(opts.CellWorlds, meshWorlds) {
+			fmt.Fprintln(os.Stderr, "-cell-worlds must name worlds from -worlds, each once")
+			os.Exit(2)
+		}
 	}
-	if err := out(os.Stdout, records, *minRuns); err != nil {
+	if *ignoreFile != "" {
+		if opts.Ignore, err = loadIgnore(*ignoreFile); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+	}
+	a, err := analyze(records, *minRuns, opts)
+	if err == nil && *asJSON {
+		err = a.writeJSON(os.Stdout)
+	} else if err == nil {
+		err = a.table(os.Stdout)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
@@ -121,10 +145,11 @@ type analysis struct {
 	oracles map[string]Oracle
 	certs   []Certificate
 	minRuns int
+	limited bool // -cell-worlds or -ignore was given
 }
 
 func render(w io.Writer, records []Record, minRuns int) error {
-	a, err := analyze(records, minRuns)
+	a, err := analyze(records, minRuns, CertifyOpts{})
 	if err != nil {
 		return err
 	}
@@ -132,14 +157,17 @@ func render(w io.Writer, records []Record, minRuns int) error {
 }
 
 func renderJSON(w io.Writer, records []Record, minRuns int) error {
-	a, err := analyze(records, minRuns)
+	a, err := analyze(records, minRuns, CertifyOpts{})
 	if err != nil {
 		return err
 	}
 	return a.writeJSON(w)
 }
 
-func analyze(records []Record, minRuns int) (*analysis, error) {
+func analyze(records []Record, minRuns int, opts CertifyOpts) (*analysis, error) {
+	if err := checkIgnore(opts.Ignore); err != nil {
+		return nil, err
+	}
 	byChart := map[string]map[string][]Record{}
 	for _, r := range records {
 		if byChart[r.Chart] == nil {
@@ -197,10 +225,24 @@ func analyze(records []Record, minRuns int) (*analysis, error) {
 			}
 			return m
 		}
-		certs = append(certs, Certify(chart, base, byWorld(chart), byWorld(base),
-			byChart[chart][oracleWorld], byChart[base][oracleWorld], minRuns))
+		certs = append(certs, CertifyWith(chart, base, byWorld(chart), byWorld(base),
+			byChart[chart][oracleWorld], byChart[base][oracleWorld], minRuns, opts))
 	}
-	return &analysis{byChart: byChart, charts: charts, results: results, oracles: oracles, certs: certs, minRuns: minRuns}, nil
+	// A list that names a cell nothing differs on is out of date, and an out
+	// of date list could hide a cell the next time it appears.
+	used := map[IgnoreCell]bool{}
+	for _, c := range certs {
+		for _, e := range c.Ignored {
+			used[e] = true
+		}
+	}
+	for _, e := range opts.Ignore {
+		if !used[e] {
+			return nil, fmt.Errorf("ignore entry %s %s %q matches no cell of any fix entry (stale list?)", e.Chart, e.World, e.Key)
+		}
+	}
+	return &analysis{byChart: byChart, charts: charts, results: results, oracles: oracles, certs: certs, minRuns: minRuns,
+		limited: len(opts.CellWorlds) > 0 || len(opts.Ignore) > 0}, nil
 }
 
 func (a *analysis) table(w io.Writer) error {
@@ -238,6 +280,17 @@ func (a *analysis) table(w io.Writer) error {
 				verdict = "not certified: " + strings.Join(c.Problems, "; ")
 			}
 			p("| %s | %s | %s | %s |\n", c.Fix, c.Base, strings.Join(c.Cleared, ", "), verdict)
+		}
+		if a.limited {
+			for _, c := range certs {
+				p("\n`%s`: cell worlds: %s; the other worlds are checked for differences `%s` does not have.\n", c.Fix, strings.Join(c.CellWorlds, ", "), c.Base)
+				if len(c.Ignored) > 0 {
+					p("\nIgnored cells of `%s`, not counted as remaining findings:\n\n", c.Fix)
+				}
+				for _, e := range c.Ignored {
+					p("- `%s` ignores %s `%s` of %s: %s\n", c.Fix, e.World, e.Key, e.Chart, e.Reason)
+				}
+			}
 		}
 	}
 
@@ -301,4 +354,69 @@ func environment(worlds map[string][]Record) string {
 		parts = append(parts, s)
 	}
 	return strings.Join(parts, "; ")
+}
+
+// validCellWorlds wants a non-empty subset of the compared worlds, each once.
+func validCellWorlds(cell, all []string) bool {
+	in := map[string]bool{}
+	for _, w := range all {
+		in[w] = true
+	}
+	seen := map[string]bool{}
+	for _, w := range cell {
+		if !in[w] || seen[w] {
+			return false
+		}
+		seen[w] = true
+	}
+	return len(cell) > 0
+}
+
+// loadIgnore reads the ignore list: a JSON array of cells, nothing else.
+func loadIgnore(path string) ([]IgnoreCell, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	dec := json.NewDecoder(f)
+	dec.DisallowUnknownFields()
+	var out []IgnoreCell
+	if err := dec.Decode(&out); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if dec.More() {
+		return nil, fmt.Errorf("%s: more than one JSON value", path)
+	}
+	return out, nil
+}
+
+// checkIgnore refuses an entry that cannot be read as a cell: a missing field,
+// the oracle or an unknown world, or the same cell twice.
+func checkIgnore(list []IgnoreCell) error {
+	seen := map[[3]string]bool{}
+	for _, e := range list {
+		id := fmt.Sprintf("ignore entry %s %s %q", e.Chart, e.World, e.Key)
+		switch {
+		case e.Chart == "" || e.World == "" || e.Key == "":
+			return fmt.Errorf("%s: chart, world and key are required", id)
+		case e.Reason == "":
+			return fmt.Errorf("%s: a reason is required", id)
+		case !contains(meshWorlds, e.World):
+			return fmt.Errorf("%s: %s is not one of the compared worlds %s", id, e.World, strings.Join(meshWorlds, ","))
+		case seen[[3]string{e.Chart, e.World, e.Key}]:
+			return fmt.Errorf("%s: listed twice", id)
+		}
+		seen[[3]string{e.Chart, e.World, e.Key}] = true
+	}
+	return nil
+}
+
+func contains(xs []string, x string) bool {
+	for _, y := range xs {
+		if y == x {
+			return true
+		}
+	}
+	return false
 }

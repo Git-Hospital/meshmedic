@@ -77,6 +77,11 @@ type CertReport struct {
 	Certified bool     `json:"certified"`
 	Cleared   []string `json:"cleared"`
 	Problems  []string `json:"problems"`
+	// CellWorlds are the worlds the fix had to clear (all compared worlds
+	// unless -cell-worlds was given). Ignored lists every cell of the ignore
+	// list that the certificate did not count, with its reason.
+	CellWorlds []string     `json:"cellWorlds"`
+	Ignored    []IgnoreCell `json:"ignored"`
 }
 
 func verdictWord(c Comparison) string {
@@ -132,7 +137,8 @@ func (a *analysis) report() Report {
 		}
 		if c, ok := certs[chart]; ok {
 			cr.Certificate = &CertReport{Fix: c.Fix, Base: c.Base, Certified: c.Certified(),
-				Cleared: nonNil(c.Cleared), Problems: nonNil(c.Problems)}
+				Cleared: nonNil(c.Cleared), Problems: nonNil(c.Problems),
+				CellWorlds: nonNil(c.CellWorlds), Ignored: nonNil(c.Ignored)}
 		}
 		r.Charts = append(r.Charts, cr)
 	}
