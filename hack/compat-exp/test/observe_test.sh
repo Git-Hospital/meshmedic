@@ -243,6 +243,62 @@ charts_one "$T/c.json" '{"id":"app-fix","fixOf":"app","chart":"c","version":"1",
 run_observe "$T/c.json" W0 app-fix 1
 [[ $rc -eq 0 ]] && jqok "patch of exactly 40 changed lines accepted" "$rec" '.patch.changedLines == 40' || bad "patch of exactly 40 lines (rc=$rc: $(cat "$T/stderr"))"
 
+# --- item 4: per-pod mesh fields and capacityPending -------------------------------
+
+echo "# item 4"
+charts_one "$T/c4.json" '{"id":"app","chart":"oci://example/app","version":"1.0.0"}'
+
+# A pod that opts out, a pod with a regular proxy, an init-container proxy, a
+# native sidecar, ambient redirection, and a plain pod.
+reset
+pods_file "$T/stub/pods.json" \
+  "$(pod plain-0 StatefulSet plain)" \
+  "$(pod optout-1 Pod optout '.metadata.labels["sidecar.istio.io/inject"] = "false" | .metadata.annotations["istio.io/dataplane-mode"] = "none" | .metadata.labels["app"] = "x"')" \
+  "$(pod proxy-2 Pod proxy '.spec.containers += [{name: "istio-proxy"}] | .spec.initContainers = [{name: "istio-init"}] | .metadata.annotations["sidecar.istio.io/status"] = "{}"')" \
+  "$(pod native-3 Pod native '.spec.initContainers = [{name: "istio-proxy", restartPolicy: "Always"}]')" \
+  "$(pod amb-4 Pod amb '.metadata.annotations["ambient.istio.io/redirection"] = "enabled"')" \
+  "$(pod mmc-client Pod mmc-client '.metadata.labels["mmc-client"] = "true"')"
+run_observe "$T/c4.json" W1 app 1
+[[ $rc -eq 0 ]] || bad "item 4 run (rc=$rc: $(cat "$T/stderr"))"
+jqok "every pod is listed, client flagged" "$rec" '(.podMesh | length) == 6 and ([.podMesh[] | select(.client)] | length) == 1'
+jqok "pod with no mesh metadata: empty list, no proxy, no redirection" "$rec" \
+  '.podMesh[] | select(.pod == "plain-0") | .meshMetadata == [] and .istioProxy == {container: false, initContainer: false, native: false} and .ambientRedirection == ""'
+jqok "opt-out label and annotation recorded as raw key and value, other labels left out" "$rec" \
+  '.podMesh[] | select(.pod == "optout-1") | .meshMetadata == [{kind: "label", key: "sidecar.istio.io/inject", value: "false"}, {kind: "annotation", key: "istio.io/dataplane-mode", value: "none"}]'
+jqok "pod with an istio-proxy container" "$rec" \
+  '.podMesh[] | select(.pod == "proxy-2") | .istioProxy == {container: true, initContainer: false, native: false}'
+jqok "pod with an istio-proxy init container (native sidecar)" "$rec" \
+  '.podMesh[] | select(.pod == "native-3") | .istioProxy == {container: false, initContainer: true, native: true}'
+jqok "ambient redirection annotation reported" "$rec" \
+  '.podMesh[] | select(.pod == "amb-4") | .ambientRedirection == "enabled" and .meshMetadata == [{kind: "annotation", key: "ambient.istio.io/redirection", value: "enabled"}]'
+jqok "no capacity problem: capacityPending is an empty list" "$rec" '.capacityPending == []'
+
+# capacityPending: true cases and look-alikes that must not count.
+unsched() { # MESSAGE [PHASE] [REASON] [STATUS]
+  pod "pend-$RANDOM" Pod pend '.status.phase = "'"${2:-Pending}"'" | .status.conditions = [{type: "PodScheduled", status: "'"${4:-False}"'", reason: "'"${3:-Unschedulable}"'", message: ""}]' |
+    jq -c --arg m "$1" '.status.conditions[0].message = $m'
+}
+cap_case() { # NAME EXPECTED-COUNT POD...
+  local name="$1" want="$2"; shift 2
+  reset
+  pods_file "$T/stub/pods.json" "$@"
+  run_observe "$T/c4.json" W0 app 1
+  [[ $rc -eq 0 ]] && jqok "$name" "$rec" ".capacityPending | length == $want" || bad "$name (rc=$rc)"
+}
+cap_case "capacityPending: Insufficient cpu" 1 "$(pod ok-0 Pod ok)" "$(unsched '0/1 nodes are available: 1 Insufficient cpu.')"
+cap_case "capacityPending: Insufficient memory" 1 "$(unsched '0/3 nodes are available: 3 Insufficient memory. preemption: 0/3')"
+cap_case "capacityPending: not when unschedulable for another reason (taint)" 0 "$(unsched '0/1 nodes are available: 1 node(s) had untolerated taint.')"
+cap_case "capacityPending: not when the reason is not Unschedulable" 0 "$(unsched 'Insufficient cpu' Pending SchedulerError)"
+cap_case "capacityPending: not when PodScheduled is True" 0 "$(unsched 'Insufficient cpu' Pending Unschedulable True)"
+cap_case "capacityPending: not when the pod is not Pending" 0 "$(unsched 'Insufficient cpu' Running)"
+reset
+pods_file "$T/stub/pods.json" "$(unsched '0/1 nodes are available: 1 Insufficient cpu.')"
+run_observe "$T/c4.json" W0 app 1
+jqok "capacityPending entry names the pod and the scheduler message" "$rec" \
+  '.capacityPending[0] | (.pod | startswith("pend-")) and (.message | test("Insufficient cpu"))'
+jqok "capacityPending is at the top level like pullFailures, both arrays" "$rec" \
+  '(.capacityPending | type) == "array" and (.pullFailures | type) == "array"'
+
 # --- the pilot's observe.sh and this one agree on everything that existed ----------
 
 echo "# compatibility with the pilot instrument"

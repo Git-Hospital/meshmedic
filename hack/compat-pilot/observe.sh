@@ -243,6 +243,42 @@ jq '[.items[]
   | {owner: $owner, image}] | unique' \
   "$tmp/pods.json" >"$tmp/pullfailures.json" || undecided "could not read pods"
 
+# Every pod, the client included (flagged), with what it says about the mesh:
+# the opt-out labels and annotations it carries (raw key and value), whether it
+# has an istio-proxy container (regular, init, or a native sidecar, which is an
+# init container with restartPolicy Always), and whether ambient redirection is
+# reported for it (the annotation ztunnel's CNI sets). This is what lets a
+# failing caller be classed as opted out by the chart itself. Nothing here is
+# an observation key; it is evidence read after the fact.
+jq '[.items[]
+  | (.metadata.ownerReferences[0] // {}) as $o
+  | {
+      pod: .metadata.name,
+      client: (.metadata.labels["mmc-client"] != null),
+      owner: (if $o.kind then $o.kind + "/" + $o.name else "Pod/" + .metadata.name end),
+      meshMetadata: ([((.metadata.labels // {}) | to_entries[] | {kind: "label", key, value}),
+                      ((.metadata.annotations // {}) | to_entries[] | {kind: "annotation", key, value})]
+                     | map(select(.key | test("^(sidecar|ambient)\\.istio\\.io/") or . == "istio.io/dataplane-mode"))),
+      istioProxy: {
+        container: ((.spec.containers // []) | any(.name == "istio-proxy")),
+        initContainer: ((.spec.initContainers // []) | any(.name == "istio-proxy")),
+        native: ((.spec.initContainers // []) | any(.name == "istio-proxy" and .restartPolicy == "Always"))
+      },
+      ambientRedirection: ((.metadata.annotations // {})["ambient.istio.io/redirection"] // "")
+    }]' "$tmp/pods.json" >"$tmp/podmesh.json" || undecided "could not read pods"
+
+# Pods the scheduler could not place for want of CPU or memory. Such a run
+# measured the cluster's size, not the chart, and is marked like a pull
+# failure: a list at the top of the record, empty when nothing was pending for
+# capacity, so "capacityPending is true" reads as "the list is not empty".
+jq '[.items[]
+  | select(.status.phase == "Pending")
+  | . as $p
+  | ((.status.conditions // [])[] | select(.type == "PodScheduled" and .status == "False" and .reason == "Unschedulable"
+       and ((.message // "") | test("Insufficient (cpu|memory)"))))
+  | {pod: $p.metadata.name, message: (.message | .[0:300])}]' \
+  "$tmp/pods.json" >"$tmp/capacity.json" || undecided "could not read pods"
+
 # Warning events are evidence, not observations: they explain a difference
 # after the fact, and their wording changes between versions.
 kubectl -n "$ns" get events --field-selector type=Warning -o json | jq '[.items[]
@@ -346,6 +382,7 @@ jq -n \
   --slurpfile workloads "$tmp/workloads.json" --slurpfile jobs "$tmp/jobs.json" \
   --slurpfile ports "$tmp/ports.json" --slurpfile analyze "$tmp/analyze.json" \
   --slurpfile events "$tmp/events.json" --slurpfile pulls "$tmp/pullfailures.json" \
+  --slurpfile podmesh "$tmp/podmesh.json" --slurpfile capacity "$tmp/capacity.json" \
   --arg fixof "$fixof" --arg patch_path "$patch_rel" --arg patch_sha "$patch_sha" \
   --argjson patch_lines "$patch_lines" --argjson patch_changed "$patch_changed" '
   ($workloads[0] | group_by(.workload)) as $groups
@@ -356,6 +393,8 @@ jq -n \
            testLogTail: ($test_log | split("\n") | .[-40:] | join("\n"))},
     workloads: $workloads[0], jobs: $jobs[0], ports: $ports[0], analyze: $analyze[0], events: $events[0],
     pullFailures: $pulls[0],
+    capacityPending: $capacity[0],
+    podMesh: $podmesh[0],
     patch: (if $patch_path == "" then null
             else {path: $patch_path, sha256: $patch_sha, lines: $patch_lines, changedLines: $patch_changed} end),
     obs: (
