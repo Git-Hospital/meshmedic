@@ -78,7 +78,7 @@ Before you install anything, this lists what in the chart is likely to break
 under Istio (sidecar, ambient or both with `--mesh`). Each finding names the
 field, what will happen, the Istio documentation it rests on, a fix hint and
 how to confirm it in a cluster. Exit 0 means no candidates, 1 at least one, 2
-a usage or render error. These are candidates found by reading manifests, not
+a usage or render error, or an input not read in full and with no candidate in the rest. These are candidates found by reading manifests, not
 failures observed in a cluster, and a clean result is not a guarantee.
 Details, the limits and the validation against the compat pilot are in
 [docs/chart-check.md](docs/chart-check.md).

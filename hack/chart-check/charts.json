@@ -9,5 +9,6 @@
   {"id": "cloudnative-pg", "repo": "https://cloudnative-pg.github.io/charts", "chart": "cloudnative-pg", "version": "0.29.1", "args": []},
   {"id": "nats", "repo": "https://nats-io.github.io/k8s/helm/charts/", "chart": "nats", "version": "2.15.1", "args": ["--set", "config.cluster.enabled=true"]},
   {"id": "grafana", "repo": "https://grafana-community.github.io/helm-charts", "chart": "grafana", "version": "14.0.1", "args": []},
-  {"id": "valkey", "repo": "https://valkey.io/valkey-helm/", "chart": "valkey", "version": "0.12.0", "args": ["--set", "replica.enabled=true"]}
+  {"id": "valkey", "repo": "https://valkey.io/valkey-helm/", "chart": "valkey", "version": "0.12.0", "args": ["--set", "replica.enabled=true"]},
+  {"id": "istio-gateway", "repo": "https://istio-release.storage.googleapis.com/charts", "chart": "gateway", "version": "1.24.0", "args": ["--skip-schema-validation"], "expect": "clean"}
 ]

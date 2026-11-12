@@ -2,7 +2,7 @@
 #
 # Runs `meshmedic chart check` over the charts in charts.json (the ten charts of
 # the compat pilot, pinned, with the values the pilot installed them with, plus
-# the one-rule redis fix) and prints, per chart, which rules flagged what in
+# the one-rule redis fix and Istio's gateway chart, which is expected clean) and prints, per chart, which rules flagged what in
 # each mode. The observed side of docs/chart-check.md's validation table comes
 # from docs/compat-pilot.md and cannot be reproduced here: it needs clusters.
 #
@@ -53,5 +53,12 @@ jq -c '.[]' "$here/charts.json" | while IFS= read -r spec; do
     continue
   fi
   n="$(jq -r '[.findings[] | "\(.mode) \(.id) \(.check) \(.level)"] | group_by(.) | map("\(.[0]) x\(length)") | if length == 0 then "none" else join("; ") end' "$out/reports/$id.json")"
-  printf '%s\t%s\texit %s\t%s\n' "$id" "$version" "$code" "$n"
+  # An entry marked "expect": "clean" is a chart known not to be broken by the
+  # mesh (Istio's own gateway chart, whose istio-proxy container with image
+  # "auto" is an injection placeholder); a candidate on it is a false positive.
+  verdict=""
+  if [[ "$(jq -r '.expect // empty' <<<"$spec")" == clean && $code -ne 0 ]]; then
+    verdict="  UNEXPECTED: expected clean"
+  fi
+  printf '%s\t%s\texit %s\t%s%s\n' "$id" "$version" "$code" "$n" "$verdict"
 done

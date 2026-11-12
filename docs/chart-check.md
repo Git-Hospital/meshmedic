@@ -32,6 +32,8 @@ $ helm template my-release ./my-chart | meshmedic chart check --manifests -
 | `--namespace NS` | release namespace (default `default`); also the namespace given to objects that name none |
 | `--release-name NAME` | helm release name (default `release`) |
 | `--kube-version V` | Kubernetes version helm renders for |
+| `--timeout DURATION` | how long `helm template` may run (default 5m); on expiry the command exits 2 and says so |
+| `--skip-schema-validation` | passed to helm, for a chart whose values schema rejects its own defaults (Istio's gateway chart 1.24.0) |
 | `--native-sidecars=BOOL` | assume sidecar proxies are native sidecars (default true, which is Istio 1.31 on Kubernetes 1.33 or newer); `false` for older clusters |
 
 A chart and `--manifests` together, or helm flags together with `--manifests`,
@@ -48,11 +50,74 @@ The same three the other commands use.
 |---|---|
 | 0 | no candidates (notes do not count) |
 | 1 | at least one candidate |
-| 2 | usage error, render error, unreadable or invalid input, or an input with no Kubernetes objects |
+| 2 | usage error, render error or timeout, an input with no Kubernetes objects, or an **incomplete read** with no candidate in the part that was read |
 
+Candidates win: if some documents could not be read but a candidate was found in
+the rest, the exit code is 1 and the report still says the read was incomplete.
 A **note** is a finding that is weaker than a candidate (see MM-CHART-001): it is
 reported but never sets exit code 1. An input with no objects is exit 2, never 0: a run that read nothing must not
 look like a clean one.
+
+### How helm is started
+
+`helm template` runs as a child process with an argument vector, never through
+a shell. Every option and its value are one element joined by `=`
+(`--values=FILE`, `--set=k=v`, `--kube-version=V`), so a value that starts with
+`-` cannot be read as another flag, and the release name and the chart come
+last, after `--`. The vector for `./chart` with a values file is
+
+```text
+helm template --namespace=default --values=a.yaml --include-crds -- release ./chart
+```
+
+Before helm starts, the command refuses a chart that starts with `-` (write a
+path as `./-name`), a release name that is not lowercase letters, digits, `-`
+and `.` (at most 53, starting and ending with a letter or digit), a namespace
+that is not a DNS label, and a `--kube-version` that is not a version. So
+`meshmedic chart check -- -h` and `--release-name=--post-renderer=X` exit 2 and
+helm is never run. helm gets a time limit (`--timeout`, default 5 minutes).
+
+### Reading the input
+
+The rendered YAML is read document by document, so one bad document does not
+take the others with it.
+
+- A **duplicate mapping key** is not an error. `yaml.v3` refuses to decode such
+  a document into a map, but it parses it, and helm and the API server accept
+  it and use the last value. The command walks the parsed tree itself (no YAML
+  parser of its own) and uses the last value too. The document is listed under
+  `duplicateKeys` in JSON and named in the text report.
+- A document that **cannot be parsed** is *unread*: its index, the line where it
+  starts, the `# Source:` comment, kind and name (when they can be recovered
+  from the text) and the reason are listed under `unread`, and the other
+  documents are analysed. The report is then **incomplete**. If a candidate is
+  found in the rest, the exit code is 1; if not, the exit code is 2 and the
+  summary says "incomplete", never "no candidates" alone. An incomplete read is
+  never exit 0.
+
+A real run, on the fixed redis shape plus one document with a syntax error
+(`pkg/chartcheck/testdata/np-unreadable-clean.yaml`):
+
+```console
+$ meshmedic chart check --manifests np-unreadable-clean.yaml --mesh ambient
+meshmedic chart check, rules written against Istio 1.31
+No candidates in the 2 objects that could be read, but the read is incomplete (1 unread): this is not a clean result.
+read manifests np-unreadable-clean.yaml: 2 objects, 1 pod templates, namespace default, modes
+  ambient; sidecar proxies assumed native
+INCOMPLETE: 1 document could not be read, so the result covers only the rest and is not a clean
+  result, whatever it finds.
+  - document 3 (line 44, demo/templates/broken.yaml, Deployment/broken): line 49: did not find
+    expected ',' or ']'
+
+These are candidates found by reading manifests, not failures observed in a cluster. A clean result
+is not a guarantee that the chart works under Istio. A note is weaker than a candidate: it depends
+on something the manifests cannot show and does not set the exit code.
+limits: Only rendered manifests are read. Namespace enrolment, PeerAuthentication, policies from
+  outside the chart and the CNI are assumed, not read, and nothing is run. Run with --verbose for
+  the full list.
+```
+
+Exit code 2.
 
 ### Determinism
 
@@ -288,6 +353,9 @@ $ helm template redis redis-28.3.9.tgz --namespace pilot | meshmedic chart check
       ]
     }
   ],
+  "incomplete": false,
+  "unread": [],
+  "duplicateKeys": [],
   "candidates": 2,
   "notes": 0,
   "notice": "These are candidates found by reading manifests, not failures observed in a cluster. A clean result is not a guarantee that the chart works under Istio. A note is weaker than a candidate: it depends on something the manifests cannot show and does not set the exit code.",
@@ -471,10 +539,66 @@ the request the policy or route should affect. A DENY policy with only L7
 attributes is skipped by ztunnel and breaks nothing (the L4 policy page); the
 check cannot tell it from an ALLOW policy and flags both.
 
+## The gateway injection placeholder
+
+Istio's gateway installation page ("Installing Gateways",
+<https://istio.io/latest/docs/setup/additional-setup/gateway/>, read on
+2026-11-12) gives the shape of a gateway Deployment. The pod template is
+
+```yaml
+      annotations:
+        # Select the gateway injection template (rather than the default sidecar template)
+        inject.istio.io/templates: gateway
+      labels:
+        # Enable gateway injection. If connecting to a revisioned control plane, replace with "istio.io/rev: revision-name"
+        sidecar.istio.io/inject: "true"
+```
+
+and its container is
+
+```yaml
+      containers:
+      - name: istio-proxy
+        image: auto # The image will automatically update each time the pod starts.
+        securityContext:
+          capabilities:
+            drop:
+            - ALL
+          runAsUser: 1337
+          runAsGroup: 1337
+```
+
+The container named `istio-proxy` with the image `auto` is a placeholder: the
+injector replaces it with the real proxy, so its user ID and ports conflict
+with nothing. Istio's own gateway chart renders exactly this, with a Service
+whose status port targets 15021 and a declared `containerPort` 15090. Before the
+exemption the command flagged it with MM-CHART-003 once and MM-CHART-004 twice.
+
+The exemption is exactly that shape: a container whose name is `istio-proxy`
+**and** whose image is `auto`. A container merely named `istio-proxy` with a real
+image is not exempt (nothing replaces it), and the tests check both. The
+annotation and label are "usually" present on the page, not required for the
+replacement, so they are not required for the exemption.
+
+All eight rules were reviewed against it:
+
+| rule | placeholder |
+|---|---|
+| MM-CHART-003 uid-1337 | the placeholder container is skipped |
+| MM-CHART-004 reserved-port | the placeholder's declared ports are skipped, and so are Service ports that reach a pod with a placeholder (the gateway's status port 15021 is served by the injected proxy itself); other containers of that pod are still checked |
+| MM-CHART-005, 006 classic sidecar | a pod with a placeholder **and** `inject.istio.io/templates: gateway` gets no separate sidecar (the placeholder is the proxy), so it is skipped; a placeholder with the default template is not |
+| MM-CHART-002 protocol | not exempt: no documentation says a gateway's Service ports are exempt from protocol selection, and the gateway chart passes (its ports are named `http2` and `https`) |
+| MM-CHART-007 webhook backend | not exempt: a webhook behind a gateway pod is the same call from outside the mesh |
+| MM-CHART-001 NetworkPolicy, 008 L7 | not about containers; unchanged |
+
+`hack/chart-check/validate.sh` runs Istio's gateway chart 1.24.0 as an
+expected-clean case (`"expect": "clean"` in `charts.json`) and prints
+`UNEXPECTED` if a candidate appears.
+
 ## The JSON report
 
 `schemaVersion` is 1. It changes when a field is removed or changes meaning;
-adding a field does not change it. The `title`, `level` and `notes` fields were added with the note level (they are additions).
+adding a field does not change it. The `title`, `level`, `notes`, `incomplete`, `unread` and `duplicateKeys` fields were added after the first draft; they are additions.
 
 | field | meaning |
 |---|---|
@@ -487,7 +611,10 @@ adding a field does not change it. The `title`, `level` and `notes` fields were 
 | `nativeSidecars` | the `--native-sidecars` assumption |
 | `examined` | `objects` and `podTemplates` read |
 | `checks` | one entry per check and mode that ran: `id`, `check`, `mode`, `findings` |
-| `findings` | the candidates (below), sorted by id, mode, resource, reason |
+| `incomplete` | true when a document could not be read; the result then covers only the rest |
+| `unread` | the documents that could not be read: `index`, `line`, `source`, `kind`, `name` (when recoverable) and `reason` |
+| `duplicateKeys` | documents read with a duplicate mapping key, same fields |
+| `findings` | the findings (below), sorted by id, mode, resource, reason |
 | `candidates` | the findings of level `candidate`; the exit code is 1 when it is not 0 |
 | `notes` | the findings of level `note`; they do not affect the exit code |
 | `notice` | the sentence that these are candidates and a clean result is no guarantee |
@@ -577,6 +704,7 @@ Those rows say "not observed", not "false positive".
 | cloudnative-pg 0.29.1 | ambient | MM-CHART-007, same 2 findings | reachable, 3 of 3 runs | **not observed**, same reason as kube-prometheus-stack |
 | nats 2.15.1 | both | nothing | as without a mesh | agree |
 | grafana 14.0.1 | both | nothing | as without a mesh | agree |
+| istio gateway 1.24.0 (not in the pilot) | both | nothing, since the placeholder is exempt (before: MM-CHART-003 x1 and MM-CHART-004 x2 in sidecar) | not run | expected clean, and clean; no cluster observation |
 | valkey 0.12.0 | both | the render fails with the given values (exit 2) | never installed | no observation to compare; the command reports the render error and does not call the chart clean |
 
 Counts. Of the five breaks the cluster run saw (redis and rabbitmq in ambient,
@@ -619,6 +747,7 @@ cloudnative-pg	0.29.1	exit 1	ambient MM-CHART-007 webhook-backend-in-mesh candid
 nats	2.15.1	exit 0	none
 grafana	14.0.1	exit 0	none
 valkey	0.12.0	exit 2: meshmedic chart check: helm template failed: Error: execution error at (valkey/templates/statefulset.yaml:3:4): Replica mode requires persistent storage. Please set replica.persistence.size (e.g., '5Gi')
+istio-gateway	1.24.0	exit 0	none
 ```
 
 Each line is chart, version, exit code, and the findings per mode, id and check,
