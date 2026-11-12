@@ -72,8 +72,8 @@ healthy front service was not blamed. `canary-latency-rollback` kept
 these runs found the two firing together.
 
 Every catalog entry now has either a proof or a declared reason it cannot have
-one. `meshmedic-prove --list` prints the inventory: 16 proven, 2 declared
-unprovable with a measurement behind each, 0 silently missing.
+one. `meshmedic-prove --list` prints the inventory: 17 proven, 1 declared
+unprovable with a measurement behind it, 0 silently missing.
 
 These files are verbatim captures, not edited for consistency. One of them
 still carries the report formatting used before 2026-08-19, which is why its

@@ -7,6 +7,15 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`waypoint-overload-scale` fires at three times its learned per-replica
+  rate.** Its static threshold of 1000 requests per second per waypoint pod
+  was about sixty times the demo testbed's normal, so the entry could not be
+  proven on one kind node and was declared unprovable. It now has
+  `baselineMultiplier: 3` and `baselineMinSamples: 20`; the 1000 still applies
+  until the baseline has warmed up. A proof in `proof/` replaces the
+  declaration, and the run's report is in `demo/proof-reports/`. The edit
+  unlocks the entry until a maintainer approves it again. (closes #24)
+
 - **Env values inside the `last-applied-configuration` annotation are now
   redacted.** A catalog path that reads `metadata` or `metadata.annotations` of
   a Deployment made with `kubectl apply` no longer copies the applied spec's
