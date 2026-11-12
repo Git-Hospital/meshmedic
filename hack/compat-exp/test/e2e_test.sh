@@ -489,7 +489,7 @@ eq "crossrun: the result is final, the gap is 12 h 10 min" "$(jq -c '[.final, .g
 eq "crossrun: the sample is the 50 primary charts, nothing replaced" "$(jq -c '[(.sample.charts | length), (.sample.replacements | length)]' "$res")" '[50,0]'
 eq "ids: every cell's chart is a chart of the frozen list" "$(jq -r --slurpfile l "$T/charts-exp.json" '[.cells[].chart] | unique - ([$l[0].charts[].id, $l[0].reserves[].id]) | length' "$res")" 0
 eq "crossrun: no warnings" "$(jq -c '.warnings' "$res")" '[]'
-eq "crossrun: undecided share under both readings" "$(jq -c '.undecidedShare | [.cellsReading.undecided, .chartWorldsReading.undecided, .drivesTheStop]' "$res")" '[0,0,"cells"]'
+eq "crossrun: undecided share under both readings" "$(jq -c '.undecidedShare | [.cellsReading.undecided, .chartWorldsReading.undecided, .drivesTheStop]' "$res")" '[0,0,"chart-worlds"]'
 must "result.md written" test -s "$T/analysis/result.md"
 # provenance: the freeze, HEAD, every run, the files read
 eq "provenance: freeze commit and HEAD" "$(jq -c '.provenance | [.freezeCommit, .head]' "$res")" "[\"$tagsha\",\"$headsha\"]"
