@@ -204,7 +204,7 @@ says otherwise.
 | cloudnative-pg | same | same | same |
 | nats | same | same | same |
 | grafana | same | same | same |
-| valkey | same | same (undecided in run 5: tool download failed) | same |
+| valkey | never installed, W0 included (run 6 records read; earlier runs not re-read; [mistake 5](#mistakes-the-pilot-made-and-the-rules-they-left)) | never installed (undecided in run 5: tool download failed) | never installed (run 6) |
 
 argo-cd has one flaky key, in W1 in run 3 and in W3 in run 4: dex-server
 restarted once in one of three runs (exit code 20 in run 3). Otherwise it is
@@ -350,10 +350,24 @@ pilot did not test that (a W1L world).
    annotation, so the tests of grafana, kube-prometheus-stack and podinfo
    never ran. Nothing was counted
    wrongly, but three runs said "same" about tests that had not run.
+5. **valkey (found after the pilot, 2026-11-11)** never installed. Chart
+   0.12.0 with `replica.enabled=true` and no persistence stops at render time
+   ("Replica mode requires persistent storage. Please set
+   replica.persistence.size"), so `helm install` failed in W0 and in every
+   mesh world. Read from the records of run 6: `helm:install` is `failed` and
+   no workload exists, three of three, in all four worlds. The chart refuses
+   to render whatever the world, so the earlier runs will have failed the same
+   way; their records were not read again. The verdict was "same" because the
+   failures were identical, which says nothing about Istio. The pilot measured
+   nine charts, not ten. difftable compares what was recorded and does not
+   flag a W0 whose install failed, so a "same" has to be read together with
+   `helm:install` in W0.
 
 The first three would have been counted wrongly by a single run read without
 care, and each was caught because a later run repeated the measurement. That is the reason for the
 two-workflow-run rule in [What the probes cannot see](#what-the-probes-cannot-see).
+The fifth was not caught by repetition: identical failures repeat identically,
+so it was found by reading the records.
 
 ## Deciding the ADR
 
@@ -382,6 +396,11 @@ it would make three and the ADR accepted, and that is said here so the
 reader can weigh it. By the rule above, written before the first run, **ADR
 0001 is narrowed to the atlas.**
 
+valkey never installed
+([mistake 5](#mistakes-the-pilot-made-and-the-rules-they-left)), so the count
+is over nine installed charts, not ten. The two findings and the decision are
+unchanged.
+
 The two rules added after run 2 (leave out runs that could not pull, count a
 finding only when two workflow runs agree) do not change the count. Under the
 original rule, argo-cd's differences in run 1 were unexplained and would have
@@ -402,7 +421,7 @@ What narrowing means for the ADR's sections:
   version, and the queue's rules (section 7) for the few packets there are.
 - **Not built now:** the engine as a product mode (`meshmedic compat` and its
   certification flow in the main binary), and the daily contribution cadence.
-  A cadence needs a supply of findings, and ten popular charts gave one cause.
+  A cadence needs a supply of findings, and nine installed charts gave one cause.
 - **Highest-leverage contribution:** a proposal to Istio for an `istioctl
   analyze` check, because the class is invisible to analyze and hits every
   chart that ships a default NetworkPolicy, not one chart at a time.

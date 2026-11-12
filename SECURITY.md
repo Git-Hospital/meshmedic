@@ -54,11 +54,15 @@ a diff an env value is compared with the same container's, and a changed
 credential shows as `[redacted, changed]`, so the change is visible without
 either value; when redaction makes two different templates print alike, the
 diff says the template changed rather than nothing. `valueFrom` entries carry
-no value and are shown as they are. Nothing else is redacted: a credential
-under an ordinary name, after a flag in a separate argument
-(`--password`, `hunter2`), in a URL's user info or path, in a JSON log line or in a metric
-label reaches the report unchanged, so scope what the entries read
-accordingly.
+no value and are shown as they are. The annotation
+`kubectl.kubernetes.io/last-applied-configuration`, which holds the applied
+spec as a JSON string, is parsed and redacted by the same rules, then written
+out again as compact JSON; if its value is not valid JSON it is replaced whole
+with `[redacted]`. Nothing else is redacted: a credential under an ordinary
+name, after a flag in a separate argument (`--password`, `hunter2`), in a
+URL's user info or path, in a JSON log line, in JSON inside any other
+annotation or string, or in a metric label reaches the report unchanged, so
+scope what the entries read accordingly.
 
 ## meshmedic-prove is different, on purpose
 
