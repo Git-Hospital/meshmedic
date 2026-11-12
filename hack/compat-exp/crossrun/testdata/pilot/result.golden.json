@@ -22,7 +22,8 @@
       "valkey"
     ],
     "replacements": [],
-    "reruns": []
+    "reruns": [],
+    "pendingReruns": []
   },
   "cells": [
     {
@@ -559,7 +560,14 @@
       "of": 20,
       "overFifteenPercent": false
     },
-    "note": "the stop applies after one rerun; crossrun computes the share over the runs given, with only W0-failure reruns applied (INTERPRETATIONS.md 14)"
+    "chartWorldsBeforeReruns": {
+      "undecided": 0,
+      "of": 20,
+      "overFifteenPercent": false
+    },
+    "rerunsApplied": 0,
+    "rerunsPending": 0,
+    "note": "the stop applies after one rerun (section 7): the share is taken after the reruns of INTERPRETATIONS.md 27 are applied (a chart is rerun if and only if its run leaves a chart-world undecided or its W0 not 3 of 3); the share before them is printed beside it"
   },
   "unresolved": null,
   "unexplained": null,

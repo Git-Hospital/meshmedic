@@ -45,11 +45,16 @@ func RenderMarkdown(r *Result) []byte {
 		w("- replaced %s by %s (%s; W0 not 3 of 3 in run %s and again in rerun %s)\n", x.Chart, x.Reserve, x.Reason, x.Run, x.Rerun)
 	}
 	for _, u := range r.Sample.Reruns {
-		if !u.Failed {
-			w("- %s: W0 was not 3 of 3 in run %s but was in rerun %s, whose records stand in for the run's; not replaced\n", u.Chart, u.Run, u.Rerun)
+		if u.Failed {
+			w("- rerun %s of %s in run %s (%s): %s\n", u.Rerun, u.Chart, u.Run, u.Why, u.After)
+		} else {
+			w("- rerun %s of %s in run %s (%s): %s; its records stand in for the run's chart wholesale, not replaced\n", u.Rerun, u.Chart, u.Run, u.Why, u.After)
 		}
 	}
-	if len(r.Sample.Replacements) > 0 || len(r.Sample.Reruns) > 0 {
+	for _, p := range r.Sample.PendingReruns {
+		w("- rerun pending: %s in run %s (%s); run 1 only, so this is not an error yet\n", p.Chart, p.Run, p.Why)
+	}
+	if len(r.Sample.Replacements) > 0 || len(r.Sample.Reruns) > 0 || len(r.Sample.PendingReruns) > 0 {
 		w("\n")
 	}
 
@@ -94,7 +99,10 @@ func RenderMarkdown(r *Result) []byte {
 	}
 	w("- cells reading: %d of %d undecided cells over all cells (%s 15%%)%s\n", u.ByCells.Undecided, u.ByCells.Of, okWord(!u.ByCells.Over, "not over", "OVER"), mark(ReadingCells))
 	w("- chart-worlds reading: %d of %d undecided chart-worlds over compared chart-worlds (%s 15%%)%s\n", u.ByChartWorlds.Undecided, u.ByChartWorlds.Of, okWord(!u.ByChartWorlds.Over, "not over", "OVER"), mark(ReadingChartWorlds))
-	w("- drives the stop: %s (the constant UndecidedStop in analyze.go)\n\n", u.Drives)
+	w("- chart-worlds reading, before the reruns: %d of %d (%s 15%%); after the reruns: %d of %d (%s 15%%); %d rerun(s) applied, %d pending\n",
+		u.BeforeReruns.Undecided, u.BeforeReruns.Of, okWord(!u.BeforeReruns.Over, "not over", "OVER"),
+		u.ByChartWorlds.Undecided, u.ByChartWorlds.Of, okWord(!u.ByChartWorlds.Over, "not over", "OVER"), u.RerunsApplied, u.RerunsPending)
+	w("- drives the stop: %s (the constant UndecidedStop in analyze.go), taken after the reruns\n\n", u.Drives)
 
 	w("## ambient-np prevalence\n\n%d counted cell(s) in %d chart(s): %s.\n\n", r.Prevalence.Cells, len(r.Prevalence.Charts), joinOrNone(r.Prevalence.Charts))
 

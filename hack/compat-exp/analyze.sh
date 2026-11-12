@@ -16,10 +16,12 @@
 #                 after run 1 ended; crossrun stops with an error otherwise). With
 #                 --run1 only the result is for the futility check after run 1: cells
 #                 wait for run 2, no region is final, the output says "run 1 only"
-#   --rerun ID    the rerun of one chart's W0 job: a separately dispatched run in mode
-#                 observe whose chart_ids is that one chart (the replacement rule,
-#                 crossrun/INTERPRETATIONS.md 22); repeat for each; replacements.json
-#                 must name every one of them
+#   --rerun ID    the rerun of one chart in a run that left a chart-world of it
+#                 undecided or its W0 not 3 of 3: a separately dispatched run in mode
+#                 observe whose chart_ids is that one chart (the replacement rule and
+#                 the undecided stop, crossrun/INTERPRETATIONS.md 22 and 27); repeat
+#                 for each; replacements.json must name every one of them. With run 1
+#                 only, a rerun that is not given yet is reported as pending
 #   --cert ID     a certify run id; repeat for each (a fix needs two)
 #   --recheck ID  the recheck run id
 #   --repo        OWNER/REPO for gh (default: gh's own, from the git remote)

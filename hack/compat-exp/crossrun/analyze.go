@@ -203,8 +203,17 @@ type UndecidedShare struct {
 	// ByCells is undecided cells over all cells. ByChartWorlds is undecided
 	// chart-worlds (an undecided verdict in any analysed run) over the
 	// chart-worlds of the sample.
-	ByCells       Share  `json:"cellsReading"`
-	ByChartWorlds Share  `json:"chartWorldsReading"`
+	ByCells       Share `json:"cellsReading"`
+	ByChartWorlds Share `json:"chartWorldsReading"`
+	// BeforeReruns is the chart-worlds reading over the runs as given, before
+	// any chart was rerun (same sample, same denominator); ByChartWorlds is the
+	// share after the reruns applied, the one that drives the stop.
+	BeforeReruns Share `json:"chartWorldsBeforeReruns"`
+	// RerunsApplied is the number of reruns read; RerunsPending the number a
+	// run-1-only analysis still lacks (always 0 in a final analysis, where a
+	// missing rerun is an error).
+	RerunsApplied int    `json:"rerunsApplied"`
+	RerunsPending int    `json:"rerunsPending"`
 	NoteAfterRR   string `json:"note"`
 }
 
@@ -224,6 +233,10 @@ type SampleInfo struct {
 	// INTERPRETATIONS.md 22): failedAgain false means the rerun's records
 	// stand in for the run's, true that the chart was replaced.
 	Reruns []RerunUse `json:"reruns"`
+	// PendingReruns are the reruns a run-1-only analysis still lacks: charts
+	// whose run left a chart-world undecided or its W0 not 3 of 3, with no
+	// rerun listed yet.
+	PendingReruns []PendingRerun `json:"pendingReruns"`
 }
 
 // Result is crossrun's whole output.
@@ -445,7 +458,7 @@ func Analyze(in *Inputs) (*Result, error) {
 	in = &ein
 	a.in = in
 	a.sample = sample
-	res.Sample = SampleInfo{Charts: append([]string{}, sample.Active...), Replacements: append([]Replacement{}, in.Replacements...), Reruns: append([]RerunUse{}, sample.Reruns...)}
+	res.Sample = SampleInfo{Charts: append([]string{}, sample.Active...), Replacements: append([]Replacement{}, in.Replacements...), Reruns: append([]RerunUse{}, sample.Reruns...), PendingReruns: append([]PendingRerun{}, sample.Pending...)}
 	sort.Strings(res.Sample.Charts)
 	if err := checkComplete(sample, runs); err != nil {
 		return nil, err

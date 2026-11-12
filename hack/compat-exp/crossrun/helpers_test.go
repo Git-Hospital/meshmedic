@@ -262,3 +262,24 @@ func (f *fixture) pad(n int) {
 		}
 	}
 }
+
+// rerunUndecided gives every chart that a run leaves with an undecided
+// chart-world (and W0 3 of 3) the rerun the rule demands, showing the chart
+// again exactly as the run had it: undecided again after the rerun, so the
+// chart stays undecided and counts, as it did before reruns existed.
+func (f *fixture) rerunUndecided() {
+	for i := range f.in.Runs {
+		for _, ch := range f.in.Runs[i].Report.Charts {
+			if ch.FixOf != "" {
+				continue
+			}
+			if w0, _ := w0Met(&ch, 3); !w0 || len(undecidedRequired(&ch)) == 0 {
+				continue
+			}
+			rid := fmt.Sprintf("rr%d-%s", i+1, ch.Chart)
+			start := f.in.Runs[i].Ended.Add(time.Hour)
+			f.in.Reruns = append(f.in.Reruns, RunInput{ID: rid, Started: start, Ended: start.Add(30 * time.Minute), Report: report(ch)})
+			f.in.RerunRefs = append(f.in.RerunRefs, RerunRef{Chart: ch.Chart, Run: f.in.Runs[i].ID, Rerun: rid})
+		}
+	}
+}

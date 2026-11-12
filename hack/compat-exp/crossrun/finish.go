@@ -192,9 +192,14 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 	if UndecidedStop == ReadingChartWorlds {
 		driver = byCW
 	}
+	before := chartWorldShare(a.sample.Orig, a.sample.Active)
+	note := "the stop applies after one rerun (section 7): the share is taken after the reruns of INTERPRETATIONS.md 27 are applied (a chart is rerun if and only if its run leaves a chart-world undecided or its W0 not 3 of 3); the share before them is printed beside it"
+	if n := len(a.sample.Pending); n > 0 {
+		note += fmt.Sprintf("; %d rerun(s) are still pending, so this share is not final", n)
+	}
 	res.Undecided = UndecidedShare{Undecided: undecided, Cells: len(a.cells), Over: driver.Over, Drives: UndecidedStop,
-		ByCells: byCells, ByChartWorlds: byCW,
-		NoteAfterRR: "the stop applies after one rerun; crossrun computes the share over the runs given, with only W0-failure reruns applied (INTERPRETATIONS.md 14)"}
+		ByCells: byCells, ByChartWorlds: byCW, BeforeReruns: before,
+		RerunsApplied: len(a.sample.Reruns), RerunsPending: len(a.sample.Pending), NoteAfterRR: note}
 
 	// if all open cells counted
 	hyp := append([]counted{}, cs...)
@@ -385,4 +390,44 @@ func (a *analysis) scoreStatic(key string, cells []counted) StaticKey {
 		sk.Qualifies = false
 	}
 	return sk
+}
+
+// chartWorldShare is the chart-worlds reading of the undecided share over the
+// given runs' reports and chart set: a chart-world (chart, W1 or W3) is
+// undecided when any of the runs' reports says so, and compared when every run
+// has it.
+func chartWorldShare(runs []RunInput, charts []string) Share {
+	var sh Share
+	for _, id := range charts {
+		for _, w := range requiredWorlds {
+			compared, undecided := true, false
+			for _, r := range runs {
+				ch := findBase(r.Report, id)
+				var wr *WorldReport
+				if ch != nil {
+					for k := range ch.Worlds {
+						if ch.Worlds[k].World == w {
+							wr = &ch.Worlds[k]
+						}
+					}
+				}
+				if wr == nil {
+					compared = false
+					continue
+				}
+				if wr.Verdict == "undecided" {
+					undecided = true
+				}
+			}
+			if !compared {
+				continue
+			}
+			sh.Of++
+			if undecided {
+				sh.Undecided++
+			}
+		}
+	}
+	sh.Over = sh.Undecided*100 > UndecidedPercent*sh.Of
+	return sh
 }
