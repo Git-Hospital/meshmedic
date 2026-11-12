@@ -82,11 +82,21 @@ helm is never run. helm gets a time limit (`--timeout`, default 5 minutes).
 The rendered YAML is read document by document, so one bad document does not
 take the others with it.
 
-- A **duplicate mapping key** is not an error. `yaml.v3` refuses to decode such
-  a document into a map, but it parses it, and helm and the API server accept
-  it and use the last value. The command walks the parsed tree itself (no YAML
-  parser of its own) and uses the last value too. The document is listed under
-  `duplicateKeys` in JSON and named in the text report.
+- A **duplicate mapping key** is parsed, not refused. `yaml.v3` will not decode
+  such a document into a map, but it parses it; the command walks the parsed
+  tree itself (it has no YAML parser of its own) and uses the last value, as
+  lenient YAML decoders do. Which value a Kubernetes API server keeps is not
+  stated by its documentation, and it may reject the document: the page
+  [API concepts, "Validation for unrecognized or duplicate fields"](https://kubernetes.io/docs/reference/using-api/api-concepts/#field-validation)
+  says that with `Strict` the server "rejects the request with a 400 Bad Request
+  error when it detects any unknown or duplicate fields", that `Warn` is the
+  server's default, and that "the default validation setting for kubectl is
+  `--validate=true`, which means strict server-side field validation". So a
+  duplicate key means two things: the findings for that document rest on the
+  last value, and the document may never be applied. Both are said in the
+  report (`duplicateKeys` in JSON), and the read is **incomplete**: with a
+  candidate the exit code is 1, without one it is 2, never 0, because "no
+  candidates" would rest on a guess about which value counts.
 - A document that **cannot be parsed** is *unread*: its index, the line where it
   starts, the `# Source:` comment, kind and name (when they can be recovered
   from the text) and the reason are listed under `unread`, and the other
@@ -94,6 +104,16 @@ take the others with it.
   found in the rest, the exit code is 1; if not, the exit code is 2 and the
   summary says "incomplete", never "no candidates" alone. An incomplete read is
   never exit 0.
+- The input is a third party's, so what one document may expand to is bounded:
+  nesting deeper than 512 levels (or an anchor that refers to itself), more than
+  200,000 nodes reached through aliases, or more than 2,000,000 nodes in all,
+  make the document *unread* with that reason. `yaml.v3`'s own parser already
+  refuses nesting past 10,000 levels. Measured on this machine, each ends in
+  well under a second: a nine-level alias bomb (1 kB, 9^9 expansions) 0.45 s,
+  100,000-deep nesting 0.01 s, a self-referencing anchor 0.00 s; a 50 MB scalar
+  is read normally (1.6 s). The version before the walk existed (9e4e64d)
+  refused the first three through `yaml.v3`'s checks in the same times and read
+  the scalar in 0.6 s.
 
 A real run, on the fixed redis shape plus one document with a syntax error
 (`pkg/chartcheck/testdata/np-unreadable-clean.yaml`):
@@ -101,7 +121,7 @@ A real run, on the fixed redis shape plus one document with a syntax error
 ```console
 $ meshmedic chart check --manifests np-unreadable-clean.yaml --mesh ambient
 meshmedic chart check, rules written against Istio 1.31
-No candidates in the 2 objects that could be read, but the read is incomplete (1 unread): this is not a clean result.
+No candidates in the 2 objects that were read, but the read is incomplete (1 unread, 0 with a duplicate key): this is not a clean result.
 read manifests np-unreadable-clean.yaml: 2 objects, 1 pod templates, namespace default, modes
   ambient; sidecar proxies assumed native
 INCOMPLETE: 1 document could not be read, so the result covers only the rest and is not a clean
@@ -117,7 +137,8 @@ limits: Only rendered manifests are read. Namespace enrolment, PeerAuthenticatio
   the full list.
 ```
 
-Exit code 2.
+Exit code 2. A document with a duplicate key and no candidate gives the same
+exit code and an "INCOMPLETE" block that says the findings rest on the last value.
 
 ### Determinism
 
@@ -574,19 +595,22 @@ with nothing. Istio's own gateway chart renders exactly this, with a Service
 whose status port targets 15021 and a declared `containerPort` 15090. Before the
 exemption the command flagged it with MM-CHART-003 once and MM-CHART-004 twice.
 
-The exemption is exactly that shape: a container whose name is `istio-proxy`
-**and** whose image is `auto`. A container merely named `istio-proxy` with a real
-image is not exempt (nothing replaces it), and the tests check both. The
-annotation and label are "usually" present on the page, not required for the
-replacement, so they are not required for the exemption.
+The exemption is exactly that shape, and only for a pod that is a gateway by the
+page's convention: a container whose name is `istio-proxy` **and** whose image
+is `auto`, in a pod with `inject.istio.io/templates: gateway`. A container merely
+named `istio-proxy` with a real image is not exempt (nothing replaces it); a
+placeholder in a pod without the gateway template is not exempt either, so a
+chart cannot silence a finding by adding such a container; and a pod that holds
+an application container beside the placeholder is not "only a gateway" and
+keeps its application checked. The tests check each case.
 
 All eight rules were reviewed against it:
 
 | rule | placeholder |
 |---|---|
-| MM-CHART-003 uid-1337 | the placeholder container is skipped |
-| MM-CHART-004 reserved-port | the placeholder's declared ports are skipped, and so are Service ports that reach a pod with a placeholder (the gateway's status port 15021 is served by the injected proxy itself); other containers of that pod are still checked |
-| MM-CHART-005, 006 classic sidecar | a pod with a placeholder **and** `inject.istio.io/templates: gateway` gets no separate sidecar (the placeholder is the proxy), so it is skipped; a placeholder with the default template is not |
+| MM-CHART-003 uid-1337 | the placeholder container is skipped when the pod has the gateway template; every other container of the pod is still checked |
+| MM-CHART-004 reserved-port | the placeholder's own declared ports are skipped when the pod has the gateway template. Service ports are skipped only when the pod is only a gateway (the placeholder is its one container; the gateway's status port 15021 is served by the injected proxy itself); with an application container in the pod they stay checked, and so do that container's ports |
+| MM-CHART-005, 006 classic sidecar | skipped only for a pod that is only a gateway (gateway template, placeholder as its one container): the placeholder is the proxy and there is no separate sidecar. With an application container beside it, or without the gateway template, the pod is checked |
 | MM-CHART-002 protocol | not exempt: no documentation says a gateway's Service ports are exempt from protocol selection, and the gateway chart passes (its ports are named `http2` and `https`) |
 | MM-CHART-007 webhook backend | not exempt: a webhook behind a gateway pod is the same call from outside the mesh |
 | MM-CHART-001 NetworkPolicy, 008 L7 | not about containers; unchanged |
@@ -611,9 +635,9 @@ adding a field does not change it. The `title`, `level`, `notes`, `incomplete`, 
 | `nativeSidecars` | the `--native-sidecars` assumption |
 | `examined` | `objects` and `podTemplates` read |
 | `checks` | one entry per check and mode that ran: `id`, `check`, `mode`, `findings` |
-| `incomplete` | true when a document could not be read; the result then covers only the rest |
+| `incomplete` | true when a document could not be read, or was read with a duplicate mapping key; the result is then never clean (exit 2 without a candidate) |
 | `unread` | the documents that could not be read: `index`, `line`, `source`, `kind`, `name` (when recoverable) and `reason` |
-| `duplicateKeys` | documents read with a duplicate mapping key, same fields |
+| `duplicateKeys` | documents read with a duplicate mapping key (the last value is used), same fields |
 | `findings` | the findings (below), sorted by id, mode, resource, reason |
 | `candidates` | the findings of level `candidate`; the exit code is 1 when it is not 0 |
 | `notes` | the findings of level `note`; they do not affect the exit code |

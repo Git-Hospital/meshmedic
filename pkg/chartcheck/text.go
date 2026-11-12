@@ -43,7 +43,7 @@ func WriteText(w io.Writer, r *Report, verbose bool) error {
 		}
 	}
 	if len(r.DuplicateKeys) > 0 {
-		b.WriteString(wrap("", "  ", fmt.Sprintf("%d %s read with a duplicate mapping key:", len(r.DuplicateKeys), plural(len(r.DuplicateKeys), "document was", "documents were"))))
+		b.WriteString(wrap("", "  ", fmt.Sprintf("INCOMPLETE: %d %s a duplicate mapping key. Findings for %s rest on the last value, and a strict API server (kubectl's default) rejects such a document, so the result is not clean:", len(r.DuplicateKeys), plural(len(r.DuplicateKeys), "document has", "documents have"), plural(len(r.DuplicateKeys), "it", "them"))))
 		for _, u := range r.DuplicateKeys {
 			b.WriteString(wrap("  - ", "    ", issueString(u)))
 		}
@@ -104,7 +104,7 @@ func summaryLine(r *Report, groups [][]Finding) string {
 	var b strings.Builder
 	switch {
 	case r.Candidates == 0 && r.Notes == 0 && r.Incomplete:
-		fmt.Fprintf(&b, "No candidates in the %d objects that could be read, but the read is incomplete (%d unread): this is not a clean result.\n", r.Examined.Objects, len(r.Unread))
+		fmt.Fprintf(&b, "No candidates in the %d objects that were read, but the read is incomplete (%d unread, %d with a duplicate key): this is not a clean result.\n", r.Examined.Objects, len(r.Unread), len(r.DuplicateKeys))
 	case r.Candidates == 0 && r.Notes == 0:
 		fmt.Fprintf(&b, "No candidates in %d objects.\n", r.Examined.Objects)
 	default:
@@ -119,7 +119,7 @@ func summaryLine(r *Report, groups [][]Finding) string {
 		}
 		b.WriteString(": " + strings.Join(parts, ", ") + "\n")
 		if r.Incomplete {
-			fmt.Fprintf(&b, "The read is incomplete (%d unread).\n", len(r.Unread))
+			fmt.Fprintf(&b, "The read is incomplete (%d unread, %d with a duplicate key).\n", len(r.Unread), len(r.DuplicateKeys))
 		}
 	}
 	return b.String()

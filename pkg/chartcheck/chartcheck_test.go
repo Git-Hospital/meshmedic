@@ -9,8 +9,10 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files")
@@ -124,6 +126,23 @@ func TestChecks(t *testing.T) {
 		{"gateway-placeholder.yaml", Sidecar, classic, "classic-sidecar-startup", nil},
 		{"gateway-placeholder.yaml", Sidecar, classic, "classic-sidecar-job", nil},
 		{"gateway-placeholder.yaml", Sidecar, native, "protocol-declared", nil},
+		// a pod that is not only a gateway keeps its application checked
+		{"gateway-mixed.yaml", Sidecar, native, "uid-1337", nil},
+		{"gateway-mixed.yaml", Sidecar, native, "reserved-port", []string{
+			"Deployment/gw: port 15021 is used by Istio inside the pod",
+			"Deployment/gw: port 15090 is used by Istio inside the pod",
+		}},
+		{"gateway-mixed.yaml", Sidecar, classic, "classic-sidecar-startup", []string{"Deployment/gw: holdApplicationUntilProxyStarts not set"}},
+		// no gateway template annotation: the placeholder is not exempt either
+		{"gateway-fake.yaml", Sidecar, native, "uid-1337", []string{
+			"Deployment/gw: container app runs as UID 1337",
+			"Deployment/gw: container istio-proxy runs as UID 1337",
+		}},
+		{"gateway-fake.yaml", Sidecar, native, "reserved-port", []string{
+			"Deployment/gw: port 15020 is used by Istio inside the pod",
+			"Deployment/gw: port 15021 is used by Istio inside the pod",
+			"Deployment/gw: port 15090 is used by Istio inside the pod",
+		}},
 		{"gateway-real-image.yaml", Sidecar, native, "uid-1337", []string{"Deployment/gw: container istio-proxy runs as UID 1337"}},
 		{"gateway-real-image.yaml", Sidecar, native, "reserved-port", []string{
 			"Deployment/gw: port 15021 is used by Istio inside the pod",
@@ -565,8 +584,8 @@ func analyzeRaw(t *testing.T, file string) *Report {
 // the last value, and so does the check. It is said, not hidden.
 func TestDuplicateKeyIsReadLeniently(t *testing.T) {
 	rep := analyzeRaw(t, "np-dupkey.yaml")
-	if rep.Candidates != 1 || rep.Incomplete || len(rep.Unread) != 0 {
-		t.Fatalf("candidates %d, incomplete %v, unread %+v", rep.Candidates, rep.Incomplete, rep.Unread)
+	if rep.Candidates != 1 || len(rep.Unread) != 0 {
+		t.Fatalf("candidates %d, unread %+v", rep.Candidates, rep.Unread)
 	}
 	if len(rep.DuplicateKeys) != 1 || rep.DuplicateKeys[0].Kind != "StatefulSet" || !strings.Contains(rep.DuplicateKeys[0].Reason, `"replicas"`) || !strings.Contains(rep.DuplicateKeys[0].Reason, "again at line 28)") {
 		t.Errorf("duplicate keys: %+v", rep.DuplicateKeys)
@@ -607,4 +626,75 @@ func TestOnlyUnreadableIsAReportNotAnError(t *testing.T) {
 	if err != nil || !rep.Incomplete || rep.Candidates != 0 {
 		t.Errorf("rep %+v err %v", rep, err)
 	}
+}
+
+// A duplicate key means the findings for that document rest on one of two
+// values, and a strict API server (kubectl's default) rejects the document, so
+// with no candidate the result is incomplete, never clean.
+func TestDuplicateKeyIsNeverClean(t *testing.T) {
+	rep := analyzeRaw(t, "np-dupkey-clean.yaml")
+	if rep.Candidates != 0 || !rep.Incomplete || len(rep.DuplicateKeys) != 1 {
+		t.Fatalf("candidates %d, incomplete %v, dups %+v", rep.Candidates, rep.Incomplete, rep.DuplicateKeys)
+	}
+	var x bytes.Buffer
+	if err := WriteText(&x, rep, false); err != nil {
+		t.Fatal(err)
+	}
+	s := x.String()
+	if strings.Contains(s, "No candidates in 2 objects.") || !strings.Contains(s, "rest on the last value") || !strings.Contains(s, "not a clean result") {
+		t.Errorf("text:\n%s", s)
+	}
+	if got := analyzeRaw(t, "np-dupkey.yaml"); !got.Incomplete || got.Candidates != 1 {
+		t.Errorf("with a candidate the report is still marked incomplete: %v %d", got.Incomplete, got.Candidates)
+	}
+}
+
+// Hostile input is bounded: each of these ends fast, as an unread document or
+// as a normal read, never a hang or unbounded memory.
+func TestHostileInputIsBounded(t *testing.T) {
+	bomb := "a0: &a0 [x, x, x, x, x, x, x, x, x]\n"
+	for i := 1; i <= 9; i++ {
+		var refs []string
+		for j := 0; j < 9; j++ {
+			refs = append(refs, "*a"+strconv.Itoa(i-1))
+		}
+		bomb += "a" + strconv.Itoa(i) + ": &a" + strconv.Itoa(i) + " [" + strings.Join(refs, ", ") + "]\n"
+	}
+	bomb = "kind: ConfigMap\nmetadata: {name: bomb}\ndata:\n" + indent(bomb, "  ")
+	for _, tc := range []struct {
+		name   string
+		doc    string
+		unread bool
+	}{
+		{"alias bomb", bomb, true},
+		{"deep nesting", "kind: ConfigMap\nx: " + strings.Repeat("[", 100000) + strings.Repeat("]", 100000) + "\n", true},
+		{"self-referencing anchor", "kind: ConfigMap\nx: &a [*a]\n", true},
+		{"alias to its own mapping", "kind: ConfigMap\nx: &a {y: *a}\n", true},
+		{"large scalar", "kind: ConfigMap\nmetadata: {name: big}\ndata:\n  k: \"" + strings.Repeat("a", 2<<20) + "\"\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := time.Now()
+			m, err := Parse(strings.NewReader(tc.doc), "demo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d := time.Since(start); d > 5*time.Second {
+				t.Errorf("took %s", d)
+			}
+			if got := len(m.Unread()) == 1; got != tc.unread {
+				t.Errorf("unread = %v, want %v (%+v)", m.Unread(), tc.unread, m.Unread())
+			}
+			if tc.unread && m.Unread()[0].Reason == "" {
+				t.Error("no reason")
+			}
+		})
+	}
+}
+
+func indent(s, p string) string {
+	var out []string
+	for _, l := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+		out = append(out, p+l)
+	}
+	return strings.Join(out, "\n") + "\n"
 }

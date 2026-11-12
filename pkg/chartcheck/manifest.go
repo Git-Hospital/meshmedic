@@ -90,8 +90,9 @@ func (m *Manifest) Unread() []DocIssue { return m.unread }
 //
 // A document that cannot be read does not stop the others: it is kept in
 // Unread with the reason, and the caller must treat the result as incomplete.
-// A duplicate mapping key is not a failure: helm and the API server accept it
-// and use the last value, and so does Parse, which records it in the report.
+// A duplicate mapping key is read with the last value, as lenient YAML
+// decoders do, and recorded in the report: a strict API server rejects such a
+// document, so the caller must treat it as an incomplete read.
 // The error is for a failure to read r.
 func Parse(r io.Reader, namespace string) (*Manifest, error) {
 	data, err := io.ReadAll(r)
@@ -113,8 +114,14 @@ func Parse(r io.Reader, namespace string) (*Manifest, error) {
 			m.unread = append(m.unread, issue)
 			continue
 		}
-		var dups []string
-		doc, ok := nodeToAny(&node, &dups, ch.line-1).(map[string]any)
+		w := &walker{off: ch.line - 1}
+		doc, ok := w.walk(&node, 0).(map[string]any)
+		dups := w.dups
+		if w.err != nil {
+			issue.Reason = w.err.Error()
+			m.unread = append(m.unread, issue)
+			continue
+		}
 		if !ok {
 			issue.Reason = "the document is not a mapping"
 			m.unread = append(m.unread, issue)
@@ -122,7 +129,7 @@ func Parse(r io.Reader, namespace string) (*Manifest, error) {
 		}
 		if len(dups) > 0 {
 			d := issue
-			d.Reason = dups[0] + "; the last value is used, as helm and the API server do"
+			d.Reason = dups[0] + "; the last value is used, as lenient YAML decoders do"
 			if len(dups) > 1 {
 				d.Reason += fmt.Sprintf(" (%d duplicate keys in all)", len(dups))
 			}
@@ -221,23 +228,64 @@ func absoluteLines(msg string, start int) string {
 	})
 }
 
-// nodeToAny turns a parsed node into the plain maps, slices and scalars the
+// Limits on what one document may expand to. A rendered chart is a third
+// party's input, and YAML aliases can expand a kilobyte into billions of
+// nodes, so the walk below is bounded and a document over a bound is unread.
+const (
+	maxDepth        = 512       // nesting of maps and lists; real manifests stay under 50
+	maxAliasNodes   = 200_000   // nodes reached through aliases
+	maxVisitedNodes = 2_000_000 // all nodes visited
+)
+
+// walker turns a parsed node into the plain maps, slices and scalars the
 // checks read. yaml.v3 refuses to decode a mapping with a duplicate key into a
 // map; this walk does not, and the later key wins. Each duplicate is appended
 // to dups, with line numbers shifted by off.
-func nodeToAny(n *yaml.Node, dups *[]string, off int) any {
+type walker struct {
+	dups    []string
+	off     int
+	visited int
+	aliased int
+	inAlias int
+	err     error
+}
+
+func (w *walker) fail(format string, a ...any) any {
+	if w.err == nil {
+		w.err = fmt.Errorf(format, a...)
+	}
+	return nil
+}
+
+func (w *walker) walk(n *yaml.Node, depth int) any {
+	if w.err != nil {
+		return nil
+	}
+	if depth > maxDepth {
+		return w.fail("the document is nested more than %d levels deep (or refers to itself through an alias)", maxDepth)
+	}
+	w.visited++
+	if w.inAlias > 0 {
+		w.aliased++
+	}
+	if w.aliased > maxAliasNodes || w.visited > maxVisitedNodes {
+		return w.fail("the document expands to more than %d nodes through aliases", maxAliasNodes)
+	}
 	switch n.Kind {
 	case yaml.DocumentNode:
 		if len(n.Content) == 0 {
 			return nil
 		}
-		return nodeToAny(n.Content[0], dups, off)
+		return w.walk(n.Content[0], depth+1)
 	case yaml.AliasNode:
-		return nodeToAny(n.Alias, dups, off)
+		w.inAlias++
+		v := w.walk(n.Alias, depth+1)
+		w.inAlias--
+		return v
 	case yaml.SequenceNode:
 		out := make([]any, 0, len(n.Content))
 		for _, c := range n.Content {
-			out = append(out, nodeToAny(c, dups, off))
+			out = append(out, w.walk(c, depth+1))
 		}
 		return out
 	case yaml.MappingNode:
@@ -247,7 +295,7 @@ func nodeToAny(n *yaml.Node, dups *[]string, off int) any {
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			k, v := n.Content[i], n.Content[i+1]
 			if k.Tag == "!!merge" {
-				switch vv := nodeToAny(v, dups, off).(type) {
+				switch vv := w.walk(v, depth+1).(type) {
 				case map[string]any:
 					merges = append(merges, vv)
 				case []any:
@@ -261,11 +309,11 @@ func nodeToAny(n *yaml.Node, dups *[]string, off int) any {
 			}
 			key := k.Value
 			if first, dup := seen[key]; dup {
-				*dups = append(*dups, fmt.Sprintf("mapping key %q already defined at line %d (again at line %d)", key, first+off, k.Line+off))
+				w.dups = append(w.dups, fmt.Sprintf("mapping key %q already defined at line %d (again at line %d)", key, first+w.off, k.Line+w.off))
 			} else {
 				seen[key] = k.Line
 			}
-			out[key] = nodeToAny(v, dups, off)
+			out[key] = w.walk(v, depth+1)
 		}
 		// Merged keys are defaults: the document's own keys win.
 		for _, mm := range merges {
@@ -616,17 +664,6 @@ func (c container) isPlaceholder() bool {
 	return c.Name == placeholderName && str(c.Raw["image"]) == placeholderImage
 }
 
-// placeholder returns the path of the pod's injection placeholder container,
-// or "" when it has none.
-func (p *podTemplate) placeholder() string {
-	for _, c := range p.containers("containers") {
-		if c.isPlaceholder() {
-			return c.Path
-		}
-	}
-	return ""
-}
-
 // gatewayTemplate says whether the pod asks for the gateway injection
 // template, which adds no separate sidecar: the placeholder is the proxy.
 func (p *podTemplate) gatewayTemplate() bool {
@@ -636,4 +673,30 @@ func (p *podTemplate) gatewayTemplate() bool {
 		}
 	}
 	return false
+}
+
+// gatewayPlaceholder returns the path of the injection placeholder container
+// when the pod is a gateway by that convention: it asks for the gateway
+// template (inject.istio.io/templates: gateway) and has the placeholder. A
+// placeholder without the template is not exempt, so a chart cannot silence a
+// finding by naming a container istio-proxy with image auto.
+func (p *podTemplate) gatewayPlaceholder() string {
+	if !p.gatewayTemplate() {
+		return ""
+	}
+	for _, c := range p.containers("containers") {
+		if c.isPlaceholder() {
+			return c.Path
+		}
+	}
+	return ""
+}
+
+// pureGateway says whether the pod is only a gateway: the placeholder is its
+// one container. Only then is every port and the whole container list the
+// proxy's own; in a pod with an application container beside the placeholder,
+// the application's ports, the Service ports that may reach them, and the
+// application's start order stay checked.
+func (p *podTemplate) pureGateway() bool {
+	return p.gatewayPlaceholder() != "" && len(p.containers("containers")) == 1
 }

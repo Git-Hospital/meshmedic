@@ -85,13 +85,14 @@ type Report struct {
 	Examined       Examined   `json:"examined"`
 	Checks         []CheckRun `json:"checks"`
 	Findings       []Finding  `json:"findings"`
-	// Incomplete is true when a document of the input could not be read: the
-	// result then covers only the rest, and is never a clean result.
+	// Incomplete is true when a document of the input could not be read, or was
+	// read with a duplicate mapping key (so its findings rest on one of two
+	// values): the result is then never a clean result.
 	Incomplete bool `json:"incomplete"`
 	// Unread lists the documents that could not be read, with the reason.
 	Unread []DocIssue `json:"unread"`
 	// DuplicateKeys lists documents read with a duplicate mapping key (the
-	// last value is used).
+	// last value is used; a strict API server rejects the document).
 	DuplicateKeys []DocIssue `json:"duplicateKeys"`
 	Candidates    int        `json:"candidates"`
 	Notes         int        `json:"notes"`
@@ -146,7 +147,7 @@ func Analyze(m *Manifest, o Options) (*Report, error) {
 		Examined:       Examined{Objects: m.Objects(), PodTemplates: m.PodTemplates()},
 		Checks:         []CheckRun{},
 		Findings:       []Finding{},
-		Incomplete:     len(m.unread) > 0,
+		Incomplete:     len(m.unread) > 0 || len(m.dupKeys) > 0,
 		Unread:         append([]DocIssue{}, m.unread...),
 		DuplicateKeys:  append([]DocIssue{}, m.dupKeys...),
 		Notice:         Notice,

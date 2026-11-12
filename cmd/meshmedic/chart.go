@@ -40,7 +40,8 @@ flags:
                                 use false for clusters older than Kubernetes 1.33)
 
 exit codes: 0 no candidates (notes do not count), 1 at least one candidate,
-            2 usage or render error, or no candidates but part of the input could not be read (incomplete)`
+            2 usage or render error, or no candidates but part of the input could not be read
+            or had a duplicate key (incomplete)`
 
 func runChart(args []string) {
 	if len(args) == 0 || args[0] != "check" {
@@ -196,7 +197,7 @@ func chartCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if rep.Incomplete {
 		// Some of the input could not be read: that is never a clean result.
-		fmt.Fprintf(stderr, "meshmedic chart check: incomplete: %d document(s) could not be read and no candidate was found in the rest\n", len(rep.Unread))
+		fmt.Fprintf(stderr, "meshmedic chart check: incomplete: %d document(s) could not be read and %d had a duplicate key, and no candidate was found in the rest\n", len(rep.Unread), len(rep.DuplicateKeys))
 		return chartExitError
 	}
 	return chartExitClean

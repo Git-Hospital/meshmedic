@@ -43,6 +43,7 @@ func TestChartCheckExitCodes(t *testing.T) {
 		{"nothing readable", []string{"--manifests", "-"}, "kind: [unclosed\n", 2, "incomplete"},
 		{"candidates and an unreadable document", []string{"--manifests", filepath.Join(chartFixtures, "np-unreadable.yaml"), "--mesh", "ambient"}, "", 1, ""},
 		{"no candidates and an unreadable document", []string{"--manifests", filepath.Join(chartFixtures, "np-unreadable-clean.yaml")}, "", 2, "incomplete"},
+		{"duplicate key and no candidate is incomplete", []string{"--manifests", filepath.Join(chartFixtures, "np-dupkey-clean.yaml")}, "", 2, "incomplete"},
 		{"duplicate key is read", []string{"--manifests", filepath.Join(chartFixtures, "np-dupkey.yaml")}, "", 1, ""},
 		{"chart and manifests", []string{"./chart", "--manifests", def}, "", 2, "not both"},
 		{"helm flags with manifests", []string{"--manifests", def, "--set", "a=b"}, "", 2, "no effect"},
