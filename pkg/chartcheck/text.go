@@ -22,10 +22,15 @@ func WriteText(w io.Writer, r *Report) error {
 	fmt.Fprintf(&b, "meshmedic chart check (rules written against Istio %s)\n", r.IstioVersion)
 	fmt.Fprintf(&b, "input: %s\n", r.Input)
 	fmt.Fprintf(&b, "read %d objects and %d pod templates; namespace %s; modes: %s\n", r.Examined.Objects, r.Examined.PodTemplates, r.Namespace, joinModes(r.Modes))
+	native := "assumed (pods opt out with sidecar.istio.io/nativeSidecar: \"false\")"
+	if !r.NativeSidecars {
+		native = "not assumed (every sidecar proxy is treated as a classic one)"
+	}
+	fmt.Fprintf(&b, "native sidecars: %s\n", native)
 
 	for _, f := range r.Findings {
 		fmt.Fprintf(&b, "\n%s  %s  %s\n", f.ID, f.Mode, f.Reason)
-		field(&b, "resource", fmt.Sprintf("%s %s/%s", f.Resource.Kind, f.Resource.Namespace, f.Resource.Name))
+		field(&b, "resource", resourceString(f.Resource))
 		field(&b, "field", fmt.Sprintf("%s/%s %s = %s", f.Trigger.Kind, f.Trigger.Name, f.Trigger.Path, f.Trigger.Value))
 		field(&b, "effect", f.Effect)
 		if len(f.Docs) == 0 {
@@ -113,4 +118,11 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+func resourceString(r Resource) string {
+	if r.Namespace == "" {
+		return r.Kind + " " + r.Name
+	}
+	return r.Kind + " " + r.Namespace + "/" + r.Name
 }

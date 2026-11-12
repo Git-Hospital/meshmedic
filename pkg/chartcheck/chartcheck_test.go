@@ -120,6 +120,10 @@ func TestChecks(t *testing.T) {
 		// apiserver-caller
 		{"webhook-in-mesh.yaml", Sidecar, native, "webhook-backend-in-mesh", []string{"ValidatingWebhookConfiguration/op-validating: the API server calls op-webhook:443, whose pod Deployment/op is in the mesh"}},
 		{"webhook-in-mesh.yaml", Ambient, native, "webhook-backend-in-mesh", []string{"ValidatingWebhookConfiguration/op-validating: the API server calls op-webhook:443, whose pod Deployment/op is in the mesh"}},
+		{"webhook-multiple.yaml", Sidecar, native, "webhook-backend-in-mesh", []string{
+			"MutatingWebhookConfiguration/op-mutating: the API server calls op-webhook:443, whose pod Deployment/op is in the mesh",
+			"ValidatingWebhookConfiguration/op-validating: the API server calls op-webhook:443, whose pod Deployment/op is in the mesh",
+		}},
 		{"webhook-excluded.yaml", Sidecar, native, "webhook-backend-in-mesh", nil},
 		{"webhook-excluded.yaml", Ambient, native, "webhook-backend-in-mesh", []string{"APIService/v1beta1.metrics.example.io: the API server calls op-webhook:443, whose pod Deployment/op is in the mesh"}},
 		{"webhook-elsewhere.yaml", Sidecar, native, "webhook-backend-in-mesh", nil},
@@ -150,7 +154,7 @@ func TestChecks(t *testing.T) {
 				if f.Trigger.Kind == "" || f.Trigger.Name == "" || f.Trigger.Path == "" {
 					t.Errorf("finding %q has an incomplete trigger %+v", f.Reason, f.Trigger)
 				}
-				if f.Resource.Kind == "" || f.Resource.Name == "" || f.Resource.Namespace == "" {
+				if f.Resource.Kind == "" || f.Resource.Name == "" || (f.Resource.Namespace == "") != clusterScoped[f.Resource.Kind] {
 					t.Errorf("finding %q has an incomplete resource %+v", f.Reason, f.Resource)
 				}
 				if len(f.Evidence) == 0 {
@@ -430,4 +434,25 @@ func TestIstioProtocol(t *testing.T) {
 			t.Errorf("istioProtocol(%d, %q, %s, %v) = %q, want %q", tc.port, tc.name, tc.proto, tc.app, got, tc.want)
 		}
 	}
+}
+
+func TestWebhookEvidenceListsEveryWebhook(t *testing.T) {
+	rep := analyzeFile(t, "webhook-multiple.yaml", Sidecar, true)
+	for _, f := range findingsOf(rep, "webhook-backend-in-mesh") {
+		if f.Resource.Name != "op-validating" {
+			continue
+		}
+		var paths []string
+		for _, e := range f.Evidence {
+			if strings.HasPrefix(e.Path, "webhooks[") {
+				paths = append(paths, e.Path)
+			}
+		}
+		want := []string{"webhooks[0].clientConfig.service", "webhooks[1].clientConfig.service", "webhooks[2].clientConfig.service"}
+		if !reflect.DeepEqual(paths, want) {
+			t.Errorf("webhook paths in evidence: %q, want %q", paths, want)
+		}
+		return
+	}
+	t.Error("no finding for op-validating")
 }

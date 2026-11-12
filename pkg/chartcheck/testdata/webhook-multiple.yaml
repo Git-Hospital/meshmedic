@@ -1,0 +1,54 @@
+# One backend listed by three webhooks of one configuration, and by a second
+# configuration: one finding per configuration, listing every webhook.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: op-validating
+webhooks:
+  - name: a.example.io
+    clientConfig:
+      service: {name: op-webhook, namespace: demo, path: /a}
+  - name: b.example.io
+    clientConfig:
+      service: {name: op-webhook, namespace: demo, path: /b}
+  - name: c.example.io
+    clientConfig:
+      service: {name: op-webhook, namespace: demo, path: /c}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: op-mutating
+webhooks:
+  - name: m.example.io
+    clientConfig:
+      service: {name: op-webhook, namespace: demo, path: /m}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: op-webhook
+  namespace: demo
+spec:
+  selector:
+    app: op
+  ports:
+    - port: 443
+      targetPort: 9443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: op
+  namespace: demo
+spec:
+  template:
+    metadata:
+      labels:
+        app: op
+    spec:
+      containers:
+        - name: op
+          image: example/op:1
+          ports:
+            - containerPort: 9443

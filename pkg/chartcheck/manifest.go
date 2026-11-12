@@ -21,6 +21,15 @@ type object struct {
 	Raw       map[string]any
 }
 
+// clusterScoped lists the kinds that have no namespace, so that the release
+// namespace is not made up for them.
+var clusterScoped = map[string]bool{
+	"APIService": true, "ClusterRole": true, "ClusterRoleBinding": true, "CustomResourceDefinition": true,
+	"GatewayClass": true, "IngressClass": true, "MutatingWebhookConfiguration": true, "Namespace": true,
+	"Node": true, "PersistentVolume": true, "PriorityClass": true, "StorageClass": true,
+	"ValidatingWebhookConfiguration": true,
+}
+
 func (o *object) ref() string { return o.Kind + "/" + o.Name }
 
 // podTemplate is a pod spec the chart renders, with the object that owns it.
@@ -104,7 +113,7 @@ func (m *Manifest) add(doc map[string]any) {
 		Namespace: str(meta["namespace"]),
 		Raw:       doc,
 	}
-	if o.Namespace == "" {
+	if o.Namespace == "" && !clusterScoped[o.Kind] {
 		o.Namespace = m.namespace
 	}
 	if av := str(doc["apiVersion"]); strings.Contains(av, "/") {

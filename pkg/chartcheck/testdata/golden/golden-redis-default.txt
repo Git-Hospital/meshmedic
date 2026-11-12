@@ -1,6 +1,7 @@
 meshmedic chart check (rules written against Istio 1.31)
 input: manifests:np-redis-default.yaml
 read 2 objects and 1 pod templates; namespace demo; modes: ambient
+native sidecars: assumed (pods opt out with sidecar.istio.io/nativeSidecar: "false")
 
 MM-CHART-001  ambient  no ingress rule admits TCP 15008 (HBONE)
   resource: StatefulSet demo/redis-replicas

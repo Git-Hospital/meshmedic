@@ -1,0 +1,13 @@
+[
+  {"id": "podinfo", "chart": "oci://ghcr.io/stefanprodan/charts/podinfo", "version": "6.15.0", "args": []},
+  {"id": "argo-cd", "repo": "https://argoproj.github.io/argo-helm", "chart": "argo-cd", "version": "10.11.1", "args": ["--set", "redis.image.repository=mirror.gcr.io/library/redis"]},
+  {"id": "prometheus-pushgateway", "repo": "https://prometheus-community.github.io/helm-charts", "chart": "prometheus-pushgateway", "version": "3.9.1", "args": []},
+  {"id": "kube-prometheus-stack", "repo": "https://prometheus-community.github.io/helm-charts", "chart": "kube-prometheus-stack", "version": "92.12.0", "args": []},
+  {"id": "redis", "chart": "oci://registry-1.docker.io/bitnamicharts/redis", "version": "28.3.9", "args": []},
+  {"id": "redis-fixed", "chart": "oci://registry-1.docker.io/bitnamicharts/redis", "version": "28.3.9", "args": ["--set-json", "networkPolicy.extraIngress=[{\"ports\":[{\"port\":15008,\"protocol\":\"TCP\"}]}]"]},
+  {"id": "rabbitmq", "chart": "oci://registry-1.docker.io/bitnamicharts/rabbitmq", "version": "16.0.14", "args": ["--set", "image.repository=bitnamilegacy/rabbitmq", "--set", "global.security.allowInsecureImages=true", "--set", "replicaCount=3"]},
+  {"id": "cloudnative-pg", "repo": "https://cloudnative-pg.github.io/charts", "chart": "cloudnative-pg", "version": "0.29.1", "args": []},
+  {"id": "nats", "repo": "https://nats-io.github.io/k8s/helm/charts/", "chart": "nats", "version": "2.15.1", "args": ["--set", "config.cluster.enabled=true"]},
+  {"id": "grafana", "repo": "https://grafana-community.github.io/helm-charts", "chart": "grafana", "version": "14.0.1", "args": []},
+  {"id": "valkey", "repo": "https://valkey.io/valkey-helm/", "chart": "valkey", "version": "0.12.0", "args": ["--set", "replica.enabled=true"]}
+]

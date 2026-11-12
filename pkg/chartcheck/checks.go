@@ -642,6 +642,7 @@ func bypassesSidecar(p *podTemplate, port int) bool {
 
 func checkWebhook(m *Manifest, o options) []finding {
 	var out []finding
+	seen := map[string]int{}
 	svcs := m.byKind("Service")
 	for _, ref := range webhookRefs(m) {
 		ns := ref.Namespace
@@ -666,9 +667,20 @@ func checkWebhook(m *Manifest, o options) []finding {
 						}
 					}
 					trigger := Evidence{Kind: ref.Owner.Kind, Name: ref.Owner.Name, Path: ref.Path, Value: fmt.Sprintf("%s/%s:%d", ns, ref.Name, ref.Port)}
+					reason := fmt.Sprintf("the API server calls %s:%d, whose pod %s is in the mesh", svc.Name, ref.Port, p.Owner.ref())
+					// An operator chart lists the same backend in several
+					// webhooks of one configuration (cloudnative-pg has nine).
+					// They share a cause and a fix, so they are one finding
+					// that lists every webhook in its evidence.
+					key := ref.Owner.ref() + "|" + reason
+					if i, ok := seen[key]; ok {
+						out[i].Evidence = append(out[i].Evidence, trigger)
+						continue
+					}
+					seen[key] = len(out)
 					out = append(out, finding{
 						Resource: ref.Owner.resource(),
-						Reason:   fmt.Sprintf("the API server calls %s:%d, whose pod %s is in the mesh", svc.Name, ref.Port, p.Owner.ref()),
+						Reason:   reason,
 						Trigger:  trigger,
 						Evidence: []Evidence{
 							trigger,
