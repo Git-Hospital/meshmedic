@@ -29,7 +29,12 @@ type StepResult struct {
 type Result struct {
 	Fixture   Fixture
 	Scenarios []catalog.Scenario // the catalog entries that ran
-	Steps     []StepResult
+
+	// Set by the caller, for the screen: the catalog directory when it is not
+	// the one built into the binary, and whether --out was given.
+	Catalog      string
+	OutRequested bool
+	Steps        []StepResult
 }
 
 // Run replays fx through the detector. scenarios is the catalog (all of it;

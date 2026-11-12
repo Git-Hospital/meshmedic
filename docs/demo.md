@@ -18,8 +18,11 @@ pass `--out DIR`.
 
 Real, the same code `watch` runs:
 
-- the catalog entries, loaded from the binary with the lock check (an entry
-  whose hash does not match `catalog.lock` shows up as `UNLOCKED` and does not run);
+- the catalog entries, loaded as the other commands load them: the catalog
+  built into the binary unless `--catalog` or `$MESHMEDIC_CATALOG` names a
+  directory, in which case the screen prints that path. The lock check applies
+  (an entry whose hash does not match `catalog.lock` shows up as `UNLOCKED` and
+  does not run);
 - `pkg/detect`: the coverage probe, the signal query, the hold duration, the
   four cycle states (`firing`, `clear`, `blind`, `unlocked`), the evidence
   queries and the firing-to-clear resolution;
@@ -39,7 +42,7 @@ Replayed, and nothing else:
   The demo answers the same reads from the fixture. Field extraction and
   redaction are the real ones.
 - **The clock.** Each cycle runs at a fixed time from the fixture, so the output
-  is byte-identical on every run.
+  is the same on every run (with `--out`, the `Wrote <path>` lines carry the path you gave).
 
 ### The numbers are constructed, not recorded
 

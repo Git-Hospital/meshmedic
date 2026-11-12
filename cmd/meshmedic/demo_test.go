@@ -147,3 +147,36 @@ func TestDemoWritesOnlyWithOut(t *testing.T) {
 		t.Errorf("unwritable --out: exit %d, want 1", code)
 	}
 }
+
+// --out on a scenario with nothing to write creates nothing and says so.
+func TestDemoOutWithNothingToWrite(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "o1")
+	out, _, code := demoOut(t, "--scenario", "blind-no-telemetry", "--out", dir)
+	if code != 0 {
+		t.Fatal(code)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("--out directory exists after a run that wrote nothing: %v", err)
+	}
+	if !strings.Contains(out, "--out was given, but this scenario produces no dossier files, so none were written.") ||
+		strings.Contains(out, "add --out DIR") {
+		t.Errorf("footer does not say that:\n%s", out)
+	}
+}
+
+// A catalog that is not the built-in one is named on the screen, whether it
+// came from --catalog or from $MESHMEDIC_CATALOG; the built-in one is not.
+func TestDemoNamesAnExternalCatalog(t *testing.T) {
+	if out, _, _ := demoOut(t); strings.Contains(out, "Catalog used") {
+		t.Error("the built-in catalog should not be announced")
+	}
+	out, _, code := demoOut(t, "--catalog", "../../catalog")
+	if code != 0 || !strings.Contains(out, "Catalog used: ../../catalog (not the one built into this binary).") {
+		t.Errorf("--catalog not named (exit %d):\n%s", code, out)
+	}
+	t.Setenv("MESHMEDIC_CATALOG", "../../catalog")
+	var b, e bytes.Buffer
+	if code := runDemo(nil, &b, &e); code != 0 || !strings.Contains(b.String(), "Catalog used: ../../catalog") {
+		t.Errorf("$MESHMEDIC_CATALOG not named (exit %d, %s)", code, e.String())
+	}
+}

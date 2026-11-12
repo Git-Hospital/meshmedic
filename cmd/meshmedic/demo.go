@@ -61,6 +61,7 @@ func runDemo(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	res.Catalog, res.OutRequested = *dir, *out != ""
 	var wrote []string
 	if *out != "" {
 		wrote, err = writeDossiers(*out, res)
@@ -78,11 +79,12 @@ func runDemo(args []string, stdout, stderr io.Writer) int {
 // the committed file, and for each resolution its closing report. `watch`
 // itself writes none of these locally.
 func writeDossiers(dir string, res demo.Result) ([]string, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
 	var wrote []string
 	write := func(name, content string) error {
+		// The directory exists only once there is a first file to put in it.
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
 		p := filepath.Join(dir, name)
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 			return err

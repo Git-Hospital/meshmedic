@@ -55,7 +55,11 @@ func Render(w io.Writer, res Result, verbose bool, wrote []string) {
 	fx := res.Fixture
 	fmt.Fprintf(w, "meshmedic demo: %s\n", fx.Name)
 	Banner(w)
-	fmt.Fprintf(w, "The real detector ran %d cycles against a Prometheus served from this process on loopback.\n\n", len(res.Steps))
+	fmt.Fprintf(w, "The real detector ran %d cycles against a Prometheus served from this process on loopback.\n", len(res.Steps))
+	if res.Catalog != "" {
+		fmt.Fprintf(w, "Catalog used: %s (not the one built into this binary).\n", res.Catalog)
+	}
+	fmt.Fprintln(w)
 
 	for i, sr := range res.Steps {
 		for _, ev := range sr.Cycle.Evaluations {
@@ -83,11 +87,11 @@ func Render(w io.Writer, res Result, verbose bool, wrote []string) {
 	for _, p := range wrote {
 		fmt.Fprintf(w, "Wrote %s\n", p)
 	}
-	Footer(w, fx, wrote)
+	Footer(w, fx, wrote, res.OutRequested)
 }
 
 // Footer says what the data is, and what the command did not do.
-func Footer(w io.Writer, fx Fixture, wrote []string) {
+func Footer(w io.Writer, fx Fixture, wrote []string, outRequested bool) {
 	fmt.Fprintf(w, "Data: CONSTRUCTED to match %s, not recorded.\n", fx.Source)
 	fmt.Fprintln(w, "  (The proof reports keep the incident report, not the raw Prometheus responses.)")
 	if len(fx.Recorded) > 0 {
@@ -105,7 +109,11 @@ func Footer(w io.Writer, fx Fixture, wrote []string) {
 	fmt.Fprintln(w, "  The detection, thresholds, patch and report are the real code. No pull request was opened,")
 	fmt.Fprintln(w, "  no token was read, nothing beyond loopback was contacted.")
 	if len(wrote) == 0 {
-		fmt.Fprintln(w, "  No file was written (add --out DIR to write the dossier).")
+		if outRequested {
+			fmt.Fprintln(w, "  --out was given, but this scenario produces no dossier files, so none were written.")
+		} else {
+			fmt.Fprintln(w, "  No file was written (add --out DIR to write the dossier).")
+		}
 	}
 	fmt.Fprintln(w)
 	NextSteps(w)
