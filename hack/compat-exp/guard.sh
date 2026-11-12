@@ -28,6 +28,10 @@
 #   GUARD_CHART_IDS     space separated ids (optional)
 #   GUARD_FIX_ID        the fix entry to certify (certify only)
 #   GUARD_ISTIO         the Istio version chosen
+#   GUARD_EVENT         the workflow event: workflow_dispatch or push (empty: not checked,
+#                       for local runs; the workflow always sets it)
+#   GUARD_REF           the git ref of the run (github.ref); a push must be on
+#                       refs/heads/compat-exp-acceptance
 #   ISTIO_PRIMARY       the primary pinned version (the workflow's own)
 #   GUARD_ROOT          repository root (default: git toplevel)
 #   FREEZE_TAG          default compat-exp-freeze
@@ -54,6 +58,11 @@
 #     (no flag that runs code, such as --post-renderer), its patch is a file under
 #     hack/compat-exp/patches/, its cellWorlds (certify) are mesh worlds and its
 #     ignore file sits under hack/compat-exp/ignore/.
+#  7. A push-triggered run (the acceptance trial on the branch compat-exp-acceptance,
+#     for when the workflow file is not on the default branch yet) must have the
+#     effective mode acceptance, no fixes file, chart ids or fix id, and the ref
+#     refs/heads/compat-exp-acceptance. Any other event than push or workflow_dispatch
+#     is refused. A push can never start qualify, observe, certify or recheck.
 #  6. The matrix (selected charts x worlds) has at most MAX_MATRIX jobs.
 #
 # What it cannot check: that the workflow file that is running is the one it was
@@ -88,6 +97,8 @@ fix_id="${GUARD_FIX_ID:-}"
 chart_ids="${GUARD_CHART_IDS:-}"
 fixes_in="${GUARD_FIXES_FILE:-}"
 charts_in="${GUARD_CHARTS_FILE:-}"
+event="${GUARD_EVENT:-}"
+ref="${GUARD_REF:-}"
 
 git_() { git -C "$root" "$@"; }
 
@@ -194,6 +205,18 @@ case "$mode" in
   acceptance | qualify | observe | certify | recheck) ;;
   *) die "mode '$mode' is not one of acceptance, qualify, observe, certify, recheck" ;;
 esac
+# The event: a push is the acceptance trial and nothing else. Its effective mode,
+# whatever the workflow computed, must be acceptance, and the ref the one branch.
+case "$event" in
+  "" | workflow_dispatch) ;;
+  push)
+    [[ "$mode" == acceptance ]] || die "a push-triggered run may only be mode acceptance, not '$mode' (qualify, observe, certify and recheck are manual dispatches)"
+    [[ "$ref" == refs/heads/compat-exp-acceptance ]] || die "a push-triggered run is allowed on refs/heads/compat-exp-acceptance only, not on '$ref'"
+    [[ -z "$fixes_in" && -z "$chart_ids" && -z "$fix_id" ]] || die "a push-triggered run takes no fixes file, chart ids or fix id"
+    ;;
+  *) die "event '$event' is not push or workflow_dispatch" ;;
+esac
+
 [[ "$primary" =~ $re_semver ]] || die "ISTIO_PRIMARY '$primary' is not x.y.z"
 if [[ "$mode" == recheck ]]; then
   [[ "$istio" =~ $re_semver ]] ||

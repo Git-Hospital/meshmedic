@@ -6,7 +6,10 @@ name: compat-exp
 #   compat-exp mode=<mode> istio=<istio> charts=<charts_file> fixes=<fixes_file> ids=<chart_ids> fix=<fix_id>
 # mode and istio are choices (no spaces); the four strings after them are the inputs as
 # given. Do not change it after the freeze (the workflow directory is frozen).
-run-name: compat-exp mode=${{ inputs.mode }} istio=${{ inputs.istio }} charts=${{ inputs.charts_file }} fixes=${{ inputs.fixes_file }} ids=${{ inputs.chart_ids }} fix=${{ inputs.fix_id }}
+# On a push (the acceptance trial, see below) there are no inputs, and run-name can only
+# use expressions, so the fixed values of the acceptance run are spelled out here and in
+# the top-level env block, nowhere else; the three free strings are empty on a push.
+run-name: compat-exp mode=${{ github.event_name == 'push' && 'acceptance' || inputs.mode }} istio=${{ github.event_name == 'push' && '1.31.3' || inputs.istio }} charts=${{ github.event_name == 'push' && 'hack/compat-exp/acceptance-charts.json' || inputs.charts_file }} fixes=${{ inputs.fixes_file }} ids=${{ inputs.chart_ids }} fix=${{ inputs.fix_id }}
 
 # The compat experiment (docs/compat-experiment.md): install popular third-party
 # charts, unchanged, in throwaway kind worlds W0 (no mesh), W1 (sidecar) and W3
@@ -22,7 +25,15 @@ run-name: compat-exp mode=${{ inputs.mode }} istio=${{ inputs.istio }} charts=${
 #               difftable with -cell-worlds and -ignore from the entry.
 #   recheck     chart_ids again on the recheck Istio version.
 #
-# Dispatch by hand only. No pull request trigger of any kind.
+# Dispatch by hand only, with one exception: GitHub accepts a manual dispatch only
+# for a workflow file on the default branch, and this file is not there before the
+# instrument is merged. So the acceptance trial (and nothing else) can also be started
+# by a push to the branch compat-exp-acceptance, as compat-pilot.yml does on its own
+# branch. A push has no inputs: the top-level env block below gives it the acceptance
+# run's fixed values, and guard.sh refuses a push whose mode is not acceptance or
+# whose ref is not refs/heads/compat-exp-acceptance. A push can never start qualify,
+# observe, certify or recheck; analyze.sh refuses every push run. No pull request
+# trigger of any kind.
 #
 # SECURITY. The charts under test are third-party code. They run inside a
 # throwaway kind cluster on the runner, next to the runner's checkout, the
@@ -32,9 +43,16 @@ run-name: compat-exp mode=${{ inputs.mode }} istio=${{ inputs.istio }} charts=${
 # self-hosted runner: a hostile chart that escapes the cluster would find
 # them. Every workflow input reaches a script through `env:` and is validated by
 # hack/compat-exp/guard.sh against a strict pattern first; no input is ever
-# interpolated into a `run:` block.
+# interpolated into a `run:` block. The push trigger adds no event data to any
+# script: the branch name, commit message and author are never read, only the
+# event name and the ref, and the guard compares those with fixed strings.
 
 on:
+  # No path filter: pushing an empty commit reruns the trial. Only people with
+  # write access can push a branch here; a fork cannot fire it.
+  push:
+    branches:
+      - compat-exp-acceptance
   workflow_dispatch:
     inputs:
       mode:
@@ -92,7 +110,22 @@ concurrency:
 # Pinned, and recorded in every result. The Istio version is the dispatch
 # input, validated by the guard; ISTIO_PRIMARY is the version of every mode
 # but recheck. The registry mirror is on in EVERY world, W0 included.
+#
+# The GUARD_* variables are the effective inputs of the run, computed here once and
+# read by every step that needs them (guard.sh, the ledger check, the run metadata).
+# A dispatch passes its inputs through; a push has none and gets the acceptance
+# run: mode acceptance, Istio 1.31.3 (must equal ISTIO_PRIMARY, a test checks it),
+# the acceptance chart list, and no fixes file, chart ids or fix id (empty on a push).
+# GUARD_EVENT and GUARD_REF let the guard refuse a push that is anything else.
 env:
+  GUARD_EVENT: ${{ github.event_name }}
+  GUARD_REF: ${{ github.ref }}
+  GUARD_MODE: ${{ github.event_name == 'push' && 'acceptance' || inputs.mode }}
+  GUARD_ISTIO: ${{ github.event_name == 'push' && '1.31.3' || inputs.istio }}
+  GUARD_CHARTS_FILE: ${{ github.event_name == 'push' && 'hack/compat-exp/acceptance-charts.json' || inputs.charts_file }}
+  GUARD_FIXES_FILE: ${{ inputs.fixes_file }}
+  GUARD_CHART_IDS: ${{ inputs.chart_ids }}
+  GUARD_FIX_ID: ${{ inputs.fix_id }}
   ISTIO_PRIMARY: "1.31.3"
   KIND_VERSION: "v0.33.0"
   KIND_NODE_IMAGE: "kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed"
@@ -112,13 +145,6 @@ jobs:
           fetch-tags: true
           persist-credentials: false
       - name: guard
-        env:
-          GUARD_MODE: ${{ inputs.mode }}
-          GUARD_CHARTS_FILE: ${{ inputs.charts_file }}
-          GUARD_FIXES_FILE: ${{ inputs.fixes_file }}
-          GUARD_CHART_IDS: ${{ inputs.chart_ids }}
-          GUARD_FIX_ID: ${{ inputs.fix_id }}
-          GUARD_ISTIO: ${{ inputs.istio }}
         run: hack/compat-exp/guard.sh check
       # Certification and recheck rest on the ledger (docs/compat-experiment.md
       # sections 2 and 3: new keys, classifications), so it must pass its schema
@@ -134,8 +160,6 @@ jobs:
           # something an earlier job on a runner with hostile charts wrote.
           cache: false
       - name: ledger check
-        env:
-          GUARD_MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
           if [ "$GUARD_MODE" = certify ] || [ "$GUARD_MODE" = recheck ]; then
@@ -155,12 +179,12 @@ jobs:
       # outside certify; fixesFile and chartIds are the dispatch inputs as given.
       - name: run metadata
         env:
-          MD_MODE: ${{ inputs.mode }}
-          MD_ISTIO: ${{ inputs.istio }}
-          MD_CHARTS_FILE: ${{ inputs.charts_file }}
-          MD_FIXES_FILE: ${{ inputs.fixes_file }}
-          MD_CHART_IDS: ${{ inputs.chart_ids }}
-          MD_FIX_ID: ${{ inputs.fix_id }}
+          MD_MODE: ${{ env.GUARD_MODE }}
+          MD_ISTIO: ${{ env.GUARD_ISTIO }}
+          MD_CHARTS_FILE: ${{ env.GUARD_CHARTS_FILE }}
+          MD_FIXES_FILE: ${{ env.GUARD_FIXES_FILE }}
+          MD_CHART_IDS: ${{ env.GUARD_CHART_IDS }}
+          MD_FIX_ID: ${{ env.GUARD_FIX_ID }}
           MD_HEAD_SHA: ${{ github.sha }}
           MD_WORKFLOW_REF: ${{ github.workflow_ref }}
           MD_EVENT_NAME: ${{ github.event_name }}
@@ -218,13 +242,6 @@ jobs:
           fetch-tags: true
           persist-credentials: false
       - id: plan
-        env:
-          GUARD_MODE: ${{ inputs.mode }}
-          GUARD_CHARTS_FILE: ${{ inputs.charts_file }}
-          GUARD_FIXES_FILE: ${{ inputs.fixes_file }}
-          GUARD_CHART_IDS: ${{ inputs.chart_ids }}
-          GUARD_FIX_ID: ${{ inputs.fix_id }}
-          GUARD_ISTIO: ${{ inputs.istio }}
         run: hack/compat-exp/guard.sh plan plan >> "$GITHUB_OUTPUT"
       # The effective chart list (frozen charts, reserves and fix entries) that
       # every job below reads through CHARTS_FILE.
