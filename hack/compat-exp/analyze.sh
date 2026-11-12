@@ -386,6 +386,7 @@ fetch_run() {
   jq -e . >/dev/null 2>&1 <<<"$view" || die "run $id: gh run view did not return JSON"
   [[ "$(jq -r .status <<<"$view")" == completed ]] || die "run $id is not completed (status $(jq -r .status <<<"$view"))"
   [[ "$(jq -r '.databaseId | tostring' <<<"$view")" == "$id" ]] || die "run $id: gh returned another run"
+  [[ "$(jq -r .event <<<"$view")" != push ]] || die "run $id was triggered by a push: experiment runs are manual dispatches only (a push run is the acceptance trial and is never analysed)"
   [[ "$(jq -r .event <<<"$view")" == workflow_dispatch ]] || die "run $id was triggered by '$(jq -r .event <<<"$view")', not workflow_dispatch"
   [[ "$(jq -r .workflowName <<<"$view")" == compat-exp ]] || die "run $id belongs to the workflow '$(jq -r .workflowName <<<"$view")', not compat-exp"
   head="$(jq -r .headSha <<<"$view")"

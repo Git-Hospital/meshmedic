@@ -108,6 +108,35 @@ refuses "acceptance runs on the primary version only" "runs on Istio"
 g "$r" acceptance GUARD_CHARTS_FILE=hack/compat-exp/charts-exp.json
 refuses "acceptance takes only its own list" "acceptance runs"
 
+# A push (the acceptance trial on the branch compat-exp-acceptance): acceptance only,
+# on that ref only, no tag needed, no inputs beyond the fixed ones.
+ACCREF=refs/heads/compat-exp-acceptance
+g "$r" acceptance GUARD_EVENT=push GUARD_REF=$ACCREF
+passes "push on compat-exp-acceptance, mode acceptance: accepted without a tag"
+STDOUT="$tmp/push.out" CMD=plan OUT="$tmp/push-plan" g "$r" acceptance GUARD_EVENT=push GUARD_REF=$ACCREF GUARD_CHARTS_FILE=hack/compat-exp/acceptance-charts.json
+passes "push plan with the acceptance list as the workflow passes it"
+eq "push plan: mode acceptance, Istio 1.31.3" "$(grep -E '^(mode|istio)=' "$tmp/push.out" | tr '\n' ' ')" "mode=acceptance istio=1.31.3 "
+for m in qualify observe certify recheck; do
+  g "$r" "$m" GUARD_EVENT=push GUARD_REF=$ACCREF GUARD_FIX_ID=
+  refuses "push with mode $m: refused" "may only be mode acceptance"
+done
+g "$r" "" GUARD_EVENT=push GUARD_REF=$ACCREF
+refuses "push with no mode: refused" "is not one of"
+g "$r" acceptance GUARD_EVENT=push GUARD_REF=refs/heads/main
+refuses "push on main: refused" "refs/heads/compat-exp-acceptance only"
+g "$r" acceptance GUARD_EVENT=push GUARD_REF=refs/heads/compat-exp-acceptance-2
+refuses "push on a branch with a longer name: refused" "refs/heads/compat-exp-acceptance only"
+g "$r" acceptance GUARD_EVENT=push GUARD_REF=refs/tags/compat-exp-acceptance
+refuses "push of a tag of that name: refused" "refs/heads/compat-exp-acceptance only"
+g "$r" acceptance GUARD_EVENT=push
+refuses "push with no ref: refused" "refs/heads/compat-exp-acceptance only"
+g "$r" acceptance GUARD_EVENT=push GUARD_REF=$ACCREF GUARD_CHART_IDS=redis
+refuses "push with chart ids: refused" "takes no fixes file"
+g "$r" acceptance GUARD_EVENT=pull_request GUARD_REF=$ACCREF
+refuses "an event other than push or workflow_dispatch: refused" "is not push or workflow_dispatch"
+g "$r" acceptance GUARD_EVENT=workflow_dispatch GUARD_REF=refs/heads/main
+passes "a dispatch of acceptance from any ref is not affected by the push rule"
+
 # --- guard.sh freeze: the freeze alone, for analyze.sh ----------------------------------
 
 d="$tmp/fz"

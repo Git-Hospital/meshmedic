@@ -30,10 +30,11 @@ yq -o=json '.' "$wf" >"$j" || { echo "the workflow does not parse" >&2; exit 1; 
 q() { jq -c "$1" "$j"; }
 
 # triggers
-eq "dispatch is the only trigger" "$(q '.on | keys')" '["workflow_dispatch"]'
+eq "the triggers are push and workflow_dispatch, nothing else" "$(q '.on | keys')" '["push","workflow_dispatch"]'
 eq "no pull_request_target anywhere" "$(grep -c 'pull_request_target' "$wf" || true)" 0
 eq "no pull_request trigger" "$(q '.on | has("pull_request")')" false
-eq "no push trigger" "$(q '.on | has("push")')" false
+eq "push is limited to the one branch compat-exp-acceptance" "$(q '.on.push')" '{"branches":["compat-exp-acceptance"]}'
+eq "the push trigger has no path filter, no tags, no ignore" "$(q '.on.push | keys')" '["branches"]'
 
 # inputs
 eq "mode choices" "$(q '.on.workflow_dispatch.inputs.mode | [.type, .options]')" '["choice",["acceptance","qualify","observe","certify","recheck"]]'
@@ -49,7 +50,7 @@ eq "top-level permissions are contents: read" "$(q '.permissions')" '{"contents"
 eq "no job sets its own permissions" "$(q '[.jobs[] | has("permissions")] | any')" false
 eq "no secrets are referenced" "$(grep -c 'secrets\.' "$wf" || true)" 0
 eq "no GITHUB_TOKEN is referenced" "$(grep -c 'GITHUB_TOKEN\|github\.token' "$wf" || true)" 0
-eq "the warning against secrets and write permissions is at the top" "$(sed -n '1,40p' "$wf" | grep -c 'must never be given a secret')" 1
+eq "the warning against secrets and write permissions is at the top" "$(sed -n '1,70p' "$wf" | grep -c 'must never be given a secret')" 1
 eq "no self-hosted runner" "$(q '[.jobs[] | ."runs-on"] | unique')" '["ubuntu-latest"]'
 
 # pinned actions
@@ -65,10 +66,23 @@ eq "no \${{ }} expression inside any run block" "$inlined" ""
 eq "inputs. expressions appear only under an env: key" "$(jq -c '. as $r | [paths(scalars) | select(. as $p | ($r | getpath($p) | tostring | test("inputs\\.")))
   | select(index("env") | not) | select(. != ["run-name"])] | length' "$j")" 0
 eq "run-name: the fixed, parsed format (analyze.sh reads it back as the display_title)" "$(q '."run-name"')" \
-  '"compat-exp mode=${{ inputs.mode }} istio=${{ inputs.istio }} charts=${{ inputs.charts_file }} fixes=${{ inputs.fixes_file }} ids=${{ inputs.chart_ids }} fix=${{ inputs.fix_id }}"'
-eq "run-name begins with mode and istio, the two choices, so a free string cannot forge them" "$(q '."run-name" | test("^compat-exp mode=[$][{][{] inputs.mode [}][}] istio=[$][{][{] inputs.istio [}][}] charts=")')" true
+  "\"compat-exp mode=\${{ github.event_name == 'push' && 'acceptance' || inputs.mode }} istio=\${{ github.event_name == 'push' && '1.31.3' || inputs.istio }} charts=\${{ github.event_name == 'push' && 'hack/compat-exp/acceptance-charts.json' || inputs.charts_file }} fixes=\${{ inputs.fixes_file }} ids=\${{ inputs.chart_ids }} fix=\${{ inputs.fix_id }}\""
+eq "run-name: field order is mode istio charts fixes ids fix" "$(q '."run-name" | [scan("(?: |^)([a-z]+)=[$][{][{]") | .[0]]')" '["mode","istio","charts","fixes","ids","fix"]'
+eq "run-name begins with mode and istio, the two choices, so a free string cannot forge them" "$(q '."run-name" | test("^compat-exp mode=[$][{][{] github.event_name == .push. && .acceptance. [|][|] inputs.mode [}][}] istio=[$][{][{] github.event_name == .push. && .1.31.3. [|][|] inputs.istio [}][}] charts=")')" true
+eq "run-name: the push value of istio is the pinned primary" "$(q '."run-name" | capture("istio=[$][{][{] github.event_name == .push. && .(?<v>[0-9.]+). ").v')" "$(q '.env.ISTIO_PRIMARY')"
 eq "run-name is the only place inputs.* appear outside env" "$(grep -c '^run-name:' "$wf")" 1
-eq "guard steps get their inputs through env" "$(jq -c '[.jobs.guard.steps[] | select(.name == "guard") | .env | keys] | .[0]' "$j")" '["GUARD_CHARTS_FILE","GUARD_CHART_IDS","GUARD_FIXES_FILE","GUARD_FIX_ID","GUARD_ISTIO","GUARD_MODE"]'
+# The effective inputs: computed once in the top-level env block, from github.event_name,
+# so a push (no inputs) runs the acceptance trial and a dispatch passes its inputs through.
+eq "the effective inputs are one top-level env block" "$(q '.env | with_entries(select(.key | startswith("GUARD_"))) | keys')" '["GUARD_CHARTS_FILE","GUARD_CHART_IDS","GUARD_EVENT","GUARD_FIXES_FILE","GUARD_FIX_ID","GUARD_ISTIO","GUARD_MODE","GUARD_REF"]'
+eq "on a push the mode is acceptance" "$(q '.env.GUARD_MODE')" "\"\${{ github.event_name == 'push' && 'acceptance' || inputs.mode }}\""
+eq "on a push Istio is 1.31.3, the same literal as ISTIO_PRIMARY" "$(q '.env.GUARD_ISTIO | capture("&& .(?<v>[0-9.]+). [|][|]").v')" "$(q '.env.ISTIO_PRIMARY')"
+eq "on a push the chart list is the acceptance list" "$(q '.env.GUARD_CHARTS_FILE')" "\"\${{ github.event_name == 'push' && 'hack/compat-exp/acceptance-charts.json' || inputs.charts_file }}\""
+eq "fixes file, chart ids and fix id are the inputs, which are empty on a push" "$(q '[.env.GUARD_FIXES_FILE, .env.GUARD_CHART_IDS, .env.GUARD_FIX_ID]')" '["${{ inputs.fixes_file }}","${{ inputs.chart_ids }}","${{ inputs.fix_id }}"]'
+eq "the event name and ref come from github.event_name and github.ref only" "$(q '[.env.GUARD_EVENT, .env.GUARD_REF]')" '["${{ github.event_name }}","${{ github.ref }}"]'
+eq "no step or job sets GUARD_* itself (they come from the one env block)" "$(jq -c '[.jobs[] | ((.env // {}), (.steps[]? | .env // {})) | keys[] | select(startswith("GUARD_"))] | length' "$j")" 0
+eq "inputs. appears only in run-name and the top-level env" "$(grep -v '^[[:space:]]*#' "$wf" | grep -c 'inputs\.')" 7
+eq "the guard and plan steps need no env of their own (the guard steps read the workflow env)" "$(jq -c '[.jobs.guard.steps[] | select(.name == "guard") | has("env")], [.jobs.plan.steps[] | select(.id == "plan") | has("env")]' "$j" | tr '\n' ' ')" "[false] [false] "
+eq "no event data other than github.event_name, github.ref and the run ids reaches a script" "$(grep -v '^[[:space:]]*#' "$wf" | grep -c 'github\.event\.\|head_commit\|github\.actor\|github\.head_ref\|github\.ref_name\|pusher' || true)" 0
 eq "matrix values reach scripts through env" "$(jq -c '[.jobs[].steps[]? | select(.run != null) | select(.run | test("matrix\\.")) ] | length' "$j")" 0
 
 # structure: guard before everything, matrix limits, mirror, timeouts
@@ -91,7 +105,7 @@ eq "the qualify and observe jobs read the plan's chart list" "$(q '[.jobs.qualif
 eq "the guard job sets up Go for the ledger tool and uploads the run metadata" "$(jq -c '[.jobs.guard.steps[] | .uses // empty | sub("@.*"; "")]' "$j")" '["actions/checkout","actions/setup-go","actions/upload-artifact"]'
 eq "the ledger check step runs after the guard step, the metadata after both" "$(jq -c '[.jobs.guard.steps[] | .name // empty]' "$j")" '["guard","ledger check","run metadata"]'
 eq "the ledger check runs the ledger tool in certify and recheck only" "$(jq -c '.jobs.guard.steps[] | select(.name == "ledger check") | .run | [contains("= certify"), contains("= recheck"), contains("go run ./hack/compat-exp/ledger/cmd/ledger check")]' "$j")" '[true,true,true]'
-eq "the ledger check takes the mode through env" "$(jq -c '.jobs.guard.steps[] | select(.name == "ledger check") | .env | keys' "$j")" '["GUARD_MODE"]'
+eq "the ledger check reads the mode from the workflow env" "$(jq -c '.jobs.guard.steps[] | select(.name == "ledger check") | has("env")' "$j")" false
 eq "the notice step for the other tools is gone" "$(grep -c 'post-run tools present\|not invoked here' "$wf" || true)" 0
 eq "no run block calls crossrun, static.sh or staticcheck" "$(jq -r '[.jobs[].steps[]? | .run // empty] | join(" ")' "$j" | grep -c 'crossrun\|static\.sh\|staticcheck' || true)" 0
 eq "ledger is called only in the guard job" "$(jq -c '[.jobs | to_entries[] | select(.value.steps | map(.run // "") | join(" ") | test("ledger")) | .key]' "$j")" '["guard"]'
@@ -174,6 +188,7 @@ if run_sel; then ok "select check: the debug directory is never read"; else fail
 
 # C2 (c): the run metadata, written by the guard job from workflow context only
 meta_run="$(step_run guard "run metadata")"
+eq "the metadata step reads the effective values from the workflow env" "$(jq -c '.jobs.guard.steps[] | select(.name == "run metadata") | .env | [.MD_MODE, .MD_ISTIO, .MD_CHARTS_FILE, .MD_FIXES_FILE, .MD_CHART_IDS, .MD_FIX_ID, .MD_EVENT_NAME]' "$j")" '["${{ env.GUARD_MODE }}","${{ env.GUARD_ISTIO }}","${{ env.GUARD_CHARTS_FILE }}","${{ env.GUARD_FIXES_FILE }}","${{ env.GUARD_CHART_IDS }}","${{ env.GUARD_FIX_ID }}","${{ github.event_name }}"]'
 eq "the metadata step takes everything through env" "$(jq -c '.jobs.guard.steps[] | select(.name == "run metadata") | .env | keys' "$j")" '["MD_CHARTS_FILE","MD_CHART_IDS","MD_EVENT_NAME","MD_FIXES_FILE","MD_FIX_ID","MD_HEAD_SHA","MD_ISTIO","MD_MODE","MD_RUN_ATTEMPT","MD_RUN_ID","MD_WORKFLOW_REF"]'
 eq "the metadata artifact is named by run id and attempt" "$(jq -r '.jobs.guard.steps[] | select((.uses // "") | startswith("actions/upload-artifact")) | [.with.name, .with.path, .with["if-no-files-found"]] | join(" ")' "$j")" 'run-metadata-${{ github.run_id }}-${{ github.run_attempt }} run-metadata/run-metadata.json error'
 eq "only the guard job writes run metadata (no other job has such a step or artifact)" "$(jq -c '[.jobs | to_entries[] | select(.value.steps | map((.name // "") == "run metadata" or ((.with.name // "") | startswith("run-metadata"))) | any) | .key]' "$j")" '["guard"]'
@@ -195,6 +210,8 @@ want_sha="$(sha256sum "$work/c/hack/compat-exp/acceptance-charts.json" | cut -d'
 eq "metadata, acceptance: exact fields" "$(meta acceptance "" "" | jq -c --arg sha "$want_sha" --arg tag "$head_tag" '. == {schema:1, mode:"acceptance", istio:"1.31.3", chartsFile:"hack/compat-exp/acceptance-charts.json", chartsSha256:$sha, fixesFile:"hack/compat-exp/fixes/f.json", chartIds:"a b", fixId:"", headSha:"abc123", freezeTagSha:$tag, workflowRef:"o/r/.github/workflows/compat-exp.yml@refs/heads/main", eventName:"workflow_dispatch", runId:77, runAttempt:2}')" true
 eq "metadata, certify: default charts file and the fix id" "$(meta certify "" fix-a | jq -c '[.chartsFile, .fixId, .mode]')" '["hack/compat-exp/charts-exp.json","fix-a","certify"]'
 eq "metadata has exactly the fourteen fields analyze.sh reads" "$(meta observe "" "" | jq -c 'keys')" '["chartIds","chartsFile","chartsSha256","eventName","fixId","fixesFile","freezeTagSha","headSha","istio","mode","runAttempt","runId","schema","workflowRef"]'
+eq "metadata of a push run: eventName push and the acceptance values" "$(cd "$work/c" && MD_MODE=acceptance MD_ISTIO=1.31.3 MD_CHARTS_FILE=hack/compat-exp/acceptance-charts.json MD_FIX_ID='' MD_FIXES_FILE='' MD_CHART_IDS='' MD_HEAD_SHA=abc123 \
+  MD_WORKFLOW_REF=o/r/.github/workflows/compat-exp.yml@refs/heads/compat-exp-acceptance MD_EVENT_NAME=push MD_RUN_ID=78 MD_RUN_ATTEMPT=1 bash -c "$meta_run" >/dev/null 2>&1 && jq -c '[.eventName, .mode, .istio, .chartsFile, .fixesFile, .chartIds, .fixId]' run-metadata/run-metadata.json)" '["push","acceptance","1.31.3","hack/compat-exp/acceptance-charts.json","","",""]'
 git -C "$work/c" tag -d compat-exp-freeze >/dev/null
 eq "metadata: freezeTagSha is empty before the tag exists" "$(meta acceptance "" "" | jq -r '.freezeTagSha')" ""
 

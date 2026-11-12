@@ -323,7 +323,8 @@ an "${A[@]}"; eq "run 1 on a commit that does not descend from the tag: refused"
 resetall
 
 setview 12 '.workflowName = "other"';        an "${A[@]}"; eq "a run of another workflow: refused" "$rc" 1; says "  and says so" "not compat-exp"; resetall
-setview 12 '.event = "push"';                an "${A[@]}"; eq "a run not dispatched by hand: refused" "$rc" 1; says "  and says so" "not workflow_dispatch"; resetall
+setview 12 '.event = "push"';                an "${A[@]}"; eq "a push-triggered run (the acceptance trial): refused" "$rc" 1; says "  and says experiment runs are dispatches only" "triggered by a push: experiment runs are manual dispatches only"; resetall
+setview 12 '.event = "schedule"';            an "${A[@]}"; eq "a run not dispatched by hand: refused" "$rc" 1; says "  and says so" "not workflow_dispatch"; resetall
 setview 12 '.status = "in_progress"';        an "${A[@]}"; eq "a run that has not completed: refused" "$rc" 1; says "  and says so" "not completed"; resetall
 setview 12 '.databaseId = 99';               an "${A[@]}"; eq "gh returning another run: refused" "$rc" 1; resetall
 rm -rf "$T/fix/12.meta-1";                   an "${A[@]}"; eq "a run without its run-metadata artifact: refused" "$rc" 1; says "  and names the artifact" "run-metadata-12-1"; resetall
