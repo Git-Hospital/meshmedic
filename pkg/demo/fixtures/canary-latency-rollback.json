@@ -1,0 +1,50 @@
+{
+  "name": "canary-latency-rollback",
+  "title": "A canary gets slow: incident fires, then clears",
+  "source": "demo/proof-reports/canary-latency-rollback.md",
+  "recorded": [
+    "the signal value at firing (2485) and the time the breach began (12:48:49Z)",
+    "both evidence values (stable p99 287.5, canary share 0.1925)",
+    "the canary Deployment's env and resources"
+  ],
+  "constructed": [
+    "every Prometheus response body and the coverage count; every cycle after the first and the recovery value",
+    "the cycle timing (45s apart, so the 90s hold is easy to see)"
+  ],
+  "target": {
+    "service": "payments",
+    "namespace": "demo",
+    "workload": "payments-v2",
+    "subset": "v2",
+    "stable_subset": "v1"
+  },
+  "scenarios": ["canary-latency-rollback"],
+  "coverageSeries": 36,
+  "evidence": {
+    "p99-stable-for-comparison": [{"labels": {}, "value": 287.5}],
+    "canary-request-share": [{"labels": {}, "value": 0.1925}]
+  },
+  "objects": {
+    "Deployment demo/payments-v2": {
+      "spec": {"template": {"spec": {"containers": [{
+        "name": "app",
+        "env": [
+          {"name": "NAME", "value": "payments-v2"},
+          {"name": "MESSAGE", "value": "ok"},
+          {"name": "TIMING_50_PERCENTILE", "value": "1200ms"},
+          {"name": "UPSTREAM_URIS", "value": "http://ledger:9090"},
+          {"name": "ERROR_RATE", "value": "0"},
+          {"name": "TIMING_90_PERCENTILE", "value": "1500ms"}
+        ],
+        "resources": {}
+      }]}}}
+    }
+  },
+  "steps": [
+    {"at": "2026-08-19T12:48:49Z", "telemetry": true, "signal": 2485},
+    {"at": "2026-08-19T12:49:34Z", "telemetry": true, "signal": 2485},
+    {"at": "2026-08-19T12:50:19Z", "telemetry": true, "signal": 2485},
+    {"at": "2026-08-19T12:51:04Z", "telemetry": true, "signal": 2485},
+    {"at": "2026-08-19T12:51:49Z", "telemetry": true, "signal": 312}
+  ]
+}

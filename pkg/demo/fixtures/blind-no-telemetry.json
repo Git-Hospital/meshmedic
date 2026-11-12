@@ -1,0 +1,25 @@
+{
+  "name": "blind-no-telemetry",
+  "title": "Prometheus has no mesh telemetry: blind, never clear",
+  "source": "README.md design rule 1 (no proof run exists for this case)",
+  "recorded": [],
+  "constructed": [
+    "everything: the empty responses in cycle 1, the healthy value in cycle 2 and all timestamps",
+    "the case itself mirrors the unobservable control target in demo/calibration/live-run.txt"
+  ],
+  "target": {
+    "service": "payments",
+    "namespace": "demo",
+    "workload": "payments-v2",
+    "subset": "v2",
+    "stable_subset": "v1"
+  },
+  "scenarios": ["canary-latency-rollback"],
+  "coverageSeries": 36,
+  "evidence": {},
+  "objects": {},
+  "steps": [
+    {"at": "2026-08-19T13:00:00Z", "telemetry": false},
+    {"at": "2026-08-19T13:00:45Z", "telemetry": true, "signal": 312}
+  ]
+}

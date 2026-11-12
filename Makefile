@@ -1,7 +1,13 @@
-.PHONY: build test vet validate check-lock all
+.PHONY: fmt-check build test vet validate check-lock all
 
 # Everything CI runs, in the order it runs it.
-all: build vet test validate check-lock
+all: fmt-check build vet test validate check-lock
+
+# Fails and lists the files when gofmt would change any, and fails when gofmt
+# itself does, as on a file it cannot parse.
+fmt-check:
+	@unformatted="$$(gofmt -l .)" || exit 1; \
+	test -z "$$unformatted" || { echo "$$unformatted"; exit 1; }
 
 build:
 	go build ./...
@@ -10,7 +16,7 @@ vet:
 	go vet ./...
 
 test:
-	go test ./...
+	go test -race ./...
 
 validate:
 	go run ./cmd/meshmedic validate

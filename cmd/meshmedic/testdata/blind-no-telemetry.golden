@@ -1,0 +1,21 @@
+meshmedic demo: blind-no-telemetry
+This is a REPLAY of data held inside this binary. Nothing is being watched and nothing is changed.
+The real detector ran 2 cycles against a Prometheus served from this process on loopback.
+
+cycle 1  13:00:00Z  canary-latency-rollback: BLIND, not clear: target unobserved: coverage probe returned no series: no mesh telemetry for this target
+         `meshmedic check` would exit 1 here: 1 of 1 targets could not be observed.
+cycle 2  13:00:45Z  canary-latency-rollback: clear, a real answer: the signal is 312, not > 1000
+
+Data: CONSTRUCTED to match README.md design rule 1 (no proof run exists for this case), not recorded.
+  (The proof reports keep the incident report, not the raw Prometheus responses.)
+  Nothing in it is taken from a recorded run.
+  Made up for this replay:
+    - everything: the empty responses in cycle 1, the healthy value in cycle 2 and all timestamps
+    - the case itself mirrors the unobservable control target in demo/calibration/live-run.txt
+  The detection, thresholds, patch and report are the real code. No pull request was opened,
+  no token was read, nothing beyond loopback was contacted.
+  No file was written (add --out DIR to write the dossier).
+
+Next, on a real setup (a Prometheus that scrapes Istio metrics):
+  meshmedic check --prometheus http://localhost:9090 --target service=payments,namespace=demo   # exits 1 if it cannot see the target
+  meshmedic watch --prometheus http://localhost:9090 --target service=payments,namespace=demo
