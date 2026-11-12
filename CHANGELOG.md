@@ -259,7 +259,9 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   deny list passes whatever nobody listed (`-Rs URL`, `--kustomize` which runs
   git, `--profile-output` which truncates a file, `--edit`). A `-f` value is
   `-` or a relative path with no `..`, and no argument may be a URL, so
-  kubectl fetches nothing from a host the spec names. The connection and
+  kubectl fetches nothing from a host the spec names (the path is checked as
+  text: a symlink in the tree or a run from another directory can still name
+  a file outside the repository, and it only reaches the pinned cluster). The connection and
   credential flags (`--server`, `--kubeconfig`, `--user`, `--token`, `--as`
   and the like, also with `_`) keep their own refusal message. Adding a flag
   or subcommand form is a code change with a test. That refuses `sh -c`, `env`, plugins,

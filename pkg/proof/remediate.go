@@ -523,9 +523,12 @@ func allowedLongFlagList() string {
 // localFileProblem says why a -f value is not a local, relative path or "-"
 // (standard input), or returns "". The shipped specs only ever use "-" and
 // paths below the repository root such as demo/manifests/x.yaml, so an
-// absolute path and any .. segment are refused as well as every URL: that keeps
-// the manifest inside the tree the author checked in, and kubectl fetches any
-// value with a scheme from its host.
+// absolute path and any .. segment are refused as well as every URL, because
+// kubectl fetches any value with a scheme from its host. This is a check on
+// the text of the path only: kubectl resolves it from the directory the proof
+// is run from and follows symlinks, so a symlink checked into the tree, or a
+// run from another directory, can still name a file outside the repository.
+// Whatever it names is only ever sent to the pinned cluster.
 func localFileProblem(v string) string {
 	switch {
 	case v == "-":
