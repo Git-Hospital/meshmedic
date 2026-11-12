@@ -1,6 +1,6 @@
-# Compat experiment: pre-registration, version 3
+# Compat experiment: pre-registration, version 3, amended 2026-11-12
 
-Status: signed off by the maintainer on 2026-11-11, not frozen yet. Nothing has run. This file, the cause list and the whole instrument are committed and tagged `compat-exp-freeze` before the first qualification job; the result quotes that SHA.
+Status: version 3 signed off by the maintainer on 2026-11-11; amended on 2026-11-12 by the maintainer's decisions in "Changes after sign-off, before the freeze"; not frozen yet. Nothing has run. This file, the cause list and the whole instrument are committed and tagged `compat-exp-freeze` before the first qualification job; the result quotes that SHA.
 
 ## Changes from draft 1
 
@@ -32,14 +32,109 @@ Status: signed off by the maintainer on 2026-11-11, not frozen yet. Nothing has 
 - Section 1 states that D measures "no mesh-specific values key".
 - Sign-off table updated, with a seventh row.
 
+## Changes after sign-off, before the freeze
+
+Decided by the maintainer on 2026-11-12. Paths are under `hack/compat-exp/` unless they start with `hack/compat-pilot/` or `.github/`; "INTERPRETATIONS n" is entry n of `crossrun/INTERPRETATIONS.md`.
+
+### Decisions on ambiguous points
+
+- P_D leaves out `ambient-np` findings, as N_new, P_new, D and S do; section 1's exclusion sentence omitted it. Direction: away from Continue. (`crossrun/finish.go`)
+- Section 1's sentence that S >= 2 keeps the table monotone was false: with N_new = 2, P_new = 2 and S = 2 (region B), one more counted finding that its key's static check does not flag lowers S to 1 and gives region E. The rule stays as written; the sentence is corrected. Direction: none, no rule change.
+- The 15% undecided stop of section 7 is measured over chart-worlds: undecided chart-worlds over compared chart-worlds. Direction: compared with counting cells the threshold is harder to cross, so the stop fires less often. crossrun prints both readings; the constant `UndecidedStop` in `crossrun/analyze.go` selects the one that drives the stop, and the freeze requires it to select the chart-worlds reading.
+- A key counts toward D when any counted finding of it is of type defect. Direction: toward Continue; P_D >= 2 still requires defects from two publishers. (`crossrun/finish.go`)
+- Rule 3 stays literal: a cell that needs two keys' fixes together and that neither part clears alone goes to the first key in the list, which is `ambient-np` when it is one of the two, so such a cell leaves the new-key counts. Direction: toward Drop. (`crossrun/analyze.go`; list order is causes.json's, new keys last)
+- N_max stays literal: every pending cell counts, `ambient-np` candidates included. Direction: delays a futility stop, does not change a final region. (`crossrun/finish.go`)
+- A key admitted after the freeze cannot earn S, because its static check would need code written after the freeze. This narrows section 1's former wording "or for a new key at its admission" and is a rule change, not a clarification. Direction: away from region B. (`crossrun/analyze.go`)
+
+### Definitions the instrument supplies
+
+- Certification flag: `-cell-worlds` (the text said `-worlds`). The certificate needs the cell's worlds cleared, and the other mesh world may show no difference the base chart lacks; `-worlds W1,W3` stays the compared set. (`hack/compat-pilot/difftable/main.go`, `diff.go`)
+- Ignore list: a JSON list of `{chart, world, key, reason}` under `hack/compat-exp/ignore/`, accepted only for cells of the base chart; an entry that matches only a difference of the fix, or no cell, is an error. An ignored cell that is a stable finding of the base must keep its value under the fix; one that is flaky or undecided for the base is listed as not comparable. (`hack/compat-pilot/difftable/diff.go`, `main.go`)
+- World not compared: an ignore entry with key `*` names a world in which the base chart has no verdict; the certificate passes that world and lists it under `worldsNotCompared`, and crossrun refuses such a certificate for the cell's own world. (`hack/compat-pilot/difftable/diff.go`, `crossrun/check.go`)
+- Ready in qualification: `helm install --wait --wait-for-jobs` returns 0 within the deadline and, after the 30 s settle wait, every workload group is ready or Succeeded by observe.sh's own jq program; Job pods are left to `--wait-for-jobs`. (`qualify.sh`)
+- Non-HTTP port, for the gate-bias table: UDP or SCTP; a TCP port whose declared protocol (appProtocol, else a name prefix Istio recognises) is not one of http, http2, https, grpc, grpc-web, h2c, ws, wss; an undeclared TCP port not in 80, 443, 3000, 8000, 8008, 8080, 8081, 8443, 8888, 9090, 9093. (`qualify.sh`)
+- Tolerated dry-run errors: "no matches for kind K" when K is defined by a CRD in the same render (rendered with `--include-crds`), noted in the record; every other error fails the step. (`qualify.sh`)
+- Gate-bias gap: the larger of the two share ratios; a zero share against a non-zero share exceeds; charts whose render failed are left out of both counts. (`select.sh`)
+- "Fewer than 40 of 300 qualify": fewer than 40 qualified among the recorded candidates. A candidate without a record before the 65th qualified one makes the selection incomplete (exit 4), not infeasible. With 40 to 49 qualified the list is all of them, with no reserves. (`select.sh`)
+- Install deadline: max(600 s, 3 x the slowest qualification install of any chart in the list or the reserves), written into every entry. (`select.sh`)
+- Frame: the top 300 Helm packages by stars, ties in Artifact Hub's order, then repository, then package; deprecated packages are skipped; exclusions are an ordered first-match data file, CRD-only by the `-crds` or `-crd` suffix or the `crds` keyword; "at most 2 per publisher" skips later charts of a publisher without using up places. Publisher: the lower-cased GitHub owner of the first source link on github.com, else the Artifact Hub repository name. `frame fetch`, `frame build` and `frame charts` write the stored API responses, candidates.json and candidates-charts.json. (`frame/build.go`, `frame/exclusions.json`)
+- Chart id: the package name, or `<repository>-<name>` when two candidates share a name. (`frame/build.go`, `select.sh`)
+- Fix entries: arrays in `hack/compat-exp/fixes/*.json` with `id`, `fixOf`, `cause`, `chart`, `version`, `repo`, `values` or `patch`, `cellWorlds` and `ignore`; chart, version and repo equal the base chart's; `values` holds only `--set`, `--set-string` and `--set-json` pairs. A fix installs under its base chart's release name, so the keys line up. (`guard.sh`, `hack/compat-pilot/render-args.sh`)
+- Patch form: `patch -p1 -F0` on the `helm pull --untar` tree, then `helm lint`; at most 40 changed lines, counted hunk by hunk; the patch sha256 is recorded. (`hack/compat-pilot/observe.sh`)
+- Docker Hub mirror: mirror.gcr.io first, registry-1.docker.io as fallback, recorded in the world file; qualify.sh refuses a W0 world without it. (`hack/compat-pilot/world.sh`, `qualify.sh`)
+- capacityPending: PodScheduled False, reason Unschedulable, a message naming "Insufficient cpu" or "Insufficient memory". (`hack/compat-pilot/observe.sh`)
+- E1 and E2: `apiserver:` keys, for each Service port a webhook or APIService of the release names, probed over https through the API server's service proxy and reachable on any HTTP response, plus APIService Available; `late:` keys, from a second workload snapshot at install + `MMC_LATE` (120 s) or after the probes if later. (`hack/compat-pilot/observe.sh`, `RECORD.md`)
+- Helm test pods: a second capture after `helm test` records the pods it created in `testPodMesh`, with `testPodMeshStatus`. (`hack/compat-pilot/observe.sh`, `RECORD.md`)
+- C-optout, mechanised: only for the key `helm:test`. In both runs and every record of the chart and world, `testPodMeshStatus` is `listed`, there is at least one helm test hook pod, all helm test hook pods carry the world's opt-out (`sidecar.istio.io/inject=false` in W1, `istio.io/dataplane-mode=none` in W3) and none is the instrument's client, and the ledger row's callers are exactly those pods. (`crossrun/check.go`, INTERPRETATIONS 9)
+- Replacement rule: a chart of the sample is replaced if and only if its W0 is not 3 of 3 in a run and again in a separately dispatched rerun of that chart (mode observe, `chart_ids` that one chart, after the run ended); otherwise the rerun's records stand in for the run's. Replacement is mandatory, reserves are taken in list order, and a taken reserve is under the same rule; rule 1's 12 h gap holds per chart on the observations used. W0 is 3 of 3 when 3 W0 runs are used and `oracleInstall` is ok with 3 of 3 installs. (`replacements.json`, `crossrun/sample.go`, `analyze.sh`, INTERPRETATIONS 22)
+- The first qualify run counts: the qualification run named by the chart list must be the first completed qualify run after the tag commit; an earlier one is void only when `void-runs.json` lists it with a reason and its own conclusion is not success. (`analyze.sh`)
+- The 12 h gap: run 1 ends at the latest job completion of any attempt, run 2 starts at the earliest job start of any attempt. A run 2 that starts less than 12 h after run 1 ended is an error: no result, no region, no futility verdict. (`analyze.sh`, `crossrun/analyze.go`)
+- Run identity: every run must be a completed `workflow_dispatch` run of `.github/workflows/compat-exp.yml` (the REST run object's `path` and `workflow_id`) on the tag commit or a descendant with frozen files equal to the tag's; its `run-name`, returned as `display_title`, and the guard job's artifact `run-metadata-<run id>-<run attempt>` must agree with the run's role on mode and Istio version; the chart list must reproduce byte for byte from the qualification run's records. Only analyze.sh produces a result of the experiment. (`analyze.sh`, `guard.sh`, `.github/workflows/compat-exp.yml`, INTERPRETATIONS 21, 23)
+- Recheck version: the guard accepts any x.y.z in mode recheck; analyze.sh accepts only the second `istio` option of the tag's workflow, the line marked FREEZE EDIT. (`guard.sh`, `analyze.sh`)
+- A reviewer verdict is required for every counted row (`agree` or `disagree-type`; `disagree-other` leaves the cell uncounted), every c-optout or world-universal exclusion row (`agree`) and every new key (`admit`; `merge` and `reject` do not admit). Mechanical exclusions need none. (`ledger/ledger.go`)
+- Static checks: eight check ids, rules in causes.json (`staticCheckRule`, `staticCheckWorlds`), run on `helm template` output rendered as observe.sh installs, without cluster capabilities, one render for W1 and W3, with the workflow's `HELM_VERSION`. A check that does not apply to a world is written not applicable, and a counted finding there keeps its key out of S. The 10% test is per world, over qualified charts "same" in every analysed run. (`static.sh`, `staticcheck/`, INTERPRETATIONS 12)
+- Cells: a key that is a finding, flaky, or undecided with every used world value differing from W0's, in a run; the mechanical reasons apply in rule 5's order. A cell differs in two runs when both reports say `differs`; equal values are not required. (INTERPRETATIONS 1, 3, 5)
+- World-universal: the classes are exactly `apiserver` (E1), `late` (E2), the key `helm:test` and `port`; a chart has the class when its world report holds such a key in either run, whatever the verdict. For a cause key the denominator is every qualified chart compared in that world. (INTERPRETATIONS 6, 7, 8)
+- Rule 3 with parts: a combined cell's rule 2 certificate is the combined fix entry's; each part runs alone, and when exactly one part returns the cell to W0's value its key gets the cell, otherwise (none or several) the first key in the list does. (`ledger/ledger.go`, `crossrun/analyze.go`, INTERPRETATIONS 10)
+- A cell failing rule 2 or rule 4 is `unexplained` or `unresolved` in the ledger, uncounted and pending. "If all counted" gives each open cell its ledger cause, or a distinct new key of type gap when it has none. (INTERPRETATIONS 15, 18)
+- What crossrun checks against the reports, and what it takes from the ledger on trust (helm lint, the patch limits, the merged-upstream check, the reviewer verdicts, and the recheck when no recheck report is given): INTERPRETATIONS 16.
+- Sample: every chart of the sample must be in both reports with W0, W1 and W3; a missing one is an error, never a smaller denominator. (INTERPRETATIONS 17)
+- The analysis is analyze.sh on the maintainer's machine, not a workflow job; the workflow runs `ledger check` before certify and recheck. crossrun's pilot test (work item 10) uses difftable reports of pilot runs 4 and 6 trimmed to few keys, with hand-built podMesh records and run times. (`analyze.sh`, `crossrun/pilot_test.go`)
+- Names the instrument fixes: workflow modes acceptance, qualify, observe, certify and recheck; artifacts `compat-exp-report-<run id>`, `exp-<run id>-<chart>-<world>` and `charts-exp-<run id>`; `CHARTS_FILE`, `MMC_SETTLE`, `MMC_LATE`, and `MMC_REGISTRY_MIRROR=1` for every job. (`.github/workflows/compat-exp.yml`, `hack/compat-pilot/observe.sh`)
+
+### Frozen beyond section 5's signed list
+
+Section 5 as signed named the frame tool, qualify.sh, observe.sh, world.sh, difftable, the workflow, causes.json, crossrun and the ledger. guard.sh freezes these as well:
+
+- `select.sh`
+- `static.sh`
+- `analyze.sh`
+- `acceptance-check.sh`
+- `acceptance-expected.json`
+- `guard.sh`
+- `classification-prompt.md`
+- `staticcheck/`
+- `frame/exclusions.json`, inside `frame/` and listed on its own
+- `candidates.json`
+- `candidates-charts.json`
+- `hack/compat-pilot/render-args.sh`
+- the whole `.github/workflows/` directory, not only compat-exp.yml: a workflow file added or changed after the tag, the repository's CI included, fails the freeze
+- `docs/compat-experiment.md`
+- `go.mod`
+- `go.sum`
+
+Data stays outside the freeze and is committed before analyze.sh reads it: `ledger.json`, `replacements.json`, `void-runs.json`, `charts-exp.json` (committed once), `fixes/`, `ignore/`, `patches/`.
+
+### Facts established after sign-off
+
+- valkey, one of the ten pilot charts, never installed in pilot 1: its render fails in every world, W0 included, so its "same" was vacuous. The acceptance run of work item 9 still lists it, and its match with pilot 1 proves nothing; acceptance-check.sh reports a chart whose W0 installs were not all ok as vacuous. (`acceptance-charts.json`, `acceptance-expected.json`, `acceptance-check.sh`)
+- A blind spot of the observations, found by the static check: argo-cd's NetworkPolicies do not admit port 15008, so its internal pod-to-pod traffic would break in ambient, and the instrument, which does not exercise traffic between a chart's own pods, reported "same". This undercounts findings, toward Drop; section 5's blind-spot table and the scope of a Drop in section 7 now say so. (causes.json, ambient-np `expectedBreadth`)
+- apiserver-caller: no Istio documentation anchor was found, as section 3 anticipated; causes.json has `anchor` null with a `noAnchorReason`.
+- bind-address: application-requirements, the page section 3 named, states no bind-address requirement; causes.json anchors the key on reference/config/analysis/ist0143, "LocalhostListener", which adds that a localhost listener fails the same way without Istio, so the key may give no W0 difference at all. It has no static check (`staticCheck` null, with a `noStaticCheckReason`), so it can never count in S.
+- job-lifecycle rests on a blog post, blog/2023/native-sidecars, "Sidecar woes"; no documentation page states the Job requirement.
+- uid-1337 applies to the sidecar world only: causes.json gives it `worlds` W1, because ambient's in-pod rules match a packet mark, not a UID.
+- startup-order is anchored on ops/common-problems/injection; reserved-port's W3 port list comes from ambient/architecture/traffic-redirection. Section 3's table now gives the anchors of causes.json.
+- Version pinning in the frame: the highest version without a pre-release part among the package's available versions; Artifact Hub's prerelease flag is ignored, and a package without such a version is skipped as `no-stable-version`. (`frame/build.go`)
+- The acceptance run is started by a push to the branch `compat-exp-acceptance`; every other mode is a manual dispatch after the instrument is on the default branch.
+- An additional adversarial review of the whole instrument takes place before the freeze tag (decided 2026-11-12).
+
+### Open before the freeze
+
+Differences between this file and the instrument that change what is counted or how a region is reached, not decided yet:
+
+- apiserver-caller without the new-key rule. The instrument: the key is in causes.json, so a ledger row may credit it with no new-key record (a new-key record for it is refused as already in causes.json), it ranks eighth in rule 3, and its frozen check `webhook-backend-in-mesh` can earn S. Section 3: with no anchor found it enters only by the new-key rule (an issue or code reference, certified fix, chart-independent reproduction, admitting reviewer) and ranks after the frozen list. Direction of the instrument's reading: toward Continue and region B.
+- bind-address's anchor. The instrument: IST0143 is its anchor, and it counts as a frozen key. The other reading: application-requirements, the page section 3 named, has no statement, so the key has no anchor and enters only by the new-key rule. Direction of the instrument's reading: toward Continue.
+- Cells found in one run and "same" in the other. The instrument: they are not-reproduced, out of N_max and P_max (INTERPRETATIONS 4). Section 7 read literally: they are differing cells neither credited nor excluded, so they count in N_max. Direction of the instrument's reading: a futility stop can fire sooner; a final region does not change, since such a cell can never count.
+- "After one rerun" in the undecided stop. The instrument: the share is taken over the runs given, with only the W0 reruns of the replacement rule applied; it has no rerun of undecided chart-worlds. The other reading: undecided chart-worlds are rerun once, by a separate dispatch, and the share is taken after that. Direction of the instrument's reading: the stop, and on its second firing Drop, comes more often.
+
 ## 1. Question and decision rule
 
 Question: in popular charts nobody picked, how many distinct causes beyond pilot 1's (ambient against a NetworkPolicy, docs/compat-pilot.md "Findings") make a chart that works without a mesh fail under Istio? Metrics, over counted findings:
 
 - N_new: distinct counted cause keys, `ambient-np` excluded.
 - P_new: publishers with a counted finding of a new key.
-- D: new keys of type defect; P_D: publishers with a counted defect finding.
-- S: new keys with a static check over `helm template` output, specified in causes.json at the freeze, or for a new key at its admission from its reproduction only, before it is scored on the sample, that flags every counted finding of its key and at most 10% of charts that were "same" in that world.
+- D: new keys with at least one counted finding of type defect; P_D: publishers with a counted defect finding of a new key.
+- S: new keys with a static check over `helm template` output, specified in causes.json at the freeze, that flags every counted finding of its key and at most 10% of charts that were "same" in that world. A key admitted after the freeze has no such check and never counts in S.
 
 The first matching row decides, so every point falls in exactly one.
 
@@ -50,16 +145,16 @@ The first matching row decides, so every point falls in exactly one.
 | C | N_new >= 3, P_new >= 3 | Leave: an atlas in its own Git-Hospital repository |
 | E | anything else: N_new <= 1, or P_new <= 1, or N_new or P_new = 2 with S <= 1 | Drop: MeshMedic stays an incident tool; findings go out as one-off packets under the queue rules; nothing new is built |
 
-Why. Pilot 1 gives N_new = 0 on 10 enriched charts (its cause is the excluded key), so the rate is anywhere from 0 to about 0.3 per chart (rule of three). Guess, Poisson: at 5 new causes per 50, the least supply that feeds a catalog and a queue, P(N_new >= 3) = 0.88 and P(N_new <= 1) = 0.04; at 1 per 50, 0.08 and 0.74. If half are defects (guess), P(D >= 2) is 0.71 and 0.09. N_new >= 4 would cut power at the useful rate to 0.73 before the D term, so the thresholds stay; P_D >= 2 keeps the product from being a queue to one publisher. Two causes from two publishers buy only analyze proposals, and only if both are statically detectable; S >= 2 keeps the table monotone, so more evidence never gives a weaker outcome. Under the defect definition of section 2, pilot 1's own cause would be a defect, because extraIngress is a generic key. So D measures 'the chart has no mesh-specific values key', not 'an owner would merge a fix', and D is likely to be close to N_new; the guess that half of the new causes are defects is probably low. P_D >= 2 is then the term that does the work.
+Why. Pilot 1 gives N_new = 0 on 10 enriched charts (its cause is the excluded key; valkey, one of the ten, never installed), so the rate is anywhere from 0 to about 0.3 per chart (rule of three). Guess, Poisson: at 5 new causes per 50, the least supply that feeds a catalog and a queue, P(N_new >= 3) = 0.88 and P(N_new <= 1) = 0.04; at 1 per 50, 0.08 and 0.74. If half are defects (guess), P(D >= 2) is 0.71 and 0.09. N_new >= 4 would cut power at the useful rate to 0.73 before the D term, so the thresholds stay; P_D >= 2 keeps the product from being a queue to one publisher. Two causes from two publishers buy only analyze proposals, and only if both are statically detectable. The table is not monotone in S: at N_new = 2, P_new = 2 and S = 2 (region B), one more counted finding that its key's static check does not flag lowers S to 1 and gives region E. Under the defect definition of section 2, pilot 1's own cause would be a defect, because extraIngress is a generic key. So D measures 'the chart has no mesh-specific values key', not 'an owner would merge a fix', and D is likely to be close to N_new; the guess that half of the new causes are defects is probably low. P_D >= 2 is then the term that does the work.
 
-`ambient-np` charts found again are reported as prevalence, never in N_new, P_new, D or S.
+`ambient-np` charts found again are reported as prevalence, never in N_new, P_new, D, P_D or S.
 
 ## 2. Counting
 
 Cell: a (chart, world, observation key) that `difftable` calls a finding (W0 3 of 3 agree, the mesh world differs 3 of 3, pull-failure runs left out). It counts for key k when:
 
 1. it differs in two workflow runs, the second started at least 12 h after the first ended, with W0 3 of 3 in both;
-2. a fix earns `difftable`'s certificate in two workflow runs, plus `helm lint`. A fix is `values`, or a `patch`: `helm pull --untar` of the pinned version plus a diff stored in `hack/compat-exp/patches/`, changing only what k's mechanism names (reviewer check; at most 40 lines). Certification runs with -worlds limited to the cell's worlds and an ignore list of the rule-5 cells of that chart, because difftable's certificate otherwise fails while any finding remains in any mesh world; this option is built and tested before the freeze (work item 6).
+2. a fix earns `difftable`'s certificate in two workflow runs, plus `helm lint`. A fix is `values`, or a `patch`: `helm pull --untar` of the pinned version plus a diff stored in `hack/compat-exp/patches/`, changing only what k's mechanism names (reviewer check; at most 40 lines). Certification runs with `-cell-worlds` limited to the cell's worlds (the other mesh world may show no difference the base chart lacks) and an ignore list of the rule-5 cells of that chart, because difftable's certificate otherwise fails while any finding remains in any mesh world; this option is built and tested before the freeze (work item 6).
 3. it is credited to one key only. A chart and world needing two keys' fixes gets a combined certificate, then each part runs alone; a cell goes to the key whose part alone returns it to W0's value, else to the first key in the list;
 4. it reproduces 3 of 3 on the recheck version (section 4), and no fix is merged on the chart's default branch;
 5. it is not excluded: pull failure, capacity-Pending, flaky, undecided, C-optout (every failing caller carries the chart's own mesh opt-out, as podinfo's test pods), or world-universal: a cause key or an observation class (E1, E2, helm:test, ports) that differs in a world for at least 90% of the qualified charts that have that class: a world property, not a chart property.
@@ -78,12 +173,12 @@ One fresh-context agent per classification, holding only the ledger evidence and
 |---|---|---|
 | ambient-np | ambient/usage/networkpolicy | policy drops HBONE on 15008 or probes from 169.254.7.127 |
 | protocol | protocol selection and application-requirements | declared or detected protocol is not what the port carries, server-first included |
-| bind-address | application-requirements | app listens where the proxy does not forward |
-| uid-1337 | application-requirements | app runs as the proxy's UID |
-| reserved-port | application-requirements | app uses a port Istio reserves |
-| startup-order | holdApplicationUntilProxyStarts | app needs network before its proxy |
-| job-lifecycle | native sidecars | proxy holds a Job open |
-| apiserver-caller | sought at the freeze; none means the key enters only by the rule below | kube-apiserver cannot reach a webhook or APIService backend under STRICT |
+| bind-address | reference/config/analysis/ist0143, "LocalhostListener" (application-requirements states no bind-address requirement) | app listens where the proxy does not forward |
+| uid-1337 | application-requirements | app runs as the proxy's UID (sidecar world only) |
+| reserved-port | application-requirements; ambient/architecture/traffic-redirection for W3 | app uses a port Istio reserves |
+| startup-order | ops/common-problems/injection (holdApplicationUntilProxyStarts) | app needs network before its proxy |
+| job-lifecycle | blog/2023/native-sidecars, "Sidecar woes" (a blog post; no documentation page states it) | proxy holds a Job open |
+| apiserver-caller | none found (sought on 2026-11-11); the key enters only by the rule below | kube-apiserver cannot reach a webhook or APIService backend under STRICT |
 | ambient-l7 | ambient/usage/l7-features | chart's L7 config has no waypoint |
 
 server-first and unnamed or misdeclared ports are one key, as ADR 0001 section 3 lists them as one seed entry.
@@ -104,9 +199,9 @@ This replaces pilot 2's pre-registered next step, operators driven through their
 
 ## 5. The instrument, frozen
 
-Frozen by SHA before qualification: frame tool, qualify.sh, observe.sh, world.sh, difftable, workflow, causes.json. Fix entries and patches are data added later, refused unless `fixOf` is in the frozen list. Nothing is built after the freeze; crossrun and the ledger are frozen with the rest and only read records.
+Frozen by SHA before qualification, the paths guard.sh compares with the tag: in `hack/compat-exp/` the frame tool (`frame/`, with `frame/exclusions.json`), qualify.sh, select.sh, static.sh, analyze.sh, acceptance-check.sh, acceptance-expected.json, guard.sh, causes.json, classification-prompt.md, `staticcheck/`, `ledger/`, `crossrun/`, candidates.json and candidates-charts.json; in `hack/compat-pilot/` observe.sh, render-args.sh, world.sh and `difftable/`; the whole `.github/workflows/` directory; this file; go.mod and go.sum. Fix entries, ignore lists and patches are data added later; a fix entry is refused unless its `fixOf` is in the frozen list. Nothing is built after the freeze; crossrun and the ledger are frozen with the rest and only read records.
 
-observe.sh today (`origin/main`) installs with `values[]` only (lines 76-77, 121) and records pod phase but not PodScheduled, so capacity-Pending shows only in Warning events, kept as evidence (179-181); it records no pod labels or annotations. world.sh has no mirror. Added before the freeze: `CHARTS_FILE` and the `patch` form (patch sha256 recorded); per pod, mesh opt-out labels and annotations and whether a proxy or ambient redirection is present; `capacityPending` (PodScheduled False, "Insufficient cpu" or "memory"), left out by difftable like pull failures; a docker.io mirror through mirror.gcr.io with fallback in every world's containerd, W0 included, recorded in the world file.
+observe.sh at sign-off (`origin/main`) installs with `values[]` only (lines 76-77, 121) and records pod phase but not PodScheduled, so capacity-Pending shows only in Warning events, kept as evidence (179-181); it records no pod labels or annotations. world.sh has no mirror. Added before the freeze: `CHARTS_FILE` and the `patch` form (patch sha256 recorded); per pod, mesh opt-out labels and annotations and whether a proxy or ambient redirection is present; `capacityPending` (PodScheduled False, "Insufficient cpu" or "memory"), left out by difftable like pull failures; a docker.io mirror through mirror.gcr.io with fallback in every world's containerd, W0 included, recorded in the world file.
 
 Blind spots, checked against observe.sh:
 
@@ -119,6 +214,7 @@ Blind spots, checked against observe.sh:
 | only the status of GET / | yes, final status after redirects (line 246) | out |
 | nothing after the 30 s settle | partly: tests and probes run later, workloads seen once (128-164) | E2 |
 | no Pod Security labels (85-90) | yes | out: istio-init adds NET_ADMIN to every W1 pod, a documented world property |
+| traffic between a chart's own pods (found after sign-off by the static check) | yes: the instrument's client calls the chart's Services, nothing exercises traffic between the chart's own pods; argo-cd's NetworkPolicies do not admit 15008, so its internal traffic would break in ambient, and it was "same" (causes.json, ambient-np `expectedBreadth`) | out: it undercounts findings, toward Drop |
 
 E1: a GET through the API server's service proxy to each Service port a release webhook or APIService points to (reachable or not), plus APIService Available; about 10 s per run (guess). kube-apiserver is a caller outside the mesh, so E1 may differ for every in-mesh webhook under STRICT; if it does, rule 5 excludes it as world-universal and the key apiserver-caller counts nothing. E2: a second workload snapshot at install + 120 s or after the probes, as new keys; catches late liveness failures; 0 to 90 s per run (guess).
 
@@ -139,12 +235,12 @@ Limits (docs.github.com/en/actions/reference/limits, read in draft 1): 256 matri
 ## 7. Stops
 
 - Fewer than 40 of 300 qualify: stop as infeasible; the ADR stays narrowed.
-- Over 15% of cells undecided after one rerun: fix the instrument once, freeze again, restart from qualification. A second time: Drop.
+- Over 15% of chart-worlds undecided after one rerun (the compared chart-worlds of the sample, W1 and W3 per chart; one is undecided when its verdict is `undecided` in any analysed run): fix the instrument once, freeze again, restart from qualification. A second time: Drop.
 - Futility, after run 1 and each certification batch: N_max = counted new keys + differing cells neither credited nor excluded (undecided included; rule 3 gives each cell at most one key); P_max likewise over publishers. If N_max <= 1 or P_max <= 1, only region E is reachable: stop, Drop. If A is unreachable, prevalence certificates are skipped.
 - Time box: decide 14 days after the freeze. No early Continue. The result is published whatever it says.
 - Until the region is decided, only the first cell per candidate key and publisher is certified; prevalence certificates come after the decision.
 
-A Drop covers this instrument (defaults-only installs, one namespace, in-mesh client, these observations) on this sample. It is not a claim that Istio incompatibilities are rare.
+A Drop covers this instrument (defaults-only installs, one namespace, in-mesh client, no traffic between a chart's own pods, these observations) on this sample. It is not a claim that Istio incompatibilities are rare.
 
 ## 8. Work list
 
@@ -155,16 +251,19 @@ Before the freeze, one builder session each, with tests:
 3. observe.sh: `CHARTS_FILE`, `patch` form; tests with stub `helm` and `kubectl`.
 4. observe.sh: per-pod mesh fields, `capacityPending`.
 5. observe.sh: E1, E2.
-6. difftable: drop capacity runs, `-json` output, `-worlds` limited to a cell's worlds and an ignore list of rule-5 cells (for certification).
+6. difftable: drop capacity runs, `-json` output, `-cell-worlds` limited to a cell's worlds and an ignore list of rule-5 cells (for certification).
 7. world.sh: mirror.
 8. qualify.sh and `compat-exp.yml`: qualify and observe modes, hash and `fixOf` checks, Istio input limited to the two pinned versions.
-9. Acceptance run: all ten pilot-1 charts plus the redis fix (redis-np-15008) as values and as a patch; redis W3 differs, both fixes certify, podinfo W1 is C-optout. It passes only if every chart's W1 and W3 verdict matches pilot 1 (docs/compat-pilot.md results table), and any E1 or E2 difference on a chart pilot 1 called "same" is settled under rule 5 before the freeze is tagged.
+9. Acceptance run, started by a push to the branch `compat-exp-acceptance`: all ten pilot-1 charts plus the redis fix (redis-np-15008) as values and as a patch; redis W3 differs, both fixes certify, podinfo W1 is C-optout. It passes only if every chart's W1 and W3 verdict matches pilot 1 (docs/compat-pilot.md results table), and any E1 or E2 difference on a chart pilot 1 called "same" is settled under rule 5 before the freeze is tagged. `hack/compat-exp/acceptance-check.sh` checks this on the run's report artifact. valkey never installed in pilot 1, so its match proves nothing; the check reports a chart whose W0 installs were not all ok as vacuous.
 10. crossrun (Go: two runs into cells, exclusions, credit, bounds), tested on pilot-1 records.
 11. Ledger with a schema check, tested on pilot-1 records.
+12. The links between the tools above: select.sh, guard.sh, static.sh, analyze.sh, acceptance-check.sh and `hack/compat-pilot/render-args.sh`.
 
-Then tag the freeze. After run 1 only data is added (fix entries, patches, ledger rows).
+Then, after an adversarial review of the whole instrument (decided 2026-11-12), tag the freeze. After run 1 only data is added (fix entries, patches, ledger rows).
 
 ## 9. Maintainer sign-off
+
+The first seven rows are the sign-off of version 3 on 2026-11-11. The last row covers the amendments of 2026-11-12.
 
 | choice | default | why |
 |---|---|---|
@@ -175,3 +274,4 @@ Then tag the freeze. After run 1 only data is added (fix entries, patches, ledge
 | Replace pilot 2's operator step | yes | it cannot be one frozen instrument and brings back a hand-picked sample |
 | Docker Hub mirror in every world | yes | registry refusals were the pilots' costliest false finding, and the mirror is identical everywhere |
 | D counts 'no mesh-specific values key', not upstream acceptance | accept, stated in section 1 | upstream acceptance cannot be observed inside a 14-day box |
+| Amendments of 2026-11-12 ("Changes after sign-off, before the freeze") | decided by the maintainer on 2026-11-12 | the freeze requires them, and the points under "Open before the freeze" decided first |
