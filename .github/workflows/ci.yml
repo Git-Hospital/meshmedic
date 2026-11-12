@@ -16,9 +16,19 @@ jobs:
           # tested by test-min-go below. This job keeps the name `test` because
           # the repository ruleset requires that exact check name.
           go-version: '1.26.x'
+      # gofmt runs here only, on the pinned current Go: its output can differ
+      # between Go versions, so one version decides. The assignment keeps
+      # gofmt's own exit status, so a file gofmt cannot parse fails the step too;
+      # `test -z "$(gofmt -l .)"` passes on one.
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
       - run: go build ./...
       - run: go vet ./...
-      - run: go test ./...
+      # The baseline store and the recorder are mutex-guarded and meant for
+      # concurrent use; -race is what notices when a change breaks that.
+      - run: go test -race ./...
       - run: go run ./cmd/meshmedic validate
       # The lock is the difference between accepted and merely committed:
       # an approved entry that was edited without re-approval must not reach
