@@ -36,9 +36,22 @@ func LoadUnprovable(dir string) (map[string]string, error) {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("%s: %w", unprovableFile, err)
 	}
+	// A declaration without a reason, or one that repeats an entry, would count
+	// as declared while saying nothing: a silently missing entry under another
+	// name (review of #36).
 	out := map[string]string{}
-	for _, u := range doc.Unprovable {
-		out[u.Entry] = strings.TrimSpace(u.Reason)
+	for i, u := range doc.Unprovable {
+		entry, reason := strings.TrimSpace(u.Entry), strings.TrimSpace(u.Reason)
+		switch {
+		case entry == "":
+			return nil, fmt.Errorf("%s: declaration %d has no entry", unprovableFile, i+1)
+		case reason == "":
+			return nil, fmt.Errorf("%s: %q is declared without a reason", unprovableFile, entry)
+		}
+		if _, dup := out[entry]; dup {
+			return nil, fmt.Errorf("%s: %q is declared twice", unprovableFile, entry)
+		}
+		out[entry] = reason
 	}
 	return out, nil
 }

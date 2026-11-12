@@ -26,6 +26,10 @@ func TestShippedCatalogIsFullyCovered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("declarations: %v", err)
 	}
+	// An emptied catalog or proof directory would leave nothing to miss.
+	if len(scenarios) == 0 || len(specs) == 0 {
+		t.Fatalf("read %d catalog entries and %d proofs; the repository ships with both", len(scenarios), len(specs))
+	}
 	if len(unprovable) == 0 {
 		t.Fatal("no declarations read from ../../proof/UNPROVABLE.yaml; the file ships with some, so the loader read the wrong place")
 	}
@@ -129,5 +133,18 @@ func TestLoadUnprovable(t *testing.T) {
 	write("unprovable: [")
 	if _, err := LoadUnprovable(dir); err == nil {
 		t.Fatal("a file that does not parse must be an error")
+	}
+
+	// Each of these counted as declared, and --list said "with a reason".
+	for name, doc := range map[string]string{
+		"blank reason":   "unprovable:\n  - entry: a\n    reason: \"  \"\n",
+		"no reason":      "unprovable:\n  - entry: a\n",
+		"no entry":       "unprovable:\n  - reason: cannot fire here\n",
+		"declared twice": "unprovable:\n  - entry: a\n    reason: one\n  - entry: a\n    reason: two\n",
+	} {
+		write(doc)
+		if got, err := LoadUnprovable(dir); err == nil {
+			t.Errorf("%s: got %q and no error", name, got)
+		}
 	}
 }
