@@ -1,6 +1,9 @@
 package kube
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"regexp"
 	"strings"
 )
@@ -65,7 +68,7 @@ func redactAll(v any) any {
 }
 
 // redactTree copies v and replaces, in every object shaped like a Kubernetes env entry (a string
-// name and a string value) with a secret-like name, the value, and in every other string the values
+// name and a value) with a secret-like name, the value, and in every other string the values
 // of secret-like name=value pairs. changed is asked, with a key for the value's place in the tree
 // and the plain value, whether to mark it changed. scope names the place: the object keys on the
 // way down and the names of named objects such as containers, never list indexes.
@@ -73,16 +76,27 @@ func redactTree(v any, scope string, changed func(key, value string) bool) any {
 	switch t := v.(type) {
 	case map[string]any:
 		name, okName := t["name"].(string)
-		value, okValue := t["value"].(string)
+		rawValue := t["value"]
 		inner := scope
 		if okName {
 			inner = scope + "/" + name
 		}
 		out := make(map[string]any, len(t))
 		for k, e := range t {
+			if str, ok := e.(string); ok && k == lastAppliedKey {
+				out[k] = redactLastApplied(str, inner+"."+k, changed)
+				continue
+			}
 			out[k] = redactTree(e, inner+"."+k, changed)
 		}
-		if okName && okValue && secretLike(name) {
+		if okName && rawValue != nil && secretLike(name) {
+			// Any non-nil value is hidden, whatever its type: the API server only accepts strings,
+			// but a hand-written annotation is never validated. A non-string is compared by its JSON.
+			value, isString := rawValue.(string)
+			if !isString {
+				b, _ := json.Marshal(rawValue)
+				value = string(b)
+			}
 			out["value"] = redacted
 			if changed(scope+"\x00env\x00"+name, value) {
 				out["value"] = redactedChanged
@@ -107,4 +121,40 @@ func redactTree(v any, scope string, changed func(key, value string) bool) any {
 	default:
 		return v
 	}
+}
+
+// lastAppliedKey is the annotation kubectl apply uses to keep the whole applied spec, env entries
+// included, as a JSON string (#33).
+const lastAppliedKey = "kubectl.kubernetes.io/last-applied-configuration"
+
+// redactLastApplied redacts the JSON held in the last-applied-configuration annotation like any
+// object, and serialises it again. The value is not parsed anywhere else, so env entries inside it
+// would otherwise pass as plain text. A value that does not parse as one JSON document is replaced
+// whole: nothing can be said about what it holds, so it fails closed. In a diff the replacement is
+// marked changed when the value differs from the older one, as for an env value.
+func redactLastApplied(value, scope string, changed func(key, value string) bool) string {
+	failed := func() string {
+		if changed(scope+"\x00annotation", value) {
+			return redactedChanged
+		}
+		return redacted
+	}
+	dec := json.NewDecoder(strings.NewReader(value))
+	dec.UseNumber() // keep large numbers as written
+	var parsed any
+	if err := dec.Decode(&parsed); err != nil {
+		return failed()
+	}
+	// Exactly one document: nothing but whitespace may follow. Decoder.More is no test for this,
+	// since it reports false before a stray closing bracket.
+	if _, err := dec.Token(); err != io.EOF {
+		return failed()
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(redactTree(parsed, scope, changed)); err != nil {
+		return failed()
+	}
+	return strings.TrimSuffix(buf.String(), "\n")
 }
