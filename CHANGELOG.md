@@ -7,6 +7,13 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Released binaries are now built with Go 1.26.** The release and archive
+  workflows took their toolchain from `go.mod`, so binaries were compiled with
+  a 1.21 standard library that no longer receives security fixes. They now use
+  the current stable Go, as the image already did. `go.mod` still says
+  `go 1.21`, so `go install` keeps working on older toolchains, and a new CI
+  job builds and tests on 1.21 to keep that true.
+
 - **Env values inside the `last-applied-configuration` annotation are now
   redacted.** A catalog path that reads `metadata` or `metadata.annotations` of
   a Deployment made with `kubectl apply` no longer copies the applied spec's
