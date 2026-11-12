@@ -203,6 +203,12 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   immediately loses the race against its own predecessor and turns a
   one-second gap into thirty, which is long enough for a detector to report
   blind and a harness to blame an entry.
+- **`meshmedic chart check`** reads a Helm chart (or rendered manifests) and
+  lists what is likely to break under Istio 1.31, in sidecar and ambient mode,
+  before any cluster exists. Eight rules (MM-CHART-001 to 008), each with the
+  field, the Istio documentation quote, a fix hint and how to confirm it; text
+  or JSON; exit 0, 1 or 2. Findings are candidates read from manifests, not
+  observed failures. See docs/chart-check.md.
 
 ### Fixed
 
