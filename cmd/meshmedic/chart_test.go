@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const chartFixtures = "../../pkg/chartcheck/testdata"
@@ -39,10 +40,18 @@ func TestChartCheckExitCodes(t *testing.T) {
 		{"bad format", []string{"--manifests", def, "--format", "yaml"}, "", 2, "--format"},
 		{"missing file", []string{"--manifests", filepath.Join(t.TempDir(), "none.yaml")}, "", 2, "reading the manifests"},
 		{"empty stdin is not clean", []string{"--manifests", "-"}, "", 2, "nothing was checked"},
-		{"invalid yaml", []string{"--manifests", "-"}, "kind: [unclosed\n", 2, "not valid"},
+		{"nothing readable", []string{"--manifests", "-"}, "kind: [unclosed\n", 2, "incomplete"},
+		{"candidates and an unreadable document", []string{"--manifests", filepath.Join(chartFixtures, "np-unreadable.yaml"), "--mesh", "ambient"}, "", 1, ""},
+		{"no candidates and an unreadable document", []string{"--manifests", filepath.Join(chartFixtures, "np-unreadable-clean.yaml")}, "", 2, "incomplete"},
+		{"duplicate key is read", []string{"--manifests", filepath.Join(chartFixtures, "np-dupkey.yaml")}, "", 1, ""},
 		{"chart and manifests", []string{"./chart", "--manifests", def}, "", 2, "not both"},
 		{"helm flags with manifests", []string{"--manifests", def, "--set", "a=b"}, "", 2, "no effect"},
 		{"two charts", []string{"a", "b"}, "", 2, "one chart"},
+		{"chart that looks like a flag", []string{"--", "-h"}, "", 2, "start with"},
+		{"release name that looks like a flag", []string{"./chart", "--release-name=--debug"}, "", 2, "release name"},
+		{"release name that carries a flag", []string{"./chart", "--release-name=--post-renderer=X"}, "", 2, "release name"},
+		{"bad namespace", []string{"./chart", "--namespace", "Bad_NS"}, "", 2, "namespace"},
+		{"bad kube version", []string{"./chart", "--kube-version", "--debug"}, "", 2, "kube-version"},
 		{"unknown flag", []string{"--nope"}, "", 2, "flag provided but not defined"},
 	}
 	for _, tc := range tests {
@@ -130,7 +139,7 @@ func TestChartCheckRendersWithHelm(t *testing.T) {
 		t.Errorf("output: %s", out)
 	}
 	got, _ := os.ReadFile(argsFile)
-	want := "template\nr1\n./chart\n--namespace\nns1\n--kube-version\n1.33.0\n--values\na.yaml\n--values\nb.yaml\n--set\nx=1; touch pwned\n--include-crds\n"
+	want := "template\n--namespace=ns1\n--kube-version=1.33.0\n--values=a.yaml\n--values=b.yaml\n--set=x=1; touch pwned\n--include-crds\n--\nr1\n./chart\n"
 	if string(got) != want {
 		t.Errorf("helm argv:\n%q\nwant\n%q", got, want)
 	}
@@ -158,4 +167,44 @@ func mustRead(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// A refused argument never reaches helm: a fake helm that records any call
+// finds nothing recorded.
+func TestChartCheckRefusalsNeverStartHelm(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "called")
+	if err := os.WriteFile(filepath.Join(dir, "helm"), []byte("#!/bin/sh\ntouch \""+marker+"\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, args := range [][]string{
+		{"--", "-h"},
+		{"./chart", "--release-name=--debug"},
+		{"./chart", "--release-name=--post-renderer=X"},
+		{"./chart", "--namespace=-n"},
+	} {
+		if code, _, _ := runChartCheck(t, "", args...); code != 2 {
+			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("helm was started for a refused argument")
+	}
+}
+
+func TestChartCheckHelmTimeout(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "helm"), []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	start := time.Now()
+	code, _, stderr := runChartCheck(t, "", "./chart", "--timeout", "300ms")
+	if code != 2 || !strings.Contains(stderr, "timed out") || !strings.Contains(stderr, "--timeout") {
+		t.Errorf("exit %d, stderr %q", code, stderr)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Error("the timeout did not stop helm")
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Git-Hospital/meshmedic/pkg/chartcheck"
 )
@@ -33,10 +34,13 @@ flags:
   --namespace NS                release namespace (default "default")
   --release-name NAME           helm release name (default "release")
   --kube-version VERSION        Kubernetes version helm renders for
+  --skip-schema-validation      pass --skip-schema-validation to helm (a chart whose schema rejects its defaults)
+  --timeout DURATION            how long helm template may run (default 5m)
   --native-sidecars=BOOL        assume sidecar proxies are native sidecars (default true;
                                 use false for clusters older than Kubernetes 1.33)
 
-exit codes: 0 no candidates (notes do not count), 1 at least one candidate, 2 usage or render error`
+exit codes: 0 no candidates (notes do not count), 1 at least one candidate,
+            2 usage or render error, or no candidates but part of the input could not be read (incomplete)`
 
 func runChart(args []string) {
 	if len(args) == 0 || args[0] != "check" {
@@ -64,6 +68,8 @@ func chartCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	release := fs.String("release-name", "release", "helm release name")
 	kubeVersion := fs.String("kube-version", "", "Kubernetes version for helm template")
 	verbose := fs.Bool("verbose", false, "text format: add evidence, the checks that ran and the full limits")
+	skipSchema := fs.Bool("skip-schema-validation", false, "pass --skip-schema-validation to helm")
+	timeout := fs.Duration("timeout", 5*time.Minute, "how long helm template may run")
 	native := fs.Bool("native-sidecars", true, "assume sidecar proxies are native sidecars")
 	var values, sets, setStrings, setJSONs multiFlag
 	fs.Var(&values, "values", "helm values file (repeatable)")
@@ -83,6 +89,11 @@ func chartCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return chartExitError
 		}
 		if fs.NArg() == 0 {
+			break
+		}
+		// After "--" everything is a positional argument, flag-like or not.
+		if n := fs.NArg(); len(rest) > n && rest[len(rest)-n-1] == "--" {
+			positional = append(positional, fs.Args()...)
 			break
 		}
 		positional = append(positional, fs.Arg(0))
@@ -116,8 +127,8 @@ func chartCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case *manifests != "" && len(positional) == 1:
 		return fail("give a chart or --manifests, not both")
 	case *manifests != "":
-		if len(values)+len(sets)+len(setStrings)+len(setJSONs) > 0 || *release != "release" || *kubeVersion != "" {
-			return fail("--values, --set, --set-string, --set-json, --release-name and --kube-version configure helm and have no effect with --manifests")
+		if len(values)+len(sets)+len(setStrings)+len(setJSONs) > 0 || *release != "release" || *kubeVersion != "" || *skipSchema {
+			return fail("--values, --set, --set-string, --set-json, --release-name, --kube-version and --skip-schema-validation configure helm and have no effect with --manifests")
 		}
 		if *manifests == "-" {
 			input = "manifests (stdin)"
@@ -131,16 +142,26 @@ func chartCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	case len(positional) == 1:
 		input = "chart " + positional[0]
-		data, err = chartcheck.Render(context.Background(), chartcheck.RenderArgs{
-			Chart:       positional[0],
-			ValuesFiles: values,
-			Set:         sets,
-			SetString:   setStrings,
-			SetJSON:     setJSONs,
-			Namespace:   *namespace,
-			ReleaseName: *release,
-			KubeVersion: *kubeVersion,
-		})
+		ra := chartcheck.RenderArgs{
+			Chart:                positional[0],
+			ValuesFiles:          values,
+			Set:                  sets,
+			SetString:            setStrings,
+			SetJSON:              setJSONs,
+			Namespace:            *namespace,
+			ReleaseName:          *release,
+			KubeVersion:          *kubeVersion,
+			SkipSchemaValidation: *skipSchema,
+		}
+		if err := ra.Validate(); err != nil {
+			return fail("%v", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
+		data, err = chartcheck.Render(ctx, ra)
+		if errors.Is(err, chartcheck.ErrHelmTimeout) {
+			return fail("helm template timed out after %s; raise the limit with --timeout, or render the chart yourself and pass it with --manifests", *timeout)
+		}
 		if errors.Is(err, chartcheck.ErrHelmMissing) {
 			return fail("helm was not found in PATH, so the chart cannot be rendered. Install helm, or render the chart yourself and pass the output with --manifests FILE (or --manifests - to read stdin), for example: helm template my-release ./chart | meshmedic chart check --manifests -")
 		}
@@ -154,7 +175,7 @@ func chartCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	m, err := chartcheck.Parse(strings.NewReader(string(data)), *namespace)
 	if err != nil {
-		return fail("the input is not valid Kubernetes YAML: %v", err)
+		return fail("reading the rendered manifests: %v", err)
 	}
 	rep, err := chartcheck.Analyze(m, chartcheck.Options{Modes: modes, NativeSidecars: *native})
 	if err != nil {
@@ -172,6 +193,11 @@ func chartCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if rep.Candidates > 0 {
 		return chartExitCandidates
+	}
+	if rep.Incomplete {
+		// Some of the input could not be read: that is never a clean result.
+		fmt.Fprintf(stderr, "meshmedic chart check: incomplete: %d document(s) could not be read and no candidate was found in the rest\n", len(rep.Unread))
+		return chartExitError
 	}
 	return chartExitClean
 }

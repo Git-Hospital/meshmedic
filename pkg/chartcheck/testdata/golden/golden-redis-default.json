@@ -89,6 +89,9 @@
       ]
     }
   ],
+  "incomplete": false,
+  "unread": [],
+  "duplicateKeys": [],
   "candidates": 1,
   "notes": 0,
   "notice": "These are candidates found by reading manifests, not failures observed in a cluster. A clean result is not a guarantee that the chart works under Istio. A note is weaker than a candidate: it depends on something the manifests cannot show and does not set the exit code.",

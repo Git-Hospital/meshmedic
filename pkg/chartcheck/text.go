@@ -36,6 +36,19 @@ func WriteText(w io.Writer, r *Report, verbose bool) error {
 	}
 	b.WriteString(wrap("", "  ", fmt.Sprintf("read %s: %d objects, %d pod templates, namespace %s, modes %s; %s", r.Input, r.Examined.Objects, r.Examined.PodTemplates, r.Namespace, joinModes(r.Modes), native)))
 
+	if len(r.Unread) > 0 {
+		b.WriteString(wrap("", "  ", fmt.Sprintf("INCOMPLETE: %d %s could not be read, so the result covers only the rest and is not a clean result, whatever it finds.", len(r.Unread), plural(len(r.Unread), "document", "documents"))))
+		for _, u := range r.Unread {
+			b.WriteString(wrap("  - ", "    ", issueString(u)))
+		}
+	}
+	if len(r.DuplicateKeys) > 0 {
+		b.WriteString(wrap("", "  ", fmt.Sprintf("%d %s read with a duplicate mapping key:", len(r.DuplicateKeys), plural(len(r.DuplicateKeys), "document was", "documents were"))))
+		for _, u := range r.DuplicateKeys {
+			b.WriteString(wrap("  - ", "    ", issueString(u)))
+		}
+	}
+
 	for _, g := range groups {
 		f := g[0]
 		kind := "candidate"
@@ -90,6 +103,8 @@ func groupFindings(fs []Finding) [][]Finding {
 func summaryLine(r *Report, groups [][]Finding) string {
 	var b strings.Builder
 	switch {
+	case r.Candidates == 0 && r.Notes == 0 && r.Incomplete:
+		fmt.Fprintf(&b, "No candidates in the %d objects that could be read, but the read is incomplete (%d unread): this is not a clean result.\n", r.Examined.Objects, len(r.Unread))
 	case r.Candidates == 0 && r.Notes == 0:
 		fmt.Fprintf(&b, "No candidates in %d objects.\n", r.Examined.Objects)
 	default:
@@ -103,6 +118,9 @@ func summaryLine(r *Report, groups [][]Finding) string {
 			parts = append(parts, p)
 		}
 		b.WriteString(": " + strings.Join(parts, ", ") + "\n")
+		if r.Incomplete {
+			fmt.Fprintf(&b, "The read is incomplete (%d unread).\n", len(r.Unread))
+		}
 	}
 	return b.String()
 }
@@ -201,4 +219,16 @@ func resourceString(r Resource) string {
 		return r.Kind + " " + r.Name
 	}
 	return r.Kind + " " + r.Namespace + "/" + r.Name
+}
+
+func issueString(u DocIssue) string {
+	var where []string
+	where = append(where, fmt.Sprintf("line %d", u.Line))
+	if u.Source != "" {
+		where = append(where, u.Source)
+	}
+	if u.Kind != "" || u.Name != "" {
+		where = append(where, strings.Trim(u.Kind+"/"+u.Name, "/"))
+	}
+	return fmt.Sprintf("document %d (%s): %s", u.Index, strings.Join(where, ", "), u.Reason)
 }

@@ -85,10 +85,18 @@ type Report struct {
 	Examined       Examined   `json:"examined"`
 	Checks         []CheckRun `json:"checks"`
 	Findings       []Finding  `json:"findings"`
-	Candidates     int        `json:"candidates"`
-	Notes          int        `json:"notes"`
-	Notice         string     `json:"notice"`
-	BlindSpots     []string   `json:"blindSpots"`
+	// Incomplete is true when a document of the input could not be read: the
+	// result then covers only the rest, and is never a clean result.
+	Incomplete bool `json:"incomplete"`
+	// Unread lists the documents that could not be read, with the reason.
+	Unread []DocIssue `json:"unread"`
+	// DuplicateKeys lists documents read with a duplicate mapping key (the
+	// last value is used).
+	DuplicateKeys []DocIssue `json:"duplicateKeys"`
+	Candidates    int        `json:"candidates"`
+	Notes         int        `json:"notes"`
+	Notice        string     `json:"notice"`
+	BlindSpots    []string   `json:"blindSpots"`
 }
 
 // Finding levels.
@@ -114,7 +122,7 @@ var BlindSpots = []string{
 // Analyze applies the rules to m for each requested mode. It refuses an empty
 // manifest: a run that read nothing must not look like a clean one.
 func Analyze(m *Manifest, o Options) (*Report, error) {
-	if m.Objects() == 0 {
+	if m.Objects() == 0 && len(m.unread) == 0 {
 		return nil, fmt.Errorf("the input holds no Kubernetes objects, so nothing was checked")
 	}
 	modes := o.Modes
@@ -138,6 +146,9 @@ func Analyze(m *Manifest, o Options) (*Report, error) {
 		Examined:       Examined{Objects: m.Objects(), PodTemplates: m.PodTemplates()},
 		Checks:         []CheckRun{},
 		Findings:       []Finding{},
+		Incomplete:     len(m.unread) > 0,
+		Unread:         append([]DocIssue{}, m.unread...),
+		DuplicateKeys:  append([]DocIssue{}, m.dupKeys...),
 		Notice:         Notice,
 		BlindSpots:     BlindSpots,
 	}

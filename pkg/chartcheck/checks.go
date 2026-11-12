@@ -436,6 +436,10 @@ func checkUID(m *Manifest, o options) []finding {
 		podUID, podHas := num(mp(p.Spec["securityContext"])["runAsUser"])
 		for _, field := range []string{"initContainers", "containers"} {
 			for _, c := range p.containers(field) {
+				if c.isPlaceholder() {
+					// Replaced at injection; see isPlaceholder.
+					continue
+				}
 				uid, has := num(mp(c.Raw["securityContext"])["runAsUser"])
 				path := c.Path + ".securityContext.runAsUser"
 				if !has {
@@ -475,13 +479,19 @@ func checkReservedPort(m *Manifest, o options) []finding {
 			continue
 		}
 		hits := map[int][]Evidence{}
+		ph := p.placeholder()
 		for _, cp := range p.ports() {
+			if ph != "" && strings.HasPrefix(cp.Path, ph+".") {
+				continue
+			}
 			if cp.Protocol == "TCP" && res[cp.Number] {
 				hits[cp.Number] = append(hits[cp.Number], Evidence{Kind: p.Owner.Kind, Name: p.Owner.Name, Path: cp.Path, Value: strconv.Itoa(cp.Number)})
 			}
 		}
 		for _, svc := range svcs {
-			if !svc.selects(p) {
+			// A Service port that reaches a gateway's placeholder is served by
+			// the injected proxy itself (the gateway chart's status port 15021).
+			if !svc.selects(p) || ph != "" {
 				continue
 			}
 			for _, sp := range servicePorts(svc, p) {
@@ -533,7 +543,7 @@ func checkStartup(m *Manifest, o options) []finding {
 			continue
 		}
 		classic, why := classicSidecar(p, o)
-		if !classic {
+		if !classic || (p.placeholder() != "" && p.gatewayTemplate()) {
 			continue
 		}
 		inits := p.containers("initContainers")
@@ -563,7 +573,7 @@ func checkJob(m *Manifest, o options) []finding {
 			continue
 		}
 		classic, why := classicSidecar(p, o)
-		if !classic {
+		if !classic || (p.placeholder() != "" && p.gatewayTemplate()) {
 			continue
 		}
 		out = append(out, finding{Resource: p.Owner.resource(), Reason: "pod meant to end gets a classic sidecar that keeps running", Trigger: why, Evidence: []Evidence{why}})

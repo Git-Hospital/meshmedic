@@ -117,6 +117,19 @@ func TestChecks(t *testing.T) {
 		{"job-optout.yaml", Sidecar, native, "classic-sidecar-job", nil},
 		{"job-classic.yaml", Ambient, native, "classic-sidecar-job", nil},
 
+		// the gateway injection placeholder (container istio-proxy, image auto)
+		{"gateway-placeholder.yaml", Sidecar, native, "uid-1337", nil},
+		{"gateway-placeholder.yaml", Sidecar, native, "reserved-port", nil},
+		{"gateway-placeholder.yaml", Ambient, native, "reserved-port", nil},
+		{"gateway-placeholder.yaml", Sidecar, classic, "classic-sidecar-startup", nil},
+		{"gateway-placeholder.yaml", Sidecar, classic, "classic-sidecar-job", nil},
+		{"gateway-placeholder.yaml", Sidecar, native, "protocol-declared", nil},
+		{"gateway-real-image.yaml", Sidecar, native, "uid-1337", []string{"Deployment/gw: container istio-proxy runs as UID 1337"}},
+		{"gateway-real-image.yaml", Sidecar, native, "reserved-port", []string{
+			"Deployment/gw: port 15021 is used by Istio inside the pod",
+			"Deployment/gw: port 15090 is used by Istio inside the pod",
+		}},
+
 		// apiserver-caller
 		{"webhook-in-mesh.yaml", Sidecar, native, "webhook-backend-in-mesh", []string{"ValidatingWebhookConfiguration/op-validating: the API server calls op-webhook:443, whose pod Deployment/op is in the mesh"}},
 		{"webhook-in-mesh.yaml", Ambient, native, "webhook-backend-in-mesh", []string{"ValidatingWebhookConfiguration/op-validating: the API server calls op-webhook:443, whose pod Deployment/op is in the mesh"}},
@@ -180,6 +193,7 @@ func TestFixturesFlagOnlyTheirCheck(t *testing.T) {
 		"np-": "np-hbone-probe", "protocol-": "protocol-declared", "uid-": "uid-1337",
 		"reserved-": "reserved-port", "startup-": "classic-sidecar-startup", "job-": "classic-sidecar-job",
 		"webhook-": "webhook-backend-in-mesh", "l7-": "l7-without-waypoint",
+		"gateway-": "uid-1337 reserved-port",
 	}
 	files, _ := filepath.Glob("testdata/*.yaml")
 	if len(files) == 0 {
@@ -199,7 +213,7 @@ func TestFixturesFlagOnlyTheirCheck(t *testing.T) {
 		}
 		for _, mode := range []Mode{Sidecar, Ambient} {
 			for _, f := range analyzeFile(t, file, mode, true).Findings {
-				if f.Check != own {
+				if !strings.Contains(" "+own+" ", " "+f.Check+" ") {
 					t.Errorf("%s %s: check %s fires (%s), want only %s", file, mode, f.Check, f.Reason, own)
 				}
 			}
@@ -366,12 +380,6 @@ func TestEmptyInputIsNotClean(t *testing.T) {
 	}
 }
 
-func TestBadYAML(t *testing.T) {
-	if _, err := Parse(strings.NewReader("kind: [unclosed\n"), "demo"); err == nil {
-		t.Error("invalid YAML was accepted")
-	}
-}
-
 // The JSON report keeps its shape: the golden files are the documented schema
 // at version 1, and a change to them is a decision, not an accident.
 func TestGolden(t *testing.T) {
@@ -532,5 +540,71 @@ func TestTextIsGroupedAndShort(t *testing.T) {
 	}
 	if lines := strings.Count(s, "\n"); lines > 40 {
 		t.Errorf("default report is %d lines", lines)
+	}
+}
+
+func analyzeRaw(t *testing.T, file string) *Report {
+	t.Helper()
+	f, err := os.Open(filepath.Join("testdata", file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	m, err := Parse(f, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Analyze(m, Options{Modes: []Mode{Ambient}, NativeSidecars: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rep
+}
+
+// A duplicate mapping key does not stop the run: helm and the API server read
+// the last value, and so does the check. It is said, not hidden.
+func TestDuplicateKeyIsReadLeniently(t *testing.T) {
+	rep := analyzeRaw(t, "np-dupkey.yaml")
+	if rep.Candidates != 1 || rep.Incomplete || len(rep.Unread) != 0 {
+		t.Fatalf("candidates %d, incomplete %v, unread %+v", rep.Candidates, rep.Incomplete, rep.Unread)
+	}
+	if len(rep.DuplicateKeys) != 1 || rep.DuplicateKeys[0].Kind != "StatefulSet" || !strings.Contains(rep.DuplicateKeys[0].Reason, `"replicas"`) || !strings.Contains(rep.DuplicateKeys[0].Reason, "again at line 28)") {
+		t.Errorf("duplicate keys: %+v", rep.DuplicateKeys)
+	}
+}
+
+// A document that cannot be read is listed, the rest is still analysed, and
+// the report is incomplete: with candidates it says so, without candidates it
+// is not clean.
+func TestUnreadableDocumentIsReported(t *testing.T) {
+	rep := analyzeRaw(t, "np-unreadable.yaml")
+	if rep.Candidates != 1 || !rep.Incomplete || len(rep.Unread) != 1 {
+		t.Fatalf("candidates %d, incomplete %v, unread %+v", rep.Candidates, rep.Incomplete, rep.Unread)
+	}
+	u := rep.Unread[0]
+	if u.Source != "demo/templates/broken.yaml" || u.Kind != "Deployment" || u.Name != "broken" || u.Line == 0 || u.Index == 0 || u.Reason == "" {
+		t.Errorf("unread: %+v", u)
+	}
+	clean := analyzeRaw(t, "np-unreadable-clean.yaml")
+	if clean.Candidates != 0 || !clean.Incomplete || len(clean.Unread) != 1 {
+		t.Errorf("clean+unread: candidates %d, incomplete %v", clean.Candidates, clean.Incomplete)
+	}
+	var x bytes.Buffer
+	if err := WriteText(&x, clean, false); err != nil {
+		t.Fatal(err)
+	}
+	if s := x.String(); !strings.Contains(s, "incomplete") || !strings.Contains(s, "not a clean result") || strings.Contains(s, "No candidates in 2 objects.") {
+		t.Errorf("the text of an incomplete read must say so and not say clean:\n%s", s)
+	}
+}
+
+func TestOnlyUnreadableIsAReportNotAnError(t *testing.T) {
+	m, err := Parse(strings.NewReader("kind: Deployment\nspec: [unclosed\n"), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Analyze(m, Options{})
+	if err != nil || !rep.Incomplete || rep.Candidates != 0 {
+		t.Errorf("rep %+v err %v", rep, err)
 	}
 }

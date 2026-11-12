@@ -1,11 +1,10 @@
 package chartcheck
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -51,12 +50,28 @@ func (p *podTemplate) path(rest string) string {
 	return p.Path + "." + rest
 }
 
+// DocIssue names a document of the input that could not be read, or that was
+// read with a leniency, and says why. Source, Kind and Name are recovered from
+// the text when it has them.
+type DocIssue struct {
+	// Index counts the documents with content, from 1.
+	Index int `json:"index"`
+	// Line is the line of the input where the document starts.
+	Line   int    `json:"line"`
+	Source string `json:"source,omitempty"`
+	Kind   string `json:"kind,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Reason string `json:"reason"`
+}
+
 // Manifest is a rendered chart: the objects of a multi-document YAML stream
 // and the pod templates found inside them.
 type Manifest struct {
 	namespace string // the release namespace, for objects that do not name one
 	objects   []*object
 	pods      []*podTemplate
+	unread    []DocIssue
+	dupKeys   []DocIssue
 }
 
 // Objects returns how many Kubernetes objects the manifest holds.
@@ -66,27 +81,52 @@ func (m *Manifest) Objects() int { return len(m.objects) }
 // DaemonSets, ReplicaSets, Jobs, CronJobs and bare Pods) the manifest holds.
 func (m *Manifest) PodTemplates() int { return len(m.pods) }
 
+// Unread returns the documents that could not be read.
+func (m *Manifest) Unread() []DocIssue { return m.unread }
+
 // Parse reads the multi-document YAML that helm template writes. Empty
 // documents and documents without a kind are skipped. namespace is used for
 // objects that name none, as the release namespace would be.
+//
+// A document that cannot be read does not stop the others: it is kept in
+// Unread with the reason, and the caller must treat the result as incomplete.
+// A duplicate mapping key is not a failure: helm and the API server accept it
+// and use the last value, and so does Parse, which records it in the report.
+// The error is for a failure to read r.
 func Parse(r io.Reader, namespace string) (*Manifest, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}
 	m := &Manifest{namespace: namespace}
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	for i := 0; ; i++ {
-		var doc map[string]any
-		err := dec.Decode(&doc)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("document %d: %w", i, err)
-		}
-		if doc == nil {
+	index := 0
+	for _, ch := range splitDocuments(string(data)) {
+		if !hasContent(ch.text) {
 			continue
+		}
+		index++
+		issue := DocIssue{Index: index, Line: ch.line}
+		issue.Source, issue.Kind, issue.Name = recoverIdentity(ch.text)
+		var node yaml.Node
+		if err := yaml.Unmarshal([]byte(ch.text), &node); err != nil {
+			issue.Reason = absoluteLines(strings.TrimPrefix(err.Error(), "yaml: "), ch.line)
+			m.unread = append(m.unread, issue)
+			continue
+		}
+		var dups []string
+		doc, ok := nodeToAny(&node, &dups, ch.line-1).(map[string]any)
+		if !ok {
+			issue.Reason = "the document is not a mapping"
+			m.unread = append(m.unread, issue)
+			continue
+		}
+		if len(dups) > 0 {
+			d := issue
+			d.Reason = dups[0] + "; the last value is used, as helm and the API server do"
+			if len(dups) > 1 {
+				d.Reason += fmt.Sprintf(" (%d duplicate keys in all)", len(dups))
+			}
+			m.dupKeys = append(m.dupKeys, d)
 		}
 		kind := str(doc["kind"])
 		if kind == "" {
@@ -103,6 +143,146 @@ func Parse(r io.Reader, namespace string) (*Manifest, error) {
 		m.add(doc)
 	}
 	return m, nil
+}
+
+type docChunk struct {
+	line int // 1-based line of the input where the chunk starts
+	text string
+}
+
+// splitDocuments cuts the stream at lines that are a document separator
+// ("---" alone, or followed by a space). It is a line split, not a YAML
+// parser: yaml.v3 does the parsing of each piece, so one bad piece cannot
+// take the others with it.
+func splitDocuments(data string) []docChunk {
+	var out []docChunk
+	var cur []string
+	start := 1
+	flush := func() {
+		out = append(out, docChunk{line: start, text: strings.Join(cur, "\n") + "\n"})
+		cur = nil
+	}
+	for i, line := range strings.Split(data, "\n") {
+		l := strings.TrimRight(line, "\r")
+		if l == "---" || strings.HasPrefix(l, "--- ") {
+			flush()
+			start = i + 2
+			if l != "---" {
+				cur = append(cur, strings.TrimPrefix(l, "--- "))
+				start = i + 1
+			}
+			continue
+		}
+		cur = append(cur, l)
+	}
+	flush()
+	return out
+}
+
+func hasContent(text string) bool {
+	for _, l := range strings.Split(text, "\n") {
+		l = strings.TrimSpace(l)
+		if l != "" && !strings.HasPrefix(l, "#") {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	sourceRE = regexp.MustCompile(`(?m)^# Source: (\S+)`)
+	kindRE   = regexp.MustCompile(`(?m)^kind:\s*["']?([A-Za-z0-9]+)`)
+	nameRE   = regexp.MustCompile(`(?m)^  name:\s*["']?([A-Za-z0-9._-]+)`)
+	lineRE   = regexp.MustCompile(`line (\d+)`)
+)
+
+// recoverIdentity reads what it can from the text of a document that may not
+// parse: helm's "# Source:" comment, and the first top-level kind and
+// metadata name.
+func recoverIdentity(text string) (source, kind, name string) {
+	if g := sourceRE.FindStringSubmatch(text); g != nil {
+		source = g[1]
+	}
+	if g := kindRE.FindStringSubmatch(text); g != nil {
+		kind = g[1]
+	}
+	if g := nameRE.FindStringSubmatch(text); g != nil {
+		name = g[1]
+	}
+	return
+}
+
+// absoluteLines rewrites the line numbers of a yaml.v3 message, which count
+// from the start of the piece, to count from the start of the input.
+func absoluteLines(msg string, start int) string {
+	return lineRE.ReplaceAllStringFunc(msg, func(s string) string {
+		n, _ := strconv.Atoi(strings.TrimPrefix(s, "line "))
+		return fmt.Sprintf("line %d", n+start-1)
+	})
+}
+
+// nodeToAny turns a parsed node into the plain maps, slices and scalars the
+// checks read. yaml.v3 refuses to decode a mapping with a duplicate key into a
+// map; this walk does not, and the later key wins. Each duplicate is appended
+// to dups, with line numbers shifted by off.
+func nodeToAny(n *yaml.Node, dups *[]string, off int) any {
+	switch n.Kind {
+	case yaml.DocumentNode:
+		if len(n.Content) == 0 {
+			return nil
+		}
+		return nodeToAny(n.Content[0], dups, off)
+	case yaml.AliasNode:
+		return nodeToAny(n.Alias, dups, off)
+	case yaml.SequenceNode:
+		out := make([]any, 0, len(n.Content))
+		for _, c := range n.Content {
+			out = append(out, nodeToAny(c, dups, off))
+		}
+		return out
+	case yaml.MappingNode:
+		out := map[string]any{}
+		seen := map[string]int{}
+		var merges []map[string]any
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			if k.Tag == "!!merge" {
+				switch vv := nodeToAny(v, dups, off).(type) {
+				case map[string]any:
+					merges = append(merges, vv)
+				case []any:
+					for _, e := range vv {
+						if em, ok := e.(map[string]any); ok {
+							merges = append(merges, em)
+						}
+					}
+				}
+				continue
+			}
+			key := k.Value
+			if first, dup := seen[key]; dup {
+				*dups = append(*dups, fmt.Sprintf("mapping key %q already defined at line %d (again at line %d)", key, first+off, k.Line+off))
+			} else {
+				seen[key] = k.Line
+			}
+			out[key] = nodeToAny(v, dups, off)
+		}
+		// Merged keys are defaults: the document's own keys win.
+		for _, mm := range merges {
+			for k, v := range mm {
+				if _, set := seen[k]; !set {
+					out[k] = v
+				}
+			}
+		}
+		return out
+	default:
+		var v any
+		if err := n.Decode(&v); err != nil {
+			return n.Value
+		}
+		return v
+	}
 }
 
 func (m *Manifest) add(doc map[string]any) {
@@ -418,4 +598,42 @@ func protoOr(v any) string {
 		return s
 	}
 	return "TCP"
+}
+
+// The gateway injection convention, from Istio's gateway installation page: a
+// gateway Deployment lists a container named istio-proxy whose image is the
+// literal "auto"; the injector replaces it with the proxy at pod creation,
+// usually with the pod annotation inject.istio.io/templates: gateway and the
+// label sidecar.istio.io/inject: "true". Only a container with both that name
+// and that image is the placeholder; one merely named istio-proxy with a real
+// image runs what it says.
+const (
+	placeholderName  = "istio-proxy"
+	placeholderImage = "auto"
+)
+
+func (c container) isPlaceholder() bool {
+	return c.Name == placeholderName && str(c.Raw["image"]) == placeholderImage
+}
+
+// placeholder returns the path of the pod's injection placeholder container,
+// or "" when it has none.
+func (p *podTemplate) placeholder() string {
+	for _, c := range p.containers("containers") {
+		if c.isPlaceholder() {
+			return c.Path
+		}
+	}
+	return ""
+}
+
+// gatewayTemplate says whether the pod asks for the gateway injection
+// template, which adds no separate sidecar: the placeholder is the proxy.
+func (p *podTemplate) gatewayTemplate() bool {
+	for _, t := range strings.Split(p.Annotations["inject.istio.io/templates"], ",") {
+		if strings.TrimSpace(t) == "gateway" {
+			return true
+		}
+	}
+	return false
 }
