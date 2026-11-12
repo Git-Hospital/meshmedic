@@ -678,12 +678,12 @@ func (r *Runner) freeze(d *detect.Detector, s Spec, learnUnready bool) *detect.D
 			if sc.Signal.BaselineMultiplier <= 0 {
 				continue
 			}
-			min := sc.Signal.BaselineMinSamples
-			if min <= 0 {
-				min = 20
+			minSamples := sc.Signal.BaselineMinSamples
+			if minSamples <= 0 {
+				minSamples = 20
 			}
 			key := targetKeyFor(sc.ID, s.Target)
-			if _, ready := d.Baseline.Baseline(key, min); !ready {
+			if _, ready := d.Baseline.Baseline(key, minSamples); !ready {
 				learn[key] = true
 			}
 		}
