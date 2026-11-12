@@ -1,0 +1,28 @@
+# 3306 left undeclared is assumed TCP by Istio; a port name prefix of tcp,
+# and an appProtocol that overrides an http name, also pass.
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+spec:
+  selector:
+    app: db
+  ports:
+    - name: mysql-classic
+      port: 3306
+    - name: http-mongo
+      appProtocol: tcp
+      port: 27017
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db
+spec:
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      containers:
+        - name: mysql

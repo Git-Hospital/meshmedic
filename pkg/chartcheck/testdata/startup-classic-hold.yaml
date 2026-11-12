@@ -1,0 +1,17 @@
+# Classic sidecar, no init containers, and the app is held until the proxy is up.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operator
+spec:
+  template:
+    metadata:
+      labels:
+        app: operator
+      annotations:
+        sidecar.istio.io/nativeSidecar: "false"
+        proxy.istio.io/config: |
+          holdApplicationUntilProxyStarts: true
+    spec:
+      containers:
+        - name: operator

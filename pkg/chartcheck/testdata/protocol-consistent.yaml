@@ -1,0 +1,41 @@
+# A headless and a normal Service declaring the same protocol, and an
+# undeclared port beside an http one (undeclared ports are not compared).
+apiVersion: v1
+kind: Service
+metadata:
+  name: cache
+spec:
+  selector:
+    app: cache
+  ports:
+    - name: tcp-redis
+      port: 6379
+    - name: http-metrics
+      port: 9121
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cache-headless
+spec:
+  clusterIP: None
+  selector:
+    app: cache
+  ports:
+    - name: tcp-redis
+      port: 6379
+    - name: metrics
+      port: 9121
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: cache
+spec:
+  template:
+    metadata:
+      labels:
+        app: cache
+    spec:
+      containers:
+        - name: redis

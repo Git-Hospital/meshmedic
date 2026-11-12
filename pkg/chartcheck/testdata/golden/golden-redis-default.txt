@@ -1,0 +1,60 @@
+meshmedic chart check (rules written against Istio 1.31)
+input: manifests:np-redis-default.yaml
+read 2 objects and 1 pod templates; namespace demo; modes: ambient
+
+MM-CHART-001  ambient  no ingress rule admits TCP 15008 (HBONE)
+  resource: StatefulSet demo/redis-replicas
+  field:    NetworkPolicy/redis spec.ingress = 6379/TCP from any source
+  effect:   Ambient carries traffic between meshed pods over TCP port 15008 (HBONE) and sends
+            kubelet probes from 169.254.7.127, and the node enforces this NetworkPolicy on both, so
+            a policy that admits neither drops pod-to-pod traffic or fails the pod's probes.
+  istio:    "However, NetworkPolicy is enforced on the host, outside the pod. This means that if you
+            have preexisting NetworkPolicy in place that, for example, will deny list inbound
+            traffic to an ambient pod on every port but 443, you will have to add an exception to
+            that NetworkPolicy for port 15008."
+            https://istio.io/latest/docs/ambient/usage/networkpolicy/ (Ambient traffic overlay and
+            Kubernetes NetworkPolicy)
+  also:     https://istio.io/latest/docs/ambient/usage/networkpolicy/ (Ambient, health probes, and
+            Kubernetes NetworkPolicy)
+  fix:      Add an ingress rule to the NetworkPolicy that admits TCP 15008 (ports: [{port: 15008,
+            protocol: TCP}]) and, for a probe finding, one that admits the probed port from ipBlock
+            169.254.7.127/32. If the chart has a value for extra ingress rules, put the rule there
+            instead of patching the template.
+  confirm:  Install the chart in a throwaway ambient cluster and watch the traffic between its own
+            pods (replication, clustering): pods that never become Ready or keep restarting, and
+            connection errors toward port 15008 in the ztunnel logs, confirm it. Install it without
+            the mesh as the comparison.
+  evidence:
+    - StatefulSet/redis-replicas spec.template.metadata.labels =
+      app.kubernetes.io/instance=redis,app.kubernetes.io/name=redis
+    - NetworkPolicy/redis spec.podSelector = selects this pod; isolates ingress
+    - NetworkPolicy/redis spec.ingress[0] = 6379/TCP from any source
+
+1 candidate found.
+These are candidates found by reading manifests, not failures observed in a cluster. A clean result
+is not a guarantee that the chart works under Istio.
+
+checks that ran:
+  MM-CHART-001  np-hbone-probe             ambient  1
+  MM-CHART-004  reserved-port              ambient  0
+  MM-CHART-007  webhook-backend-in-mesh    ambient  0
+  MM-CHART-008  l7-without-waypoint        ambient  0
+
+what these checks cannot see:
+  - Only the rendered manifests are read. A requirement that lives in a container image (for example
+    an image whose USER is 1337 with no runAsUser in the manifest), in application code (the address
+    it binds, the ports it really listens on) or in the cluster is not seen.
+  - The release namespace is assumed to be enrolled in the mesh, and a pod is in the mesh unless it
+    opts out itself. Namespace labels, PeerAuthentication, mesh-wide settings and policies from
+    outside the chart are not read; STRICT mutual TLS is assumed where a finding depends on it.
+  - NetworkPolicy: only policies the chart renders are read, not a default-deny policy from
+    elsewhere; the peers of an ingress rule are not evaluated for port 15008; the IPv6 probe address
+    is not checked; the behavior of a particular CNI (Calico, Cilium) is not modelled.
+  - Nothing is run. Traffic between the chart's own pods, client-first protocols broken by the mesh,
+    whether a webhook is ever called and its failure policy, and whether a container port is really
+    bound are not observed.
+  - A pod that leaves the mesh on purpose (for example a Helm test pod with sidecar injection
+    disabled) is not checked, although under STRICT mutual TLS a pod outside the mesh cannot call
+    one inside it.
+  - helm template cannot evaluate lookup or cluster capabilities, so a real install can render
+    something different.

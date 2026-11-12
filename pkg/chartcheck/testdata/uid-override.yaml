@@ -1,0 +1,17 @@
+# The container's own runAsUser wins over the pod's 1337.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      securityContext:
+        runAsUser: 1337
+      containers:
+        - name: app
+          securityContext:
+            runAsUser: 1001

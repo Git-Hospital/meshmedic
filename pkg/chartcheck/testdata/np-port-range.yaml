@@ -1,0 +1,33 @@
+# A port range that covers 15008 admits it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: range
+spec:
+  podSelector: {}
+  ingress:
+    - ports:
+        - port: 6379
+        - port: 15000
+          endPort: 15010
+          protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-replicas
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: redis
+        app.kubernetes.io/name: redis
+    spec:
+      containers:
+        - name: redis
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            tcpSocket:
+              port: redis

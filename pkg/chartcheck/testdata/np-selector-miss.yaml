@@ -1,0 +1,32 @@
+# The policy selects other pods, so it does not isolate this one.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: other
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: other
+  ingress:
+    - ports:
+        - port: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-replicas
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: redis
+        app.kubernetes.io/name: redis
+    spec:
+      containers:
+        - name: redis
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            tcpSocket:
+              port: redis
