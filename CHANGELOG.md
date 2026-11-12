@@ -249,15 +249,20 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A spec with a remediation block must run every inject, reset and revert
   command, and the generated apply, in one checkable shape, or nothing runs
   and the refusal names the command: `kubectl` with `--context=NAME` as the
-  very next token and no other `--context` anywhere; none of the flags that
-  change the server, kubeconfig, credentials or transport (`--server`,
-  `--kubeconfig`, `--cluster`, `--user`, `--token`, `--as`, `--proxy-url` and
-  the like, with `_` or `-`); no single-dash token other than `-f`, `-p`, `-l`
-  and `-n` standing alone (short flags can be grouped, as in `-Rs URL`, so
-  `-s` cannot be searched for); nothing
-  before the subcommand except `-n` or `--namespace` with a value; and a
-  subcommand from an allowlist (annotate, apply, create, delete, label,
-  patch, rollout, scale, set, wait). That refuses `sh -c`, `env`, plugins,
+  very next token and no other `--context` anywhere; nothing before the
+  subcommand except `-n` or `--namespace` with a value; one of these subcommand
+  forms: `apply`, `delete`, `patch`, `rollout status`, `scale`, `set env`,
+  `wait`; and after it only the long flags `--ignore-not-found`,
+  `--grace-period=`, `--type=`, `--timeout=`, `--for=` and `--replicas=`
+  (glued form only) and the short flags `-f`, `-p`, `-l` and `-n`, each alone
+  with its value in the next token. Both flag kinds are allowlists, because a
+  deny list passes whatever nobody listed (`-Rs URL`, `--kustomize` which runs
+  git, `--profile-output` which truncates a file, `--edit`). A `-f` value is
+  `-` or a relative path with no `..`, and no argument may be a URL, so
+  kubectl fetches nothing from a host the spec names. The connection and
+  credential flags (`--server`, `--kubeconfig`, `--user`, `--token`, `--as`
+  and the like, also with `_`) keep their own refusal message. Adding a flag
+  or subcommand form is a code change with a test. That refuses `sh -c`, `env`, plugins,
   `kubectl config` and a `--context` another flag could take as its value.
   Detection-only specs keep their looser best-effort check, which reads the
   last `--context` token and skips commands that are not kubectl.

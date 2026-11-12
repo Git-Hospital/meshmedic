@@ -411,7 +411,7 @@ func TestUncheckableAllowsOnlyTheShortFlagsSpecsUse(t *testing.T) {
 		{"-l with a selector", []string{"wait", "--for=delete", "pod", "-l", "app=x"}, true},
 		{"-n after the subcommand", []string{"delete", "pod", "x", "-n", "demo"}, true},
 		{"a bare dash", []string{"apply", "-f", "-"}, true},
-		{"a double dash terminator", []string{"delete", "--", "pod"}, true},
+		{"a double dash terminator", []string{"delete", "--", "pod"}, false},
 		{"a value with a trailing dash", []string{"set", "env", "deploy/x", "ERROR_CODE-"}, true},
 		{"-s", []string{"delete", "pod", "-s", "https://o"}, false},
 		{"-s glued", []string{"delete", "pod", "-shttps://o"}, false},
@@ -475,17 +475,93 @@ func TestUncheckableRefusesEveryConnectionOverride(t *testing.T) {
 	}
 }
 
-// What stays allowed besides the list above: long flags that merely contain a
-// refused name, and the long flags the shipped specs use.
-func TestUncheckableKeepsAcceptingHarmlessLongFlags(t *testing.T) {
+// Long flags are an allowlist too: the ones the shipped specs use, in the
+// forms they use them, and nothing else. A flag that only looks harmless is
+// refused until a code change adds it with a test.
+func TestUncheckableAllowsOnlyTheLongFlagsSpecsUse(t *testing.T) {
+	base := []string{"kubectl", "--context=kind-a"}
+	cases := []struct {
+		name string
+		tail []string
+		ok   bool
+	}{
+		{"--ignore-not-found", []string{"delete", "pod", "x", "--ignore-not-found"}, true},
+		{"--grace-period", []string{"delete", "pod", "x", "--grace-period=1"}, true},
+		{"--type", []string{"patch", "deploy/x", "--type=merge", "-p", "{}"}, true},
+		{"--timeout", []string{"rollout", "status", "deploy/x", "--timeout=180s"}, true},
+		{"--for and --timeout", []string{"wait", "--for=condition=Ready", "pod/x", "--timeout=180s"}, true},
+		{"--replicas", []string{"scale", "deploy/x", "--replicas=0"}, true},
+		{"a value flag with its value in the next token", []string{"scale", "deploy/x", "--replicas", "0"}, false},
+		{"a value flag with no value", []string{"scale", "deploy/x", "--replicas"}, false},
+		{"a boolean flag given a value", []string{"delete", "pod", "x", "--ignore-not-found=false"}, false},
+		{"--server-side", []string{"apply", "--server-side", "-f", "-"}, false},
+		{"--field-manager", []string{"apply", "--field-manager=m", "-f", "-"}, false},
+		{"--all", []string{"delete", "pod", "--all"}, false},
+		{"--dry-run", []string{"delete", "pod", "x", "--dry-run=client"}, false},
+		{"--namespace after the subcommand", []string{"delete", "pod", "x", "--namespace=demo"}, false},
+		{"a double dash", []string{"delete", "--", "pod"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			argv := append(append([]string{}, base...), c.tail...)
+			why := uncheckable(argv)
+			if c.ok && why != "" {
+				t.Errorf("%q refused: %s", strings.Join(argv, " "), why)
+			}
+			if !c.ok && why == "" {
+				t.Errorf("%q accepted", strings.Join(argv, " "))
+			}
+			if !c.ok && why != "" && strings.HasPrefix(c.tail[len(c.tail)-1], "--") && !strings.Contains(why, strings.SplitN(c.tail[len(c.tail)-1], "=", 2)[0]) && c.name != "a double dash" {
+				t.Errorf("the refusal does not name the flag: %s", why)
+			}
+		})
+	}
+}
+
+// Four lines the first allowlist round let through, each reaching outside the
+// pinned cluster in a way the context does not control.
+func TestUncheckableRefusesRoutesOutsideTheClusterThatAreNotConnectionFlags(t *testing.T) {
+	for name, tail := range map[string][]string{
+		"kustomize from a git host (runs git)":  {"apply", "--kustomize=https://example.invalid/org/repo//base?ref=v1"},
+		"kustomize short":                       {"apply", "-k", "https://example.invalid/org/repo//base"},
+		"a manifest fetched from a URL":         {"apply", "-f", "https://example.invalid/x.yaml"},
+		"a manifest from a URL, long flag":      {"apply", "--filename=https://example.invalid/x.yaml"},
+		"a manifest from a URL, spaced":         {"apply", "--filename", "https://example.invalid/x.yaml"},
+		"a URL with a scheme only the host has": {"apply", "-f", "ftp://example.invalid/x.yaml"},
+		"profile output (truncates a file)":     {"delete", "--profile=cpu", "--profile-output=/tmp/victim", "cm", "a"},
+		"cache dir":                             {"delete", "--cache-dir=/tmp/x", "cm", "a"},
+		"an editor from create":                 {"create", "--edit", "-f", "x"},
+		"an editor from apply":                  {"apply", "edit-last-applied", "deploy/x"},
+		"set-last-applied":                      {"apply", "set-last-applied", "-f", "x"},
+		"view-last-applied":                     {"apply", "view-last-applied", "deploy/x"},
+		"create at all":                         {"create", "token", "sa"},
+		"annotate at all":                       {"annotate", "pod", "x", "a=b"},
+		"rollout edit-like form":                {"rollout", "undo", "deploy/x"},
+		"rollout with no nested word":           {"rollout"},
+		"set image":                             {"set", "image", "deploy/x", "c=i"},
+		"set with no nested word":               {"set"},
+		"a URL as the resource":                 {"delete", "https://example.invalid/pod.yaml"},
+		"a URL as the resource after a flag":    {"delete", "--ignore-not-found", "http://example.invalid/pod.yaml"},
+		"an absolute manifest path":             {"apply", "-f", "/etc/hosts"},
+		"a parent-directory manifest path":      {"apply", "-f", "../x.yaml"},
+		"a parent directory inside a path":      {"apply", "-f", "demo/../../x.yaml"},
+		"an empty manifest path":                {"apply", "-f", ""},
+		"-f with no value":                      {"apply", "-f"},
+		"a flag as the -f value":                {"apply", "-f", "--server=https://o"},
+		"a flag as the -l value":                {"wait", "-l", "--server=https://o"},
+		"a positional on apply":                 {"apply", "deploy/x", "-f", "-"},
+	} {
+		argv := append([]string{"kubectl", "--context=kind-a"}, tail...)
+		if why := uncheckable(argv); why == "" {
+			t.Errorf("%s: %q passed", name, strings.Join(argv, " "))
+		}
+	}
+	// Local manifests, and a patch body that merely mentions a URL, stay fine.
 	for _, tail := range [][]string{
-		{"apply", "--server-side", "-f", "-"},
-		{"apply", "--field-manager=meshmedic", "-f", "-"},
-		{"delete", "pod", "x", "--ignore-not-found", "--grace-period=1"},
-		{"patch", "deploy/x", "--type=merge", "-p", "{}"},
-		{"rollout", "status", "deploy/x", "--timeout=180s"},
-		{"wait", "--for=condition=Ready", "pod/x", "--timeout=180s"},
-		{"scale", "deploy/x", "--replicas=0"},
+		{"apply", "-f", "demo/manifests/x.yaml"},
+		{"apply", "-f", "-"},
+		{"patch", "deploy/x", "-p", `{"args":["curl http://svc.demo:9090/"]}`},
+		{"set", "env", "deploy/x", "URL=http://svc.demo:9090/"},
 	} {
 		argv := append([]string{"kubectl", "--context=kind-a"}, tail...)
 		if why := uncheckable(argv); why != "" {

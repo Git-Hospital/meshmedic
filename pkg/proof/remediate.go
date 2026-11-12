@@ -321,15 +321,41 @@ func pinnedContext(argv []string) (string, bool) {
 	return kubeCtx, true
 }
 
-// remediationSubcommands are the kubectl subcommands a spec that applies a
-// patch may run. It is an allowlist because anything unknown is how kubectl
-// reaches a plugin, which ignores --context, and `config` can rewrite what a
-// context points to for every command after it. The shipped specs use apply,
-// delete, patch, rollout, scale, set and wait; annotate, label and create are
-// the others a remediation plainly needs.
-var remediationSubcommands = map[string]bool{
-	"annotate": true, "apply": true, "create": true, "delete": true, "label": true,
-	"patch": true, "rollout": true, "scale": true, "set": true, "wait": true,
+// remediationSubcommands are the kubectl subcommand forms a spec that applies
+// a patch may run: exactly the ones the shipped specs and the generated apply
+// use. nested is the one word that must follow (kubectl nests commands:
+// `rollout status`, `set env`, and `apply edit-last-applied` opens an editor);
+// noArgs means the subcommand takes no positional argument at all, which keeps
+// `apply edit-last-applied` and its siblings out. Anything else can be a
+// plugin, rewrite the kubeconfig, open $KUBE_EDITOR, run git or mint tokens.
+// To add a form, change this table and add a test; a review reads it.
+var remediationSubcommands = map[string]struct {
+	nested string
+	noArgs bool
+}{
+	"apply":   {noArgs: true},
+	"delete":  {},
+	"patch":   {},
+	"rollout": {nested: "status"},
+	"scale":   {},
+	"set":     {nested: "env"},
+	"wait":    {},
+}
+
+// allowedLongFlags are the only long flags a remediation spec may carry after
+// the subcommand, and the form of each. true means a value is required and
+// must be glued on with =, which is the only form the specs use, so no flag
+// can take the next token as its value. false means the bare flag. These are
+// every long flag the 61 kubectl commands in the shipped specs use. (The
+// namespace is given before the subcommand and checked there.) To add one,
+// change this table and add a test; a review reads it.
+var allowedLongFlags = map[string]bool{
+	"--ignore-not-found": false,
+	"--grace-period":     true,
+	"--type":             true,
+	"--timeout":          true,
+	"--for":              true,
+	"--replicas":         true,
 }
 
 // refusedLongFlags are the kubectl flags that change which API server a
@@ -361,26 +387,26 @@ var refusedLongFlags = map[string]string{
 	"proxy-url":                "--proxy-url, which routes the command through a proxy",
 }
 
-// allowedShortFlags are the only single-dash flags a remediation spec may use
-// after the subcommand, each as its own token. The shipped specs use exactly
-// these: -f (apply -f -), -p (patch), -l (wait -l app=x) and -n.
-var allowedShortFlags = map[string]bool{"-f": true, "-p": true, "-l": true, "-n": true}
-
 // uncheckable says why the cluster one command reaches cannot be read from
 // its argv, or returns "" when it can. The rule is positional so that no
 // other flag can swallow the context as its value:
 //
 //   - argv[0] is kubectl and argv[1] is --context=NAME, the only --context
 //     token anywhere in the command;
-//   - no token anywhere is a refusedLongFlags flag in any spelling (=value or
-//     next token, before or after the subcommand);
-//   - every single-dash token anywhere is alone and one of allowedShortFlags,
-//     or a bare "-". pflag lets short flags be grouped and glue their value on
-//     (-Rs URL, -As=URL, -Rshttps://...), so -s can sit behind any letter and
-//     no test for the letter s can be complete; an allowlist of whole tokens
-//     is;
-//   - between kubectl and the subcommand only -n or --namespace with a value,
-//     and the subcommand is on the allowlist.
+//   - no token anywhere is a refusedLongFlags flag in any spelling; those
+//     name the connection and credential overrides, and are kept for their
+//     message, since the allowlist below refuses them too;
+//   - between kubectl and the subcommand only -n or --namespace with a value;
+//   - the subcommand form is one of remediationSubcommands;
+//   - after it, every token is an allowedLongFlags flag in its one form, one of
+//     -f -p -l -n alone with its value in the next token, or a positional
+//     argument. Both lists are allowlists because a deny list passes whatever
+//     nobody thought of (--kustomize runs git, --profile-output truncates a
+//     file, --edit opens an editor). Short flags can be grouped or carry their
+//     value glued on (-Rs URL, -As=URL), so a test for the letter s cannot be
+//     complete either;
+//   - a -f value is "-" or a relative local path, and no positional argument is
+//     a URL.
 //
 // A shell, env or any other wrapper can reach any cluster, a kubeconfig can
 // give a familiar context name to a different one, and --server or --cluster
@@ -401,14 +427,12 @@ func uncheckable(argv []string) string {
 		return "it does not start kubectl --context=NAME; write the context as one token, --context=NAME, directly after kubectl, so no other flag can take it as its value"
 	}
 	for _, a := range argv[2:] {
-		switch {
-		case strings.HasPrefix(a, "--"):
-			name := strings.ReplaceAll(strings.SplitN(a[2:], "=", 2)[0], "_", "-")
-			if why, refused := refusedLongFlags[name]; refused {
-				return "it carries " + why
-			}
-		case strings.HasPrefix(a, "-") && a != "-" && !allowedShortFlags[a]:
-			return fmt.Sprintf("it carries the single-dash token %s; only -f, -p, -l and -n are allowed, each alone, because short flags can be grouped or carry their value glued on (-Rs URL, -As=URL), and -s is kubectl's server override", a)
+		if !strings.HasPrefix(a, "--") {
+			continue
+		}
+		name := strings.ReplaceAll(strings.SplitN(a[2:], "=", 2)[0], "_", "-")
+		if why, refused := refusedLongFlags[name]; refused {
+			return "it carries " + why
 		}
 	}
 	i := 2
@@ -428,10 +452,112 @@ func uncheckable(argv []string) string {
 	if i >= len(argv) {
 		return "it names no subcommand"
 	}
-	if !remediationSubcommands[argv[i]] {
-		return fmt.Sprintf("its subcommand %q is not one a remediation spec may run (allowed: annotate, apply, create, delete, label, patch, rollout, scale, set, wait); anything else can be a plugin or rewrite the kubeconfig", argv[i])
+	form, ok := remediationSubcommands[argv[i]]
+	if !ok {
+		return fmt.Sprintf("its subcommand %q is not one a remediation spec may run (allowed: apply, delete, patch, rollout status, scale, set env, wait); anything else can be a plugin, rewrite the kubeconfig, open an editor or fetch from a host", argv[i])
+	}
+	sub := argv[i]
+	i++
+	if form.nested != "" {
+		if i >= len(argv) || argv[i] != form.nested {
+			return fmt.Sprintf("%s must be followed by %q directly; other %s forms are not allowed", sub, form.nested, sub)
+		}
+		i++
+	}
+	for ; i < len(argv); i++ {
+		a := argv[i]
+		switch {
+		case strings.HasPrefix(a, "--"):
+			name, val, hasValue := strings.Cut(a, "=")
+			needsValue, ok := allowedLongFlags[name]
+			switch {
+			case !ok:
+				return fmt.Sprintf("it carries %s, which no remediation spec uses; the allowed long flags are %s. To add one, change allowedLongFlags in pkg/proof/remediate.go with a test, and have it reviewed", name, allowedLongFlagList())
+			case needsValue && (!hasValue || val == ""):
+				return fmt.Sprintf("%s needs its value glued on as %s=VALUE", name, name)
+			case !needsValue && hasValue:
+				return fmt.Sprintf("%s takes no value", name)
+			}
+		case a == "-f" || a == "-p" || a == "-l" || a == "-n":
+			i++
+			if i >= len(argv) || argv[i] == "" {
+				return fmt.Sprintf("its %s flag has no value", a)
+			}
+			v := argv[i]
+			switch {
+			case a == "-f":
+				if why := localFileProblem(v); why != "" {
+					return fmt.Sprintf("its -f value %q %s", v, why)
+				}
+			case strings.HasPrefix(v, "-"):
+				return fmt.Sprintf("the value %q of %s starts with a dash, so it could be another flag", v, a)
+			}
+			// A -p value is inline data and may mention a URL; kubectl does
+			// not fetch it.
+		case strings.HasPrefix(a, "-"):
+			return fmt.Sprintf("it carries the token %s; only -f, -p, -l and -n are allowed, each alone, because short flags can be grouped or carry their value glued on (-Rs URL, -As=URL), and -s is kubectl's server override", a)
+		default:
+			if form.noArgs {
+				return fmt.Sprintf("%s takes no positional argument here, and %q would be read as one (apply edit-last-applied and its siblings open an editor)", sub, a)
+			}
+			if hasURLScheme(a) {
+				return fmt.Sprintf("the argument %q is a URL; a remediation names resources and local files only", a)
+			}
+		}
 	}
 	return ""
+}
+
+func allowedLongFlagList() string {
+	var names []string
+	for n, v := range allowedLongFlags {
+		if v {
+			n += "=VALUE"
+		}
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+// localFileProblem says why a -f value is not a local, relative path or "-"
+// (standard input), or returns "". The shipped specs only ever use "-" and
+// paths below the repository root such as demo/manifests/x.yaml, so an
+// absolute path and any .. segment are refused as well as every URL: that keeps
+// the manifest inside the tree the author checked in, and kubectl fetches any
+// value with a scheme from its host.
+func localFileProblem(v string) string {
+	switch {
+	case v == "-":
+		return ""
+	case strings.Contains(v, "://") || hasURLScheme(v):
+		return "is a URL, and kubectl would fetch it from that host"
+	case filepath.IsAbs(v) || strings.HasPrefix(v, "/") || strings.HasPrefix(v, "~"):
+		return "is an absolute path; use a path relative to the repository root"
+	}
+	for _, seg := range strings.FieldsFunc(v, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == ".." {
+			return "climbs out with .., so it could leave the repository"
+		}
+	}
+	return ""
+}
+
+// hasURLScheme reports whether s starts with scheme:// (RFC 3986 scheme).
+func hasURLScheme(s string) bool {
+	i := strings.Index(s, "://")
+	if i <= 0 {
+		return false
+	}
+	for j, r := range s[:i] {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case j > 0 && (r >= '0' && r <= '9' || r == '+' || r == '-' || r == '.'):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // sustainFor is how long the signal must stay clear before the patch is
