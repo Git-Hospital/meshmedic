@@ -222,12 +222,12 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   injection to verdict, so a clear reading taken while the fault filled its
   rate window became part of the learned normal. A neighbour required to stay
   quiet could pass for the wrong reason, and the subject could miss a level
-  that was over its threshold at injection. The baseline is now read-only from
-  injection to verdict, using the same freeze as `meshmedic-prove remediate`;
-  warm-up before the fault learns as before. The drift is closed for an
-  entry whose baseline is ready when the fault goes in. An entry whose
-  baseline is not ready by then keeps learning during the proof exactly as
-  before, and the warm-up log names it. The recorded proofs of
+  that was over its threshold at injection. A baseline that is ready when the
+  fault goes in is now read-only from injection to verdict, the freeze
+  `meshmedic-prove remediate` already had; warm-up before the fault learns as
+  before. An entry whose baseline is not ready by then keeps learning during
+  the proof exactly as before, so the drift stays open for it. When the proof
+  has a warm-up, its log names such an entry. The recorded proofs of
   `upstream-dependency-latency` and `latency-regression-vs-baseline` have not
   been rerun on a cluster yet, so their reports may still reflect the drift.
   (closes #48)
