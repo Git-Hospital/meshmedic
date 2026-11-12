@@ -456,3 +456,17 @@ func TestWebhookEvidenceListsEveryWebhook(t *testing.T) {
 	}
 	t.Error("no finding for op-validating")
 }
+
+// docs/chart-check.md documents every rule id, so a new rule cannot ship
+// without a section.
+func TestDocsMentionEveryRule(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "docs", "chart-check.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range Rules() {
+		if !strings.Contains(string(b), "### "+r.ID+" "+r.Check) {
+			t.Errorf("docs/chart-check.md has no section for %s %s", r.ID, r.Check)
+		}
+	}
+}
