@@ -141,6 +141,8 @@ func TestValidateRejectsMissingDocumentedFields(t *testing.T) {
 		"empty severity":         {func(s *Scenario) { s.Severity = "" }, "severity"},
 		"unknown severity":       {func(s *Scenario) { s.Severity = "info" }, "severity"},
 		"severity in other case": {func(s *Scenario) { s.Severity = "Critical" }, "severity"},
+		"blank title":            {func(s *Scenario) { s.Title = " " }, "title"},
+		"blank promql":           {func(s *Scenario) { s.Signal.PromQL = " \n" }, "signal.promql"},
 		"negative applies":       {func(s *Scenario) { s.Guardrails.MaxAppliesPerHour = -1 }, "guardrails.maxAppliesPerHour"},
 	} {
 		t.Run(name, func(t *testing.T) {

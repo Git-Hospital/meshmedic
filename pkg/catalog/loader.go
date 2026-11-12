@@ -96,7 +96,7 @@ func (s Scenario) Validate() error {
 	if s.ID == "" {
 		return fmt.Errorf("id is required")
 	}
-	if s.Title == "" {
+	if strings.TrimSpace(s.Title) == "" {
 		return fmt.Errorf("title is required")
 	}
 	// The description and the rollback note are sections of the pull request a
@@ -114,7 +114,7 @@ func (s Scenario) Validate() error {
 	if s.Guardrails.MaxAppliesPerHour < 0 {
 		return fmt.Errorf("guardrails.maxAppliesPerHour must not be negative")
 	}
-	if s.Signal.PromQL == "" {
+	if strings.TrimSpace(s.Signal.PromQL) == "" {
 		return fmt.Errorf("signal.promql is required")
 	}
 	if !validComparisons[s.Signal.Comparison] {
