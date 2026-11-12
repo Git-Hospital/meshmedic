@@ -333,13 +333,6 @@ func main() {
 			verdict = "BLIND"
 		}
 		logger.Printf("[%d/%d] %s: %s (%s)", i+1, len(specs), sp.Entry, verdict, res.Duration.Round(time.Second))
-		if res.Threshold != 0 {
-			basis := "the entry's static threshold"
-			if res.ThresholdRelative {
-				basis = "the threshold learned in warm-up"
-			}
-			logger.Printf("    judged against %.4g, %s, frozen from injection", res.Threshold, basis)
-		}
 		for _, f := range res.Failures {
 			logger.Printf("    %s", f)
 		}
