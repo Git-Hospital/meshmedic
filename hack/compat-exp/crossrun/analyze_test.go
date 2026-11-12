@@ -103,6 +103,7 @@ func TestMechanicalExclusions(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture([]ChartReport{chart("a", tc.r1)}, []ChartReport{chart("a", tc.r2)}, nil)
+			f.rerunUndecided()
 			c := cellOf(t, f.analyze(t), "a", "W3", wk)
 			if c.Status != StExcluded || len(c.Reasons) != 1 || c.Reasons[0] != tc.reason || c.Holds {
 				t.Fatalf("%+v", c)
@@ -113,6 +114,7 @@ func TestMechanicalExclusions(t *testing.T) {
 		w := uw("W3", ledger.ReasonCapacity, d(wk))
 		w.OracleRunsLeftOut = []LeftOut{{Run: 2, Reason: "pull-failure"}}
 		f := newFixture([]ChartReport{chart("a", wr("W3", d(wk)))}, []ChartReport{chart("a", w)}, nil)
+		f.rerunUndecided()
 		c := cellOf(t, f.analyze(t), "a", "W3", wk)
 		if c.Reasons[0] != ledger.ReasonPullFailure {
 			t.Fatalf("%+v", c)
@@ -120,6 +122,7 @@ func TestMechanicalExclusions(t *testing.T) {
 	})
 	t.Run("an undecided key whose values agree with the oracle is not a cell", func(t *testing.T) {
 		f := newFixture([]ChartReport{chart("a", wr("W3", ok(wk)))}, []ChartReport{chart("a", uw("W3", ledger.ReasonPullFailure, ok(wk)))}, nil)
+		f.rerunUndecided()
 		res := f.analyze(t)
 		if len(res.Cells) != 0 || len(res.UndecidedWorld) != 1 || res.UndecidedWorld[0].Kind != ledger.ReasonPullFailure {
 			t.Fatalf("%+v", res)
@@ -601,6 +604,7 @@ func TestFutility(t *testing.T) {
 		}
 		f := newFixture(r, r2, nil)
 		f.pad(10)
+		f.rerunUndecided()
 		f.withCerts(rows...)
 		return f.analyze(t)
 	}
@@ -649,7 +653,9 @@ func TestFutility(t *testing.T) {
 	t.Run("excluded cells other than undecided add nothing", func(t *testing.T) {
 		r := []ChartReport{chart("a", wr("W3", bad(wk)))}
 		r2 := []ChartReport{chart("a", uw("W3", ledger.ReasonPullFailure, bad(wk)))}
-		res := newFixture(r, r2, nil).analyze(t)
+		f := newFixture(r, r2, nil)
+		f.rerunUndecided()
+		res := f.analyze(t)
 		if res.Futility.NMax != 0 || res.Futility.PendingCells != 0 {
 			t.Fatalf("%+v", res.Futility)
 		}
@@ -669,7 +675,9 @@ func TestUndecidedShareBoundary(t *testing.T) {
 				r2 = append(r2, chart(n, wr("W3", bad(wk))))
 			}
 		}
-		return newFixture(r, r2, nil).analyze(t)
+		f := newFixture(r, r2, nil)
+		f.rerunUndecided()
+		return f.analyze(t)
 	}
 	cases := []struct {
 		u, n int
@@ -856,6 +864,7 @@ func TestDeterministic(t *testing.T) {
 func TestLedgerExcludedRowsAreConfirmedByReports(t *testing.T) {
 	d := fk(wk, "true", "false", "false", "false")
 	f := newFixture([]ChartReport{chart("a", wr("W3", d))}, []ChartReport{chart("a", uw("W3", ledger.ReasonPullFailure, d))}, nil)
+	f.rerunUndecided()
 	f.in.Ledger.Rows = []ledger.Row{{Chart: "a", World: "W3", Key: wk, Status: ledger.StatusExcluded,
 		Exclusion: &ledger.Exclusion{Reason: ledger.ReasonPullFailure, Evidence: "docker.io/x refused"}}}
 	c := cellOf(t, f.analyze(t), "a", "W3", wk)

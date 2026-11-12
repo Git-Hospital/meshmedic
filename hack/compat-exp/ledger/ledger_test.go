@@ -100,6 +100,30 @@ func TestCheck(t *testing.T) {
 			nk.Key = "protocol"
 			f.NewKeys = []NewKey{nk}
 		}, "already in causes.json"},
+		{"flagged key credited without a new-key record", func(f *File) { f.Rows[0].Cause = "apiserver-caller" }, `cause "apiserver-caller" needs the new-key rule`},
+		{"flagged key as the cause of a part, without a record", func(f *File) {
+			withParts(&f.Rows[0], "protocol", "apiserver-caller")
+		}, `parts[1].cause "apiserver-caller" needs the new-key rule`},
+		{"flagged key with a complete new-key record", func(f *File) {
+			nk := newKey()
+			nk.Key = "apiserver-caller"
+			f.NewKeys = []NewKey{nk}
+			f.Rows[0].Cause = "apiserver-caller"
+		}, ""},
+		{"flagged key with a record that lacks the reproduction", func(f *File) {
+			nk := newKey()
+			nk.Key = "apiserver-caller"
+			nk.Reproduction = ""
+			f.NewKeys = []NewKey{nk}
+			f.Rows[0].Cause = "apiserver-caller"
+		}, "reproduction"},
+		{"flagged key with a record the reviewer merged", func(f *File) {
+			nk := newKey()
+			nk.Key = "apiserver-caller"
+			nk.Reviewer.Verdict = KeyMerge
+			f.NewKeys = []NewKey{nk}
+			f.Rows[0].Cause = "apiserver-caller"
+		}, "admitted only on"},
 		{"duplicate cell", func(f *File) { f.Rows = append(f.Rows, f.Rows[0]) }, "same cell as row 1"},
 		{"bad status", func(f *File) { f.Rows[0].Status = "done" }, "status"},
 		{"bad type", func(f *File) { f.Rows[0].Type = "bug" }, "type"},
@@ -337,10 +361,72 @@ func TestRealCauses(t *testing.T) {
 	}
 }
 
+func TestFlaggedKeys(t *testing.T) {
+	c := testCauses(t)
+	if !c.NeedsNewKeyRule("apiserver-caller") || c.NeedsNewKeyRule("protocol") || c.NeedsNewKeyRule("made-up") {
+		t.Fatal("only apiserver-caller carries needsNewKeyRule in causes.json")
+	}
+	if c.Frozen("apiserver-caller") || !c.Frozen("protocol") || c.Frozen("made-up") {
+		t.Fatal("a flagged key is in causes.json and not frozen")
+	}
+	if !c.Has("apiserver-caller") {
+		t.Fatal("Has still means: the key is in causes.json")
+	}
+	if got := c.FrozenKeys(); len(got) != 8 || got[7] != "ambient-l7" {
+		t.Fatalf("frozen list %v", got)
+	}
+}
+
+func TestParseCausesFlag(t *testing.T) {
+	c, err := ParseCauses([]byte(`{"keys":[{"key":"a","worlds":["W1"]},{"key":"b","worlds":["W1"],"needsNewKeyRule":true},{"key":"c","worlds":["W1"],"needsNewKeyRule":false}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.NeedsNewKeyRule("a") || !c.NeedsNewKeyRule("b") || c.NeedsNewKeyRule("c") {
+		t.Fatalf("%v", c.NewKeyRule)
+	}
+}
+
+func TestOrderFlaggedKeyRanksAmongNewKeys(t *testing.T) {
+	c := testCauses(t)
+	// admitted second: after the frozen list, after the key admitted first
+	f := &File{NewKeys: []NewKey{{Key: "n1"}, {Key: "apiserver-caller"}, {Key: "n2"}}}
+	if !(c.Order(f, "ambient-l7") < c.Order(f, "n1") && c.Order(f, "n1") < c.Order(f, "apiserver-caller") && c.Order(f, "apiserver-caller") < c.Order(f, "n2")) {
+		t.Fatal("a flagged key ranks among the new keys in the order they are admitted")
+	}
+	for _, k := range []string{"ambient-np", "bind-address", "job-lifecycle", "ambient-l7"} {
+		if c.Order(f, "apiserver-caller") <= c.Order(f, k) {
+			t.Fatalf("apiserver-caller ranks before frozen %s", k)
+		}
+	}
+	// no record: after every frozen and every recorded key
+	g := &File{NewKeys: []NewKey{{Key: "n1"}}}
+	if !(c.Order(g, "apiserver-caller") > c.Order(g, "n1")) {
+		t.Fatal("an unrecorded flagged key ranks after the recorded new keys")
+	}
+}
+
+func TestAdmittedNewKey(t *testing.T) {
+	f := &File{NewKeys: []NewKey{newKey()}}
+	if !AdmittedNewKey(f, "tls-origination") || AdmittedNewKey(f, "protocol") {
+		t.Fatal("complete record admitted, other keys not")
+	}
+	nk := newKey()
+	nk.Reviewer.Verdict = KeyReject
+	if AdmittedNewKey(&File{NewKeys: []NewKey{nk}}, "tls-origination") {
+		t.Fatal("a rejected record is not admitted")
+	}
+	nk = newKey()
+	nk.Anchor = "  "
+	if AdmittedNewKey(&File{NewKeys: []NewKey{nk}}, "tls-origination") {
+		t.Fatal("an incomplete record is not admitted")
+	}
+}
+
 func TestOrder(t *testing.T) {
 	c := testCauses(t)
 	f := &File{NewKeys: []NewKey{{Key: "n1"}, {Key: "n2"}}}
-	if c.Order(f, "ambient-np") != 0 || c.Order(f, "ambient-l7") != 8 {
+	if c.Order(f, "ambient-np") != 0 || c.Order(f, "ambient-l7") != 7 {
 		t.Fatal("frozen order")
 	}
 	if !(c.Order(f, "ambient-l7") < c.Order(f, "n1") && c.Order(f, "n1") < c.Order(f, "n2") && c.Order(f, "n2") < c.Order(f, "zzz")) {

@@ -107,9 +107,23 @@ var requiredWorlds = []string{"W1", "W3"}
 type Sample struct {
 	Active   []string
 	Replaced map[string]bool
-	// Reruns lists the reruns whose records stand in for a run's (the chart's
-	// W0 was 3 of 3 there).
+	// Reruns lists the reruns read: those whose records stand in for the run's
+	// chart wholesale, and those after which the chart is replaced.
 	Reruns []RerunUse
+	// Pending lists the reruns a chart still needs in a run-1-only analysis:
+	// the condition holds in the run and no rerun is listed yet. In a final
+	// analysis a missing rerun is an error, so this stays empty there.
+	Pending []PendingRerun
+	// Orig are the runs as given, before any rerun was applied: the undecided
+	// share "before the reruns" is read from them.
+	Orig []RunInput
+}
+
+// PendingRerun is a rerun a chart needs and does not have yet.
+type PendingRerun struct {
+	Chart string `json:"chart"`
+	Run   string `json:"run"`
+	Why   string `json:"why"`
 }
 
 // RerunUse is one rerun the analysis read: Failed is true when the rerun's W0
@@ -120,7 +134,10 @@ type RerunUse struct {
 	Run    string `json:"run"`
 	Rerun  string `json:"rerun"`
 	Failed bool   `json:"failedAgain"`
-	Why    string `json:"why"`
+	// Why is why the chart was rerun in the run (W0 not 3 of 3, undecided
+	// chart-worlds, or both); After says what the rerun showed.
+	Why   string `json:"why"`
+	After string `json:"after,omitempty"`
 }
 
 func (s *Sample) isActive(id string) bool {
@@ -160,26 +177,62 @@ func w0Met(ch *ChartReport, required int) (bool, string) {
 	return true, ""
 }
 
-// buildSample applies the replacement rule, which has no choice in it.
+// undecidedRequired lists the required mesh worlds (W1, W3) of the chart that
+// the report leaves undecided.
+func undecidedRequired(ch *ChartReport) []string {
+	var out []string
+	for _, w := range requiredWorlds {
+		for k := range ch.Worlds {
+			if ch.Worlds[k].World == w && ch.Worlds[k].Verdict == "undecided" {
+				out = append(out, w)
+			}
+		}
+	}
+	return out
+}
+
+// rerunCondition is the one condition on which a chart is rerun in a run: the
+// run leaves at least one of the chart's chart-worlds (W1, W3) undecided, or
+// its W0 is not 3 of 3. why says which; it is empty when the chart is not
+// rerun.
+func rerunCondition(ch *ChartReport, required int) (w0 bool, w0why string, und []string, why string) {
+	w0, w0why = w0Met(ch, required)
+	und = undecidedRequired(ch)
+	var parts []string
+	if !w0 {
+		parts = append(parts, "W0 not 3 of 3 ("+w0why+")")
+	}
+	if len(und) > 0 {
+		parts = append(parts, strings.Join(und, " and ")+" undecided")
+	}
+	return w0, w0why, und, strings.Join(parts, "; ")
+}
+
+// buildSample applies the rerun rule and the replacement rule, which have no
+// choice in them (INTERPRETATIONS.md 22 and 27).
 //
 // For every chart of the sample (the frame's primary charts, and a reserve once
-// it is taken) and each sample run, the chart's W0 is "3 of 3" or not (w0Met).
-// A run in which it is not needs the rerun of that chart's W0 job, a separately
-// dispatched observe run restricted to the chart, named in the replacements
-// file. The chart is replaced if and only if its W0 is not 3 of 3 in a run and
-// again in the rerun; crossrun errors when a chart meets that condition and is
-// not replaced, when a replaced chart does not meet it, when a chart is
-// missing a rerun it needs, or when a rerun is named that the rule does not
-// need. A chart whose W0 is 3 of 3 in the rerun is not replaced, and the
-// rerun's report stands in for the run's report of that chart. Reserves are
-// taken strictly in list order, the k-th replaced chart (frame order) getting
-// the k-th reserve. The returned runs are the effective ones: a shallow copy of
-// in.Runs with those stand-ins applied.
+// it is taken) and each sample run, the chart is rerun in that run if and only
+// if the run leaves at least one of its chart-worlds undecided or its W0 not
+// 3 of 3. The rerun is a separately dispatched observe run restricted to the
+// chart (all three worlds), named in the replacements file. When both runs are
+// given, crossrun errors if a chart that meets the condition has no rerun
+// listed and if a rerun is listed for a chart that does not; with run 1 only a
+// missing rerun is pending. The rerun's report and records replace the chart's
+// in the run wholesale (never a world at a time), so every comparison stays
+// within one run, and everything downstream (cells, the undecided share) reads
+// the chart after its rerun.
+//
+// The chart is replaced if and only if its W0 is not 3 of 3 in a run and again
+// in the rerun of that run; reserves are taken strictly in list order, the
+// k-th replaced chart (frame order) getting the k-th reserve. The returned runs
+// are the effective ones: a copy of in.Runs with the rerun records standing in.
 func buildSample(in *Inputs) (*Sample, []RunInput, error) {
 	isReserve := map[string]bool{}
 	for _, r := range in.Reserves {
 		isReserve[r] = true
 	}
+	final := len(in.Runs) == 2
 	s := &Sample{Replaced: map[string]bool{}}
 	active := map[string]bool{}
 	for _, id := range in.FrameOrder {
@@ -188,6 +241,7 @@ func buildSample(in *Inputs) (*Sample, []RunInput, error) {
 			active[id] = true
 		}
 	}
+	s.Orig = append([]RunInput{}, in.Runs...)
 	runs := make([]RunInput, len(in.Runs))
 	copy(runs, in.Runs)
 	for i := range runs {
@@ -201,22 +255,28 @@ func buildSample(in *Inputs) (*Sample, []RunInput, error) {
 	}
 	refs := map[string]string{} // chart|run -> rerun id
 	for _, r := range in.RerunRefs {
-		refs[r.Chart+"|"+r.Run] = r.Rerun
+		k := r.Chart + "|" + r.Run
+		if prev, dup := refs[k]; dup {
+			return nil, nil, fmt.Errorf("chart %q has two reruns for run %s, %s and %s: one rerun only", r.Chart, r.Run, prev, r.Rerun)
+		}
+		refs[k] = r.Rerun
 	}
 	byChart := map[string]*Replacement{}
 	for i := range in.Replacements {
 		r := &in.Replacements[i]
 		byChart[r.Chart] = r
-		if prev, dup := refs[r.Chart+"|"+r.Run]; dup && prev != r.Rerun {
-			return nil, nil, fmt.Errorf("replacement %s: run %s has two reruns, %s and %s", r.Chart, r.Run, prev, r.Rerun)
+		if prev, dup := refs[r.Chart+"|"+r.Run]; dup {
+			return nil, nil, fmt.Errorf("replacement %s: run %s has two reruns, %s and %s: one rerun only", r.Chart, r.Run, prev, r.Rerun)
 		}
 		refs[r.Chart+"|"+r.Run] = r.Rerun
 	}
-	runIDs := map[string]bool{}
-	for _, r := range runs {
-		runIDs[r.ID] = true
-	}
 	usedRef := map[string]bool{}
+	type usedRerun struct {
+		chart string
+		run   int
+		rr    *RunInput
+	}
+	var used []usedRerun
 	taken := 0
 	visited := map[string]bool{}
 	for _, id := range in.FrameOrder {
@@ -225,12 +285,16 @@ func buildSample(in *Inputs) (*Sample, []RunInput, error) {
 		}
 		visited[id] = true
 		type verdict struct {
-			met      bool
+			cond     bool // the chart is rerun in this run
 			why      string
-			rerun    *RunInput
-			rerunMet bool
-			rerunWhy string
+			w0       bool
+			w0why    string
+			und      []string
 			named    bool
+			rerun    *RunInput
+			rerunW0  bool
+			rerunWhy string
+			after    string
 		}
 		vs := make([]verdict, len(runs))
 		doomed := false
@@ -239,14 +303,14 @@ func buildSample(in *Inputs) (*Sample, []RunInput, error) {
 		for i := range runs {
 			ch := findBase(runs[i].Report, id)
 			if ch == nil {
-				vs[i].met = true // a missing chart is the completeness check's error
-				continue
+				continue // a missing chart is the completeness check's error
 			}
-			vs[i].met, vs[i].why = w0Met(ch, runs[i].Report.RunsRequired)
+			w0, w0why, und, why := rerunCondition(ch, runs[i].Report.RunsRequired)
+			vs[i].w0, vs[i].w0why, vs[i].und, vs[i].why, vs[i].cond = w0, w0why, und, why, why != ""
 			rid, named := refs[id+"|"+runs[i].ID]
-			if vs[i].met {
+			if !vs[i].cond {
 				if named {
-					return nil, nil, fmt.Errorf("chart %q: run %s names rerun %s, but W0 of %q was 3 of 3 in run %s; a rerun replaces a failed W0 only (no choice of which data to use)", id, runs[i].ID, rid, id, runs[i].ID)
+					return nil, nil, fmt.Errorf("chart %q: run %s names rerun %s, but run %s leaves no chart-world of %q undecided and its W0 is 3 of 3; a chart is rerun if and only if its run leaves a chart-world undecided or its W0 not 3 of 3 (no choice of which data to use)", id, runs[i].ID, rid, runs[i].ID, id)
 				}
 				continue
 			}
@@ -264,18 +328,39 @@ func buildSample(in *Inputs) (*Sample, []RunInput, error) {
 			}
 			vs[i].rerun = rr
 			rch := findBase(rr.Report, id)
-			vs[i].rerunMet, vs[i].rerunWhy = w0Met(rch, rr.Report.RunsRequired)
-			if !vs[i].rerunMet && !doomed {
+			var rund []string
+			vs[i].rerunW0, vs[i].rerunWhy, rund, _ = rerunCondition(rch, rr.Report.RunsRequired)
+			switch {
+			case !vs[i].rerunW0:
+				vs[i].after = "W0 not 3 of 3 (" + vs[i].rerunWhy + ")"
+			case len(rund) > 0:
+				vs[i].after = strings.Join(rund, " and ") + " undecided again"
+			default:
+				vs[i].after = "decided"
+			}
+			if !vs[i].w0 && !vs[i].rerunW0 && !doomed {
 				doomed = true
 				evidence, evidenceRun = &vs[i], runs[i].ID
 			}
 		}
 		for i := range runs {
-			if !vs[i].met && !vs[i].named && !doomed {
-				return nil, nil, fmt.Errorf("chart %q: W0 was not 3 of 3 in run %s (%s) and no rerun of its W0 job is named in the replacements file. "+
-					"Dispatch an observe run restricted to %q (chart_ids), and name it as a rerun of run %s: the chart is replaced if and only if its W0 fails again there",
-					id, runs[i].ID, vs[i].why, id, runs[i].ID)
+			if !vs[i].cond || vs[i].named || doomed {
+				continue
 			}
+			if !final {
+				s.Pending = append(s.Pending, PendingRerun{Chart: id, Run: runs[i].ID, Why: vs[i].why})
+				continue
+			}
+			what := fmt.Sprintf("run %s leaves %s undecided", runs[i].ID, strings.Join(vs[i].und, " and "))
+			if !vs[i].w0 {
+				what = fmt.Sprintf("W0 was not 3 of 3 in run %s (%s)", runs[i].ID, vs[i].w0why)
+				if len(vs[i].und) > 0 {
+					what += fmt.Sprintf(" and it leaves %s undecided", strings.Join(vs[i].und, " and "))
+				}
+			}
+			return nil, nil, fmt.Errorf("chart %q: %s, and no rerun of the chart is named in the replacements file. "+
+				"Dispatch an observe run restricted to %q (chart_ids) after run %s ended, and name it as a rerun of run %s: a chart is rerun once in a run that leaves a chart-world undecided or its W0 not 3 of 3 (reruns, or replacements when W0 fails again)",
+				id, what, id, runs[i].ID, runs[i].ID)
 		}
 		rep := byChart[id]
 		if doomed {
@@ -303,7 +388,8 @@ func buildSample(in *Inputs) (*Sample, []RunInput, error) {
 			s.Replaced[id] = true
 			for i := range vs {
 				if vs[i].rerun != nil {
-					s.Reruns = append(s.Reruns, RerunUse{Chart: id, Run: runs[i].ID, Rerun: vs[i].rerun.ID, Failed: !vs[i].rerunMet, Why: vs[i].rerunWhy})
+					s.Reruns = append(s.Reruns, RerunUse{Chart: id, Run: runs[i].ID, Rerun: vs[i].rerun.ID, Failed: !vs[i].rerunW0, Why: vs[i].why, After: vs[i].after})
+					used = append(used, usedRerun{id, i, vs[i].rerun})
 				}
 			}
 			continue
@@ -311,27 +397,30 @@ func buildSample(in *Inputs) (*Sample, []RunInput, error) {
 		if rep != nil {
 			return nil, nil, fmt.Errorf("replacement %s -> %s: the chart's W0 is 3 of 3 (in every run, or on its rerun), so the rule does not replace it", rep.Chart, rep.Reserve)
 		}
-		// not replaced: a rerun that was fine stands in for the run's own
+		// not replaced: the rerun stands in for the run's chart, wholesale
 		for i := range vs {
 			if vs[i].rerun == nil {
 				continue
 			}
-			s.Reruns = append(s.Reruns, RerunUse{Chart: id, Run: runs[i].ID, Rerun: vs[i].rerun.ID, Failed: false})
+			s.Reruns = append(s.Reruns, RerunUse{Chart: id, Run: runs[i].ID, Rerun: vs[i].rerun.ID, Failed: false, Why: vs[i].why, After: vs[i].after})
+			used = append(used, usedRerun{id, i, vs[i].rerun})
 			for k := range runs[i].Report.Charts {
 				if runs[i].Report.Charts[k].Chart == id && runs[i].Report.Charts[k].FixOf == "" {
 					runs[i].Report.Charts[k] = *findBase(vs[i].rerun.Report, id)
 				}
 			}
-			if vs[i].rerun.HasRecords {
+			if runs[i].HasRecords {
 				var keep []Record
 				for _, r := range runs[i].Records {
 					if r.Chart != id {
 						keep = append(keep, r)
 					}
 				}
-				for _, r := range vs[i].rerun.Records {
-					if r.Chart == id {
-						keep = append(keep, r)
+				if vs[i].rerun.HasRecords {
+					for _, r := range vs[i].rerun.Records {
+						if r.Chart == id {
+							keep = append(keep, r)
+						}
 					}
 				}
 				runs[i].Records = keep
@@ -345,7 +434,17 @@ func buildSample(in *Inputs) (*Sample, []RunInput, error) {
 	}
 	for key, rid := range refs {
 		if !usedRef[key] {
-			return nil, nil, fmt.Errorf("rerun %s of %s is named but the rule needs none: the chart's W0 was 3 of 3 in that run (or the chart is not in the sample)", rid, strings.ReplaceAll(key, "|", " in run "))
+			chart, run, _ := strings.Cut(key, "|")
+			given := false
+			for _, r := range runs {
+				if r.ID == run {
+					given = true
+				}
+			}
+			if !given {
+				return nil, nil, fmt.Errorf("rerun %s of %s in run %s is named, but run %s is not given to this analysis", rid, chart, run, run)
+			}
+			return nil, nil, fmt.Errorf("rerun %s of %s in run %s is named but the rule needs none: that run leaves no chart-world of the chart undecided and its W0 is 3 of 3 (or the chart is not in the sample)", rid, chart, run)
 		}
 	}
 	for id := range rerunRun {
@@ -359,30 +458,37 @@ func buildSample(in *Inputs) (*Sample, []RunInput, error) {
 			return nil, nil, fmt.Errorf("rerun run %s is in the manifest but the replacements file names it for no chart", id)
 		}
 	}
-	// a stand-in changes when a chart was observed: rule 1's gap holds per chart
-	if len(runs) == 2 {
-		for _, u := range s.Reruns {
-			if u.Failed {
-				continue
-			}
-			end1, start2 := runs[0].Ended, runs[1].Started
-			for _, x := range s.Reruns {
-				if x.Chart != u.Chart || x.Failed {
-					continue
-				}
-				rr := rerunRun[x.Rerun]
-				if x.Run == runs[0].ID {
-					end1 = rr.Ended
-				} else {
-					start2 = rr.Started
-				}
-			}
-			if gap := start2.Sub(end1); gap < GapHours*time.Hour {
-				return nil, nil, fmt.Errorf("chart %q: with its rerun standing in, its two observations are only %.2f h apart; rule 1 needs at least %d h", u.Chart, gap.Hours(), GapHours)
-			}
+	for _, u := range used {
+		if err := checkRerunTiming(u.rr, u.run, runs, u.chart); err != nil {
+			return nil, nil, err
 		}
 	}
 	return s, runs, nil
+}
+
+// checkRerunTiming is the literal reading of rule 1 for a rerun (INTERPRETATIONS.md
+// 27, a definition beyond the document): the 12 h rule keeps using the original
+// runs' times, so a cell is still "two workflow runs at least 12 h apart" only if
+// the rerun of a run-1 chart is done before run 2 starts, and the rerun of a
+// run-2 chart starts at least 12 h after run 1 ended. Anything else is an error.
+// It applies once both runs are given.
+func checkRerunTiming(rr *RunInput, run int, runs []RunInput, chart string) error {
+	if len(runs) != 2 {
+		return nil
+	}
+	switch run {
+	case 0:
+		if !rr.Ended.Before(runs[1].Started) {
+			return fmt.Errorf("chart %q: its rerun %s of run %s ended at %s, not before run 2 (%s) started at %s; the rerun of a run-1 chart must be done before run 2 starts, or the cell's two observations are no longer two workflow runs at least %d h apart (rule 1; INTERPRETATIONS.md 27)",
+				chart, rr.ID, runs[0].ID, rr.Ended.Format(time.RFC3339), runs[1].ID, runs[1].Started.Format(time.RFC3339), GapHours)
+		}
+	case 1:
+		if gap := rr.Started.Sub(runs[0].Ended); gap < GapHours*time.Hour {
+			return fmt.Errorf("chart %q: its rerun %s of run %s started at %s, only %.2f h after run 1 (%s) ended at %s; the rerun of a run-2 chart must start at least %d h after run 1 ended (rule 1; INTERPRETATIONS.md 27)",
+				chart, rr.ID, runs[1].ID, rr.Started.Format(time.RFC3339), gap.Hours(), runs[0].ID, runs[0].Ended.Format(time.RFC3339), GapHours)
+		}
+	}
+	return nil
 }
 
 // findBase is findChart for a base chart (not a fix entry).

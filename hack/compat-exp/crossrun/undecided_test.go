@@ -15,6 +15,7 @@ func TestUndecidedShareBothReadings(t *testing.T) {
 	r2 := []ChartReport{chart("a", uw("W3", ledger.ReasonUndecided, bad(wk), bad("helm:install")))}
 	f := newFixture(r1, r2, nil)
 	f.pad(9) // 10 charts x W1, W3 = 20 compared chart-worlds
+	f.rerunUndecided()
 	res := f.analyze(t)
 	u := res.Undecided
 	if u.ByCells.Undecided != 2 || u.ByCells.Of != 2 || !u.ByCells.Over {
@@ -53,7 +54,9 @@ func undecidedFixture(n int, two bool) *fixture {
 	if two {
 		r2 = build()
 	}
-	return newFixture(build(), r2, nil)
+	f := newFixture(build(), r2, nil)
+	f.rerunUndecided() // undecided again after the rerun: the chart-world stays undecided and counts
+	return f
 }
 
 func TestUndecidedStopBoundary(t *testing.T) {

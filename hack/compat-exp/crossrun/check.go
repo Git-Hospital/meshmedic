@@ -23,6 +23,7 @@ func (a *analysis) checkRows() {
 		if pub := in.Publisher[r.Chart]; r.Publisher != "" && r.Publisher != pub {
 			a.errf("%s: publisher %q, the frame says %q", w, r.Publisher, pub)
 		}
+		a.checkNewKeyRule(i, r)
 		if r.Cause != "" && cr.Credit != "" && cr.Credit != r.Cause {
 			a.errf("%s: cause is %q but rule 3 credits the cell to %q from the part certificates", w, r.Cause, cr.Credit)
 		}
@@ -31,6 +32,28 @@ func (a *analysis) checkRows() {
 			a.checkCounted(w, r, cr)
 		case ledger.StatusExcluded:
 			a.checkExcluded(w, r, cr)
+		}
+	}
+}
+
+// checkNewKeyRule: a row may credit a key that carries needsNewKeyRule in
+// causes.json only if the ledger also holds a complete, admitted new-key record
+// for it, exactly as for a key that is not in causes.json (section 3). The
+// ledger check says the same on load; this keeps the analysis itself from
+// treating a flagged key as frozen when it is given a ledger directly.
+func (a *analysis) checkNewKeyRule(i int, r *ledger.Row) {
+	causes := []string{r.Cause}
+	for _, p := range r.Parts {
+		causes = append(causes, p.Cause)
+	}
+	seen := map[string]bool{}
+	for _, k := range causes {
+		if k == "" || seen[k] || !a.in.Causes.NeedsNewKeyRule(k) {
+			continue
+		}
+		seen[k] = true
+		if !ledger.AdmittedNewKey(a.in.Ledger, k) {
+			a.errf("%s: cause %q needs the new-key rule (causes.json: needsNewKeyRule, no documentation anchor): it is credited only with a complete, admitted new-key record in the ledger's newKeys", rowLabel(i, *r), k)
 		}
 	}
 }

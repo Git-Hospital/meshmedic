@@ -348,7 +348,7 @@ func TestRerunEvidence(t *testing.T) {
 	t.Run("a rerun for a run in which W0 was 3 of 3 is refused", func(t *testing.T) {
 		f := build()
 		addRerun(f, "c", 1, true, nil)
-		if msg := f.analyzeErr(t); !strings.Contains(msg, "replaces a failed W0 only") {
+		if msg := f.analyzeErr(t); !strings.Contains(msg, "leaves no chart-world") {
 			t.Fatal(msg)
 		}
 	})
@@ -360,16 +360,15 @@ func TestRerunEvidence(t *testing.T) {
 			t.Fatal(msg)
 		}
 	})
-	t.Run("a run-1 rerun that leaves under 12 h before run 2 is not a gap", func(t *testing.T) {
+	t.Run("a run-1 rerun is fine when it ends before run 2 starts, an error when it does not", func(t *testing.T) {
 		f := sampleFixture()
 		pullLoss(f, 0, "b")
 		addRerun(f, "b", 0, true, nil) // ends 1.5 h after run 1 ended; run 2 starts 12 h after run 1 ended
-		if msg := f.analyzeErr(t); !strings.Contains(msg, "rule 1 needs at least 12 h") {
+		f.analyze(t)
+		f.in.Reruns[0].Ended = f.in.Runs[1].Started.Add(time.Minute)
+		if msg := f.analyzeErr(t); !strings.Contains(msg, "before run 2 starts") {
 			t.Fatal(msg)
 		}
-		f.in.Runs[1].Started = f.in.Runs[0].Ended.Add(14 * time.Hour)
-		f.in.Runs[1].Ended = f.in.Runs[1].Started.Add(time.Hour)
-		f.analyze(t)
 	})
 	t.Run("the rerun's records stand in for the run's", func(t *testing.T) {
 		f := build()

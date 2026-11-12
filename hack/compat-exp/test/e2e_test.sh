@@ -224,6 +224,8 @@ observe_set() {
       mkpods "$ready" "$name" >"$S/pods.json"
       # PULL_W0: charts whose W0 pods cannot pull their image (a registry refusal, as in the pilots)
       [[ "$w" == W0 && " ${PULL_W0:-} " == *" $id "* ]] && mkpods_pull "$name" >"$S/pods.json"
+      # PULL_W3: charts whose W3 pods cannot pull (the world cannot be decided; W0 and W1 are fine)
+      [[ "$w" == W3 && " ${PULL_W3:-} " == *" $id "* ]] && mkpods_pull "$name" >"$S/pods.json"
       observe_job "$runid" "$dir" "$cf" "$id" "$w" "${TEST_POD:-auto}" || return 1
     done
   done
@@ -566,6 +568,24 @@ grep -q 'rule 3 credits the cell to "ambient-l7"' "$T/parts-b.err" && ok "  and 
 parts_inputs "$T/parts-c" app-2-pc-stuck '["1010","1011"]' false app-2-pb-stuck '["1008","1009"]' protocol 1008 1009 1010 1011
 eq "rule 3: neither part alone clears the cells: the first key in the list, protocol, with the combined certificate" "$?:$(jq -c '[.cells[] | select(.chart == "app-2" and .status == "counted") | .credit]' "$T/parts-c.json")" '0:["protocol","protocol"]'
 
+# A key that causes.json flags needsNewKeyRule (apiserver-caller) enters only by the new-key rule (crossrun/INTERPRETATIONS.md 26):
+# the real causes.json, the real ledger check and the real crossrun. Without a new-key record the ledger is refused;
+# with an admitted record the cells count (N_new, P_new) and the key's check is reported but never earns S.
+jq '.rows |= map(if .chart == "app-2" then .cause = "apiserver-caller" else . end)' "$T/ledger.json" >"$T/nkr.ledger.json"
+"$B/ledger" check -ledger "$T/nkr.ledger.json" -causes "$repo/hack/compat-exp/causes.json" >"$T/nkr.lc" 2>&1
+eq "needsNewKeyRule: a row crediting apiserver-caller without a new-key record fails the ledger check (exit 1)" "$?" 1
+grep -q 'needs the new-key rule' "$T/nkr.lc" && ok "  and the error says so" || bad "  error text: $(head -3 "$T/nkr.lc")"
+jq --arg c "$id2" '.newKeys = [{key: "apiserver-caller", anchor: "https://github.com/istio/istio/issues/0", certifiedFix: "app-2-fix", reproduction: "hack/compat-exp/repro/apiserver-caller.sh", reviewer: {verdict: "admit", run: "9002"}}]' "$T/nkr.ledger.json" >"$T/nkr2.ledger.json"
+"$B/ledger" check -ledger "$T/nkr2.ledger.json" -causes "$repo/hack/compat-exp/causes.json" >"$T/nkr2.lc" 2>&1 && ok "needsNewKeyRule: with a complete, admitted new-key record the ledger check passes" || { bad "ledger check with the record"; head -3 "$T/nkr2.lc"; }
+jq --arg l "$T/nkr.ledger.json" '.ledger = $l' "$T/analysis/inputs.json" >"$T/nkr.inputs.json"
+"$B/crossrun" -inputs "$T/nkr.inputs.json" -json "$T/nkr.json" >"$T/nkr.err" 2>&1
+eq "needsNewKeyRule: crossrun refuses the ledger without the record (exit 2, the ledger fails its check)" "$?" 2
+jq --arg l "$T/nkr2.ledger.json" '.ledger = $l' "$T/analysis/inputs.json" >"$T/nkr2.inputs.json"
+"$B/crossrun" -inputs "$T/nkr2.inputs.json" -json "$T/nkr2.json" -md "$T/nkr2.md" >"$T/nkr2.err" 2>&1
+eq "needsNewKeyRule: with the record the cells are credited to apiserver-caller and count" "$?:$(jq -c '[.cells[] | select(.chart == "app-2" and .status == "counted") | .credit]' "$T/nkr2.json")" '0:["apiserver-caller","apiserver-caller"]'
+eq "needsNewKeyRule: counted in N_new and P_new, S is 0" "$(jq -c '.metrics | [.nNew, .pNew, .s]' "$T/nkr2.json")" '[1,1,0]'
+eq "needsNewKeyRule: its static check is reported and does not count toward S" "$(jq -c '.staticChecks[] | select(.key == "apiserver-caller") | [.check, .qualifies, (.notCountedTowardS | length > 0)]' "$T/nkr2.json")" '["webhook-backend-in-mesh",false,true]'
+
 # The replacement rule (crossrun/INTERPRETATIONS.md 22). Variant runs 1101 and 1102 are runs 1001 and 1002 with the
 # reserve app-51 added, and in run 1102 the W0 of app-6 and app-7 cannot pull its image (real observe jobs, the registry
 # refusal of the pilots). Each is rerun once in a separate observe run restricted to the chart (1012, 1013): app-6's W0
@@ -624,6 +644,42 @@ grep -q "no such replacement is in the replacements file" "$T/repl-none.out" && 
 repl_inputs repl-norerun '{"schema":1,"reruns":[],"replacements":[{"chart":"app-7","reserve":"app-51","reason":"x","run":"1102","rerun":"1013"}]}'
 eq "replacement rule: app-6 without a named rerun is refused (exit 1)" "$?" 1
 grep -q 'chart "app-6": W0 was not 3 of 3 in run 1102' "$T/repl-norerun.out" && ok "  and names the chart and the run" || bad "  error text: $(head -3 "$T/repl-norerun.out")"
+
+# The undecided stop is taken "after one rerun" (crossrun/INTERPRETATIONS.md 27). Variant runs 1201 and 1202 are runs 1001
+# and 1002 (no reserve in the reports), and in run 1202 the W3 pods of app-8 cannot pull their image: W3 of app-8 is
+# undecided. The rerun 1212 is one observe run restricted to app-8, all three worlds, with a clean W3.
+variant 1001 1201; variant 1002 1202
+rm -rf "$T"/res-1201/exp-1201-app-51-* "$T"/res-1202/exp-1202-app-51-*
+PULL_W3="app-8" observe_set 1202 "$T/res-1202-pull" "$T/plan-observe/charts.json" 1.31.3 app-8 && ok "observe job steps: W3 of app-8 cannot pull in run 1202"
+for w in W0 W1 W3; do rm -rf "$T/res-1202/exp-1202-app-8-$w"; cp -R "$T/res-1202-pull/exp-1202-app-8-$w" "$T/res-1202/"; done
+observe_set 1212 "$T/res-1212" "$T/plan-observe/charts.json" 1.31.3 app-8 && ok "observe job steps: the rerun of app-8, restricted to the chart, all three worlds"
+for r in 1201 1202 1212; do report_job $r "$T/res-$r"; done
+eq "undecided rerun: W3 of app-8 is undecided in run 1202 and decided in its rerun" \
+  "$(jq -r '.charts[] | select(.chart == "app-8") | [.worlds[] | select(.world == "W3") | .verdict] | .[0]' "$T/report-1202.json") $(jq -r '.charts[0].worlds[] | select(.world == "W3") | .verdict' "$T/report-1212.json")" 'undecided same'
+und_inputs() { # NAME REPLACEMENTS-JSON
+  echo "$2" >"$T/$1.repl.json"
+  jq --arg r1 "$T/res-1201" --arg r2 "$T/res-1202" --arg p1 "$T/report-1201.json" --arg p2 "$T/report-1202.json" \
+     --arg a "$T/report-1212.json" --arg ra "$T/res-1212" --arg repl "$T/$1.repl.json" '
+    .runs[0] += {id: "1201", report: $p1, records: $r1} | .runs[1] += {id: "1202", report: $p2, records: $r2}
+    | .reruns = [{id: "1212", report: $a, records: $ra, started: "2026-11-21T03:00:00Z", ended: "2026-11-21T03:40:00Z"}]
+    | .replacements = $repl' "$T/analysis/inputs.json" >"$T/$1.inputs.json"
+  jq '.rows |= map(if .runs then .runs.run1 = "1201" | .runs.run2 = "1202" else . end)' "$T/ledger.json" >"$T/$1.ledger.json"
+  jq --arg l "$T/$1.ledger.json" '.ledger = $l' "$T/$1.inputs.json" >"$T/x" && mv "$T/x" "$T/$1.inputs.json"
+  jq --arg f "$T/charts-exp.json" '.frame = $f' "$T/$1.inputs.json" >"$T/x" && mv "$T/x" "$T/$1.inputs.json"
+  "$B/crossrun" -inputs "$T/$1.inputs.json" -json "$T/$1.json" -md "$T/$1.md" >"$T/$1.out" 2>&1
+}
+und_inputs und-good '{"schema":1,"reruns":[{"chart":"app-8","run":"1202","rerun":"1212"}],"replacements":[]}' && urc=0 || urc=$?
+[[ -s "$T/und-good.out" ]] && head -5 "$T/und-good.out" >&2
+eq "undecided rerun: app-8 rerun once, its records stand in (exit 0, not replaced)" "$urc:$(jq -c '[(.sample.replacements | length), (.sample.reruns | map([.chart, .run, .rerun, .failedAgain]))]' "$T/und-good.json")" '0:[0,[["app-8","1202","1212",false]]]'
+eq "undecided rerun: the share before the rerun counts the undecided chart-world, the share after does not" \
+  "$(jq -c '.undecidedShare | [.chartWorldsBeforeReruns.undecided, .chartWorldsReading.undecided, .chartWorldsReading.of, .rerunsApplied, .rerunsPending]' "$T/und-good.json")" '[1,0,100,1,0]'
+grep -q "before the reruns: 1 of 100" "$T/und-good.md" && ok "  and the markdown prints both shares" || bad "  markdown: $(grep -n 'reruns' "$T/und-good.md" | head -3)"
+und_inputs und-missing '{"schema":1,"reruns":[],"replacements":[]}'
+eq "undecided rerun: W3 undecided in run 1202 and no rerun listed is refused in a final analysis (exit 1)" "$?" 1
+grep -q 'chart "app-8": run 1202 leaves W3 undecided, and no rerun' "$T/und-missing.out" && ok "  and names the chart, the run and the world" || bad "  error text: $(head -3 "$T/und-missing.out")"
+und_inputs und-healthy '{"schema":1,"reruns":[{"chart":"app-8","run":"1201","rerun":"1212"},{"chart":"app-8","run":"1202","rerun":"1212"}],"replacements":[]}'
+eq "undecided rerun: a rerun listed for run 1201, where app-8 is healthy, is refused (exit 1)" "$?" 1
+grep -q 'leaves no chart-world of "app-8" undecided' "$T/und-healthy.out" && ok "  and says the chart meets no condition there" || bad "  error text: $(head -3 "$T/und-healthy.out")"
 
 # test mode: the overrides work, and every output says so
 env PATH="$T/bin:$PATH" MMC_STATE="$T/state" MMC_ANALYZE_TEST=1 CROSSRUN="$B/crossrun" LEDGER="$B/ledger" STATICCHECK="$B/staticcheck" \

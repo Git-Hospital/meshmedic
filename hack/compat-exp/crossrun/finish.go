@@ -192,9 +192,14 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 	if UndecidedStop == ReadingChartWorlds {
 		driver = byCW
 	}
+	before := chartWorldShare(a.sample.Orig, a.sample.Active)
+	note := "the stop applies after one rerun (section 7): the share is taken after the reruns of INTERPRETATIONS.md 27 are applied (a chart is rerun if and only if its run leaves a chart-world undecided or its W0 not 3 of 3); the share before them is printed beside it"
+	if n := len(a.sample.Pending); n > 0 {
+		note += fmt.Sprintf("; %d rerun(s) are still pending, so this share is not final", n)
+	}
 	res.Undecided = UndecidedShare{Undecided: undecided, Cells: len(a.cells), Over: driver.Over, Drives: UndecidedStop,
-		ByCells: byCells, ByChartWorlds: byCW,
-		NoteAfterRR: "the stop applies after one rerun; crossrun computes the share over the runs given, with only W0-failure reruns applied (INTERPRETATIONS.md 14)"}
+		ByCells: byCells, ByChartWorlds: byCW, BeforeReruns: before,
+		RerunsApplied: len(a.sample.Reruns), RerunsPending: len(a.sample.Pending), NoteAfterRR: note}
 
 	// if all open cells counted
 	hyp := append([]counted{}, cs...)
@@ -292,10 +297,28 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 	}
 }
 
-// staticKey runs the S test for one key over its counted cells.
+// staticKey runs the S test for one key over its counted cells. A key that
+// carries needsNewKeyRule is run and reported the same way and then marked as
+// not counting toward S: a key admitted after the freeze never earns S
+// (INTERPRETATIONS.md 12 and 25).
 func (a *analysis) staticKey(key string, cells []counted) StaticKey {
+	sk := a.scoreStatic(key, cells)
+	if a.in.Causes.NeedsNewKeyRule(key) {
+		sk.Qualifies = false
+		sk.NotCountedReason = NotCountedNewKeyRule
+	}
+	return sk
+}
+
+func (a *analysis) scoreStatic(key string, cells []counted) StaticKey {
 	check, hasCheck, why := a.checkID(key)
 	sk := StaticKey{Key: key, Check: check, FlagsAll: true, Qualifies: true, Worlds: []StaticWorld{}, CountedFor: []ledger.Cell{}}
+	// A key flagged needsNewKeyRule is reported with its check and never earns
+	// S; missing static rows for it are not errors (it is not scored).
+	fail := a.errf
+	if a.in.Causes.NeedsNewKeyRule(key) {
+		fail = func(string, ...any) {}
+	}
 	worlds := map[string]bool{}
 	for _, c := range cells {
 		sk.CountedFor = append(sk.CountedFor, c.cell)
@@ -310,7 +333,7 @@ func (a *analysis) staticKey(key string, cells []counted) StaticKey {
 	for _, c := range cells {
 		f, app, found := a.staticRow(c.cell.Chart, c.cell.World, key, check)
 		if !found {
-			a.errf("static results lack check %q for %s/%s, which has a counted finding of key %s", check, c.cell.Chart, c.cell.World, key)
+			fail("static results lack check %q for %s/%s, which has a counted finding of key %s", check, c.cell.Chart, c.cell.World, key)
 			continue
 		}
 		if !app {
@@ -346,11 +369,11 @@ func (a *analysis) staticKey(key string, cells []counted) StaticKey {
 			sw.SameCharts++
 			f, app, found := a.staticRow(ch, w, key, check)
 			if !found {
-				a.errf("static results lack check %q for %s/%s, a chart that was same in %s", check, ch, w, w)
+				fail("static results lack check %q for %s/%s, a chart that was same in %s", check, ch, w, w)
 				continue
 			}
 			if !app {
-				a.errf("static results say check %q does not apply to %s for chart %s, but applies for a counted finding there", check, w, ch)
+				fail("static results say check %q does not apply to %s for chart %s, but applies for a counted finding there", check, w, ch)
 				continue
 			}
 			if f {
@@ -367,4 +390,44 @@ func (a *analysis) staticKey(key string, cells []counted) StaticKey {
 		sk.Qualifies = false
 	}
 	return sk
+}
+
+// chartWorldShare is the chart-worlds reading of the undecided share over the
+// given runs' reports and chart set: a chart-world (chart, W1 or W3) is
+// undecided when any of the runs' reports says so, and compared when every run
+// has it.
+func chartWorldShare(runs []RunInput, charts []string) Share {
+	var sh Share
+	for _, id := range charts {
+		for _, w := range requiredWorlds {
+			compared, undecided := true, false
+			for _, r := range runs {
+				ch := findBase(r.Report, id)
+				var wr *WorldReport
+				if ch != nil {
+					for k := range ch.Worlds {
+						if ch.Worlds[k].World == w {
+							wr = &ch.Worlds[k]
+						}
+					}
+				}
+				if wr == nil {
+					compared = false
+					continue
+				}
+				if wr.Verdict == "undecided" {
+					undecided = true
+				}
+			}
+			if !compared {
+				continue
+			}
+			sh.Of++
+			if undecided {
+				sh.Undecided++
+			}
+		}
+	}
+	sh.Over = sh.Undecided*100 > UndecidedPercent*sh.Of
+	return sh
 }

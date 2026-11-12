@@ -161,7 +161,7 @@ func newFixture(r1, r2 []ChartReport, pubs map[string]string) *fixture {
 
 // mustCauses is causes.json's shape with every key's static check named after
 // the key and applying in both mesh worlds, except bind-address (null, as in
-// the real file). The real file is read by TestRealCausesFile.
+// the real file); apiserver-caller carries needsNewKeyRule, as in the real file. The real file is read by TestRealCausesFile.
 func mustCauses() *ledger.Causes {
 	var items []string
 	for _, k := range []string{"ambient-np", "protocol", "bind-address", "uid-1337", "reserved-port", "startup-order", "job-lifecycle", "apiserver-caller", "ambient-l7"} {
@@ -169,7 +169,11 @@ func mustCauses() *ledger.Causes {
 		if k == "bind-address" {
 			sc = "null"
 		}
-		items = append(items, `{"key":"`+k+`","worlds":["W1","W3"],"staticCheck":`+sc+`}`)
+		flag := ""
+		if k == "apiserver-caller" {
+			flag = `,"needsNewKeyRule":true` // as in the real file
+		}
+		items = append(items, `{"key":"`+k+`","worlds":["W1","W3"],"staticCheck":`+sc+flag+`}`)
 	}
 	c, err := ledger.ParseCauses([]byte(`{"keys":[` + strings.Join(items, ",") + `]}`))
 	if err != nil {
@@ -255,6 +259,27 @@ func (f *fixture) pad(n int) {
 		f.in.FrameOrder = append(f.in.FrameOrder, name)
 		for i := range f.in.Runs {
 			f.in.Runs[i].Report.Charts = append(f.in.Runs[i].Report.Charts, chart(name, wr("W1", ok(wk), ok("helm:test")), wr("W3", ok(wk), ok("helm:test"))))
+		}
+	}
+}
+
+// rerunUndecided gives every chart that a run leaves with an undecided
+// chart-world (and W0 3 of 3) the rerun the rule demands, showing the chart
+// again exactly as the run had it: undecided again after the rerun, so the
+// chart stays undecided and counts, as it did before reruns existed.
+func (f *fixture) rerunUndecided() {
+	for i := range f.in.Runs {
+		for _, ch := range f.in.Runs[i].Report.Charts {
+			if ch.FixOf != "" {
+				continue
+			}
+			if w0, _ := w0Met(&ch, 3); !w0 || len(undecidedRequired(&ch)) == 0 {
+				continue
+			}
+			rid := fmt.Sprintf("rr%d-%s", i+1, ch.Chart)
+			start := f.in.Runs[i].Ended.Add(time.Hour)
+			f.in.Reruns = append(f.in.Reruns, RunInput{ID: rid, Started: start, Ended: start.Add(30 * time.Minute), Report: report(ch)})
+			f.in.RerunRefs = append(f.in.RerunRefs, RerunRef{Chart: ch.Chart, Run: f.in.Runs[i].ID, Rerun: rid})
 		}
 	}
 }

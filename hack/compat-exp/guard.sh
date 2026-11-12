@@ -52,8 +52,8 @@
 #     the qualification run's records is what binds the sample). In qualify mode the list is the candidate list, which must be
 #     identical to the tag's.
 #  5. Every fix entry: fixOf names a chart in the frozen list (charts and
-#     reserves), its cause is a key of causes.json or a new key with a complete
-#     record in ledger.json, it pins the same chart,
+#     reserves), its cause is a key of causes.json (one carrying needsNewKeyRule
+#     excepted) or a new key with a complete record in ledger.json, it pins the same chart,
 #     version and repo, its values are --set/--set-string/--set-json pairs only
 #     (no flag that runs code, such as --post-renderer), its patch is a file under
 #     hack/compat-exp/patches/, its cellWorlds (certify) are mesh worlds and its
@@ -308,9 +308,12 @@ causes=
 if [[ -f "$root/hack/compat-exp/causes.json" ]]; then
   # The real shape (hack/compat-exp/causes.json): an object whose list is under
   # `keys`, each entry with a string `key`. No other shape is read.
-  causes="$(jq -c '.keys | map(.key | strings)' "$root/hack/compat-exp/causes.json" 2>/dev/null)" ||
+  # A key with needsNewKeyRule true is in the file and is not a frozen key: it
+  # enters only by the new-key rule, so it is left out of this list and a fix
+  # entry may name it only with a complete, admitted new-key record (below).
+  causes="$(jq -c '.keys | map(select(.needsNewKeyRule != true) | .key | strings)' "$root/hack/compat-exp/causes.json" 2>/dev/null)" ||
     die "causes.json is not readable: it must be an object with a list under keys"
-  [[ "$(jq length <<<"$causes")" -gt 0 ]] || die "causes.json holds no cause keys"
+  [[ "$(jq length <<<"$causes")" -gt 0 ]] || die "causes.json holds no frozen cause keys"
   # A fix entry's cause may also be a new key recorded in the ledger with a
   # complete new-key record (section 3 "New key"; ledger/ledger.go NewKey): an
   # anchor, a certified fix, a reproduction and an admitting reviewer verdict
@@ -369,7 +372,7 @@ problems="$(jq -rn --argjson base "$entries_json" --argjson fixes "$fixes_json" 
     ($fixes[] | . as $f
        | common($f),
          (if ($ids | index($f.fixOf)) == null then "\($f.id): fixOf \($f.fixOf) is not in the frozen chart list" else empty end),
-         (if $causes != null and (($causes | index($f.cause)) == null) then "\($f.id): cause \($f.cause) is neither a key of causes.json nor a new key recorded completely in ledger.json" else empty end),
+         (if $causes != null and (($causes | index($f.cause)) == null) then "\($f.id): cause \($f.cause) is neither a key of causes.json nor a new key recorded completely in ledger.json (a key with needsNewKeyRule in causes.json counts as a new key, not as a frozen one)" else empty end),
          (($base[] | select(.id == $f.fixOf)) as $b
             | if $b.chart != $f.chart or $b.version != $f.version or ($b.repo // "") != ($f.repo // "")
               then "\($f.id): chart, version and repo must equal those of \($f.fixOf)" else empty end),
