@@ -374,6 +374,178 @@ func TestRemediationRefusesACommandWhoseClusterCannotBeChecked(t *testing.T) {
 	}
 }
 
+// The reviewer's two commands on PR 47, run against kubectl 1.35, both sent the
+// request to other.example while --context said kind-a. pflag lets short flags
+// be grouped (-Rs, -As=URL) and glue their value on (-Rshttps://...), so no rule
+// that looks for a token starting with -s can find them.
+func TestUncheckableRefusesGroupedShortFlagsCarryingAServer(t *testing.T) {
+	for _, argv := range [][]string{
+		{"kubectl", "--context=kind-a", "apply", "-Rs", "https://other.example", "-f", "dir"},
+		{"kubectl", "--context=kind-a", "delete", "-As=https://other.example", "pods", "--all"},
+		{"kubectl", "--context=kind-a", "delete", "-sR", "https://other.example", "pods", "--all"},
+		{"kubectl", "--context=kind-a", "delete", "-Rshttps://other.example", "pods", "--all"},
+		{"kubectl", "--context=kind-a", "delete", "-Rf", "dir", "-s", "https://other.example"},
+		{"kubectl", "--context=kind-a", "delete", "-Ras", "x", "-Rs", "y", "pods"},
+		{"kubectl", "--context=kind-a", "delete", "-s=https://other.example", "pods"},
+		{"kubectl", "--context=kind-a", "-As", "https://other.example", "delete", "pods"},
+	} {
+		if why := uncheckable(argv); why == "" {
+			t.Errorf("%q passed, and kubectl would send it to another server", strings.Join(argv, " "))
+		}
+	}
+}
+
+// Past the subcommand a single-dash token is allowed only as one of the four
+// short flags the shipped specs use, alone. Anything else, grouped, glued,
+// repeated or unknown, is refused whatever letters it holds.
+func TestUncheckableAllowsOnlyTheShortFlagsSpecsUse(t *testing.T) {
+	base := []string{"kubectl", "--context=kind-a"}
+	cases := []struct {
+		name string
+		tail []string
+		ok   bool
+	}{
+		{"-f alone with a dash value", []string{"apply", "-f", "-"}, true},
+		{"-f with a file", []string{"apply", "-f", "dir/a.json"}, true},
+		{"-p with a patch", []string{"patch", "deploy/x", "-p", "{}"}, true},
+		{"-l with a selector", []string{"wait", "--for=delete", "pod", "-l", "app=x"}, true},
+		{"-n after the subcommand", []string{"delete", "pod", "x", "-n", "demo"}, true},
+		{"a bare dash", []string{"apply", "-f", "-"}, true},
+		{"a double dash terminator", []string{"delete", "--", "pod"}, true},
+		{"a value with a trailing dash", []string{"set", "env", "deploy/x", "ERROR_CODE-"}, true},
+		{"-s", []string{"delete", "pod", "-s", "https://o"}, false},
+		{"-s glued", []string{"delete", "pod", "-shttps://o"}, false},
+		{"-s with equals", []string{"delete", "pod", "-s=https://o"}, false},
+		{"-R", []string{"delete", "-R", "-f", "dir"}, false},
+		{"-Rf grouped", []string{"delete", "-Rf", "dir"}, false},
+		{"-fR grouped", []string{"delete", "-fR", "dir"}, false},
+		{"-lapp=x glued", []string{"delete", "pod", "-lapp=x"}, false},
+		{"-n=demo", []string{"delete", "pod", "-n=demo"}, false},
+		{"-ndemo", []string{"delete", "pod", "-ndemo"}, false},
+		{"-v", []string{"delete", "pod", "-v", "9"}, false},
+		{"-o", []string{"delete", "pod", "-o", "name"}, false},
+		{"-sS two groups", []string{"delete", "-Rs", "a", "-As", "b"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			argv := append(append([]string{}, base...), c.tail...)
+			why := uncheckable(argv)
+			if c.ok && why != "" {
+				t.Errorf("%q refused: %s", strings.Join(argv, " "), why)
+			}
+			if !c.ok && why == "" {
+				t.Errorf("%q accepted", strings.Join(argv, " "))
+			}
+		})
+	}
+}
+
+// Every flag that moves a command to another cluster, another kubeconfig or
+// another set of credentials or transport settings is refused, with a value
+// after = or in the next token, before or after the subcommand, and with the
+// underscore spelling kubectl also accepts (it maps _ to - in flag names; pflag
+// itself does no prefix matching, so an abbreviation is an unknown flag).
+func TestUncheckableRefusesEveryConnectionOverride(t *testing.T) {
+	flags := []string{
+		"--server", "--kubeconfig", "--kuberc", "--cluster", "--context",
+		"--user", "--token", "--username", "--password",
+		"--as", "--as-group", "--as-uid", "--as-user-extra",
+		"--certificate-authority", "--client-certificate", "--client-key",
+		"--insecure-skip-tls-verify", "--tls-server-name", "--proxy-url",
+	}
+	for _, f := range flags {
+		spellings := []string{f, f + "=x", strings.ReplaceAll(f, "-", "_") + "=x"}
+		spellings[2] = "--" + strings.TrimPrefix(spellings[2], "__")
+		for _, sp := range spellings {
+			for _, pos := range []string{"before", "after", "between"} {
+				var argv []string
+				switch pos {
+				case "before":
+					argv = []string{"kubectl", "--context=kind-a", sp, "x", "delete", "pod", "p"}
+				case "after":
+					argv = []string{"kubectl", "--context=kind-a", "delete", "pod", "p", sp, "x"}
+				default:
+					argv = []string{"kubectl", "--context=kind-a", "-n", "demo", sp, "x", "delete", "pod", "p"}
+				}
+				if why := uncheckable(argv); why == "" {
+					t.Errorf("%q passed", strings.Join(argv, " "))
+				}
+			}
+		}
+	}
+}
+
+// What stays allowed besides the list above: long flags that merely contain a
+// refused name, and the long flags the shipped specs use.
+func TestUncheckableKeepsAcceptingHarmlessLongFlags(t *testing.T) {
+	for _, tail := range [][]string{
+		{"apply", "--server-side", "-f", "-"},
+		{"apply", "--field-manager=meshmedic", "-f", "-"},
+		{"delete", "pod", "x", "--ignore-not-found", "--grace-period=1"},
+		{"patch", "deploy/x", "--type=merge", "-p", "{}"},
+		{"rollout", "status", "deploy/x", "--timeout=180s"},
+		{"wait", "--for=condition=Ready", "pod/x", "--timeout=180s"},
+		{"scale", "deploy/x", "--replicas=0"},
+	} {
+		argv := append([]string{"kubectl", "--context=kind-a"}, tail...)
+		if why := uncheckable(argv); why != "" {
+			t.Errorf("%q refused: %s", strings.Join(argv, " "), why)
+		}
+	}
+}
+
+// Other ways to leave the pinned cluster that are not flags after the context.
+func TestUncheckableRefusesTheNonFlagRoutes(t *testing.T) {
+	for name, argv := range map[string][]string{
+		"env assignment first":      {"env", "KUBECONFIG=/prod", "kubectl", "--context=kind-a", "delete", "pod"},
+		"inline assignment as argv": {"KUBECONFIG=/prod", "kubectl", "--context=kind-a", "delete", "pod"},
+		"a path to kubectl":         {"/usr/local/bin/kubectl", "--context=kind-a", "delete", "pod"},
+		"context after a flag":      {"kubectl", "-n", "demo", "--context=kind-a", "delete", "pod"},
+		"context spaced":            {"kubectl", "--context", "kind-a", "delete", "pod"},
+		"config":                    {"kubectl", "--context=kind-a", "config", "use-context", "prod"},
+		"a plugin":                  {"kubectl", "--context=kind-a", "foo", "bar"},
+		"proxy":                     {"kubectl", "--context=kind-a", "proxy"},
+		"port-forward":              {"kubectl", "--context=kind-a", "port-forward", "svc/x", "80"},
+		"exec":                      {"kubectl", "--context=kind-a", "exec", "pod/x", "--", "sh"},
+		"cp":                        {"kubectl", "--context=kind-a", "cp", "a", "b"},
+		"debug":                     {"kubectl", "--context=kind-a", "debug", "pod/x"},
+		"run":                       {"kubectl", "--context=kind-a", "run", "x", "--image=y"},
+		"attach":                    {"kubectl", "--context=kind-a", "attach", "pod/x"},
+		"a double dash first":       {"kubectl", "--context=kind-a", "--", "delete", "pod"},
+		"a subcommand case change":  {"kubectl", "--context=kind-a", "Delete", "pod"},
+	} {
+		if why := uncheckable(argv); why == "" {
+			t.Errorf("%s: %q passed", name, strings.Join(argv, " "))
+		}
+	}
+}
+
+// Every kubectl command in every shipped proof spec, including those without a
+// remediation block, passes the rule, so tightening it cannot strand a spec.
+func TestEveryShippedSpecCommandPassesUncheckable(t *testing.T) {
+	_, specs := shipped(t)
+	n := 0
+	for _, sp := range specs {
+		cmds := append(append([]Command{}, sp.Inject...), sp.Reset...)
+		if sp.Remediation != nil {
+			cmds = append(cmds, sp.Remediation.Revert...)
+		}
+		for _, c := range cmds {
+			if len(c.Run) == 0 || c.Run[0] != "kubectl" {
+				continue
+			}
+			n++
+			if why := uncheckable(c.Run); why != "" {
+				t.Errorf("%s: %q refused: %s", sp.Entry, strings.Join(c.Run, " "), why)
+			}
+		}
+	}
+	if n < 40 {
+		t.Errorf("only %d kubectl commands found in the shipped specs; the walk is not seeing them", n)
+	}
+	t.Logf("%d kubectl commands in %d specs checked", n, len(specs))
+}
+
 // The shapes the shipped specs use, and the generated apply, are accepted.
 func TestRemediationAcceptsTheShapesShippedSpecsUse(t *testing.T) {
 	for _, argv := range [][]string{

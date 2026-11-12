@@ -249,8 +249,12 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A spec with a remediation block must run every inject, reset and revert
   command, and the generated apply, in one checkable shape, or nothing runs
   and the refusal names the command: `kubectl` with `--context=NAME` as the
-  very next token and no other `--context` anywhere; no `--kubeconfig`,
-  `--server`, `--cluster` or single-dash `-s` token in any spelling; nothing
+  very next token and no other `--context` anywhere; none of the flags that
+  change the server, kubeconfig, credentials or transport (`--server`,
+  `--kubeconfig`, `--cluster`, `--user`, `--token`, `--as`, `--proxy-url` and
+  the like, with `_` or `-`); no single-dash token other than `-f`, `-p`, `-l`
+  and `-n` standing alone (short flags can be grouped, as in `-Rs URL`, so
+  `-s` cannot be searched for); nothing
   before the subcommand except `-n` or `--namespace` with a value; and a
   subcommand from an allowlist (annotate, apply, create, delete, label,
   patch, rollout, scale, set, wait). That refuses `sh -c`, `env`, plugins,

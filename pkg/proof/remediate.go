@@ -332,19 +332,60 @@ var remediationSubcommands = map[string]bool{
 	"patch": true, "rollout": true, "scale": true, "set": true, "wait": true,
 }
 
+// refusedLongFlags are the kubectl flags that change which API server a
+// command reaches, which kubeconfig or preferences file it reads, or what
+// credentials and transport settings it uses. Names are compared after
+// kubectl's own normalisation, which maps _ to - (k8s.io/component-base
+// cli/flag WordSepNormalizeFunc). Nothing else is normalised: pflag looks a
+// long flag up by exact name (flag.go parseLongArg, f.formal[...]), so
+// --serv is an unknown flag, not --server; kubectl 1.35 answers "unknown flag:
+// --serv". Only the first four change the cluster. The rest keep the address
+// but cannot be shown harmless from argv (--proxy-url sends the traffic
+// through a proxy of the author's choosing), and no spec needs any of them.
+var refusedLongFlags = map[string]string{
+	"context":    "a second --context, and only the one directly after kubectl is allowed",
+	"kubeconfig": "--kubeconfig, which can point the same context name at another cluster",
+	"kuberc":     "--kuberc, which swaps the preferences file that can alias and default commands",
+	"server":     "--server, which sends the command to another API server whatever its --context says",
+	"cluster":    "--cluster, which sends the command to another API server whatever its --context says",
+
+	"user": "--user, which swaps the credentials", "token": "--token, which swaps the credentials",
+	"username": "--username, which swaps the credentials", "password": "--password, which swaps the credentials",
+	"as": "--as, which impersonates another identity", "as-group": "--as-group, which impersonates another identity",
+	"as-uid": "--as-uid, which impersonates another identity", "as-user-extra": "--as-user-extra, which impersonates another identity",
+	"certificate-authority":    "--certificate-authority, which changes who the server is trusted to be",
+	"client-certificate":       "--client-certificate, which swaps the credentials",
+	"client-key":               "--client-key, which swaps the credentials",
+	"insecure-skip-tls-verify": "--insecure-skip-tls-verify, which stops checking who the server is",
+	"tls-server-name":          "--tls-server-name, which changes who the server is trusted to be",
+	"proxy-url":                "--proxy-url, which routes the command through a proxy",
+}
+
+// allowedShortFlags are the only single-dash flags a remediation spec may use
+// after the subcommand, each as its own token. The shipped specs use exactly
+// these: -f (apply -f -), -p (patch), -l (wait -l app=x) and -n.
+var allowedShortFlags = map[string]bool{"-f": true, "-p": true, "-l": true, "-n": true}
+
 // uncheckable says why the cluster one command reaches cannot be read from
 // its argv, or returns "" when it can. The rule is positional so that no
 // other flag can swallow the context as its value:
 //
 //   - argv[0] is kubectl and argv[1] is --context=NAME, the only --context
 //     token anywhere in the command;
-//   - no --kubeconfig, --server, --cluster or -s token in any spelling;
-//   - between them and the subcommand only -n or --namespace with a value,
+//   - no token anywhere is a refusedLongFlags flag in any spelling (=value or
+//     next token, before or after the subcommand);
+//   - every single-dash token anywhere is alone and one of allowedShortFlags,
+//     or a bare "-". pflag lets short flags be grouped and glue their value on
+//     (-Rs URL, -As=URL, -Rshttps://...), so -s can sit behind any letter and
+//     no test for the letter s can be complete; an allowlist of whole tokens
+//     is;
+//   - between kubectl and the subcommand only -n or --namespace with a value,
 //     and the subcommand is on the allowlist.
 //
 // A shell, env or any other wrapper can reach any cluster, a kubeconfig can
 // give a familiar context name to a different one, and --server or --cluster
-// override the context's own.
+// override the context's own. The environment (KUBECONFIG) is not argv and is
+// not checked here.
 func uncheckable(argv []string) string {
 	if len(argv) == 0 || argv[0] != "kubectl" {
 		name := "nothing"
@@ -360,19 +401,14 @@ func uncheckable(argv []string) string {
 		return "it does not start kubectl --context=NAME; write the context as one token, --context=NAME, directly after kubectl, so no other flag can take it as its value"
 	}
 	for _, a := range argv[2:] {
-		flag := strings.SplitN(a, "=", 2)[0]
 		switch {
-		case flag == "--context":
-			return "it carries a second --context, and only the one directly after kubectl is allowed"
-		case flag == "--kubeconfig":
-			return "it carries --kubeconfig, which can point the same context name at another cluster"
-		case flag == "--server" || flag == "--cluster":
-			return fmt.Sprintf("it carries %s, which sends the command to another API server whatever its --context says", flag)
-		case strings.HasPrefix(a, "-s"):
-			// -s is kubectl's server flag and takes its value glued on as
-			// well, so every single-dash token starting with s is refused.
-			// No shipped spec uses one for anything else.
-			return fmt.Sprintf("it carries %s, and every single-dash token starting with -s is refused because -s, glued to a value or not, is kubectl's server override", a)
+		case strings.HasPrefix(a, "--"):
+			name := strings.ReplaceAll(strings.SplitN(a[2:], "=", 2)[0], "_", "-")
+			if why, refused := refusedLongFlags[name]; refused {
+				return "it carries " + why
+			}
+		case strings.HasPrefix(a, "-") && a != "-" && !allowedShortFlags[a]:
+			return fmt.Sprintf("it carries the single-dash token %s; only -f, -p, -l and -n are allowed, each alone, because short flags can be grouped or carry their value glued on (-Rs URL, -As=URL), and -s is kubectl's server override", a)
 		}
 	}
 	i := 2
