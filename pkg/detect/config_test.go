@@ -287,3 +287,101 @@ func TestPrometheusAuthErrorsDoNotRepeatValues(t *testing.T) {
 		t.Errorf("unset variable: %v", err)
 	}
 }
+
+// docs/watch-config.md is the one page that explains every watch.yaml field.
+// The page cannot drift from the structs: a field added to Config, GitOps,
+// PrometheusAuth, Target or an anomalyWatch signal without a row here fails.
+func TestWatchConfigPageListsEveryField(t *testing.T) {
+	data, err := os.ReadFile("../../docs/watch-config.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(data)
+	for _, typ := range []reflect.Type{
+		reflect.TypeOf(Config{}), reflect.TypeOf(Target{}), reflect.TypeOf(GitOps{}),
+		reflect.TypeOf(PrometheusAuth{}), reflect.TypeOf(catalog.Query{}),
+	} {
+		for i := 0; i < typ.NumField(); i++ {
+			tag, _, _ := strings.Cut(typ.Field(i).Tag.Get("yaml"), ",")
+			if tag == "" || tag == "-" {
+				t.Errorf("%s.%s has no yaml name; the page and the strict decoder both need one", typ.Name(), typ.Field(i).Name)
+				continue
+			}
+			if !strings.Contains(page, "| `"+tag+"` |") {
+				t.Errorf("docs/watch-config.md has no row for `%s` (%s.%s)", tag, typ.Name(), typ.Field(i).Name)
+			}
+		}
+	}
+	// The defaults the page states are the ones the code applies.
+	for what, want := range map[string]string{
+		"the default coverage probe": "`" + DefaultCoverageProbe + "`",
+		"the default interval":       "`" + defaultInterval.String() + "`",
+		"the default gitops path":    "`meshmedic/{{.namespace}}/{{.scenario}}.yaml`",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("docs/watch-config.md does not state %s, %s", what, want)
+		}
+	}
+}
+
+// The page ends with a file that sets every field. It must load, and no field
+// may be left at its zero value, so the example cannot fall behind either.
+func TestWatchConfigPageExampleSetsEveryField(t *testing.T) {
+	data, err := os.ReadFile("../../docs/watch-config.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, ok := strings.Cut(string(data), "## A file with everything set")
+	if !ok {
+		t.Fatal("the section with the full example is gone")
+	}
+	_, rest, _ = strings.Cut(rest, "```yaml\n")
+	example, _, ok := strings.Cut(rest, "```")
+	if !ok {
+		t.Fatal("no yaml block in the full example section")
+	}
+	path := filepath.Join(t.TempDir(), "watch.yaml")
+	if err := os.WriteFile(path, []byte(example), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("the example does not load: %v", err)
+	}
+	var unset func(v reflect.Value, name string)
+	unset = func(v reflect.Value, name string) {
+		switch v.Kind() {
+		case reflect.Pointer:
+			if v.IsNil() {
+				t.Errorf("the example leaves %s unset", name)
+				return
+			}
+			unset(v.Elem(), name)
+		case reflect.Struct:
+			for i := 0; i < v.NumField(); i++ {
+				unset(v.Field(i), name+"."+v.Type().Field(i).Name)
+			}
+		case reflect.Slice:
+			if v.Len() == 0 {
+				t.Errorf("the example leaves %s unset", name)
+				return
+			}
+			unset(v.Index(0), name+"[0]")
+		default:
+			if v.IsZero() {
+				t.Errorf("the example leaves %s unset", name)
+			}
+		}
+	}
+	// Bearer token and basic auth are alternatives, so the example can set only one.
+	cfg.PrometheusAuth.UsernameEnv, cfg.PrometheusAuth.PasswordEnv = "set", "set"
+	unset(reflect.ValueOf(cfg), "Config")
+
+	scenarios, err := catalog.LoadDir("../../catalog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unknown := UnknownScenarios(cfg.Targets, scenarios); len(unknown) != 0 {
+		t.Errorf("the example names scenarios the catalog does not have: %v", unknown)
+	}
+}
