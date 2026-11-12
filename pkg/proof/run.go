@@ -254,53 +254,7 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 	// a cold baseline: the detector falls back to the static number, and for
 	// the latency entry that number is high enough that firing it also fires
 	// the canary entry, which suppresses it.
-	if s.Warmup.D() > 0 {
-		if r.Baseline == nil {
-			r.Baseline = baseline.New("", 0.05)
-		}
-		// Learn from the floor, not from whatever the cluster happened to be
-		// doing when warm-up started. A previous proof's fault decays out of a
-		// two-minute rate window slowly, and the preflight cannot catch it
-		// because a decaying 480ms is still far under a 1000ms static
-		// threshold. Warming on that tail teaches the entry a normal three
-		// times too high, and it then sleeps through the very regression it
-		// exists to catch. Measured: a run warmed on a decaying cluster failed
-		// to fire at 486ms.
-		//
-		// So the warm-up watches the signal settle and only trusts readings
-		// near the lowest it has seen. The floor is what healthy means.
-		r.Log("warming the baseline for %s, learning from the signal's floor", s.Warmup.D())
-		warm := r.detectorFor(s)
-		gate := &floorCollector{inner: r.Baseline, tolerance: 1.5}
-		warm.Baseline = gate
-		r.onIncident = func(detect.Incident) {}
-		deadline := r.Now().Add(s.Warmup.D())
-		for r.Now().Before(deadline) && ctx.Err() == nil {
-			warm.Tick(ctx, r.Now())
-			r.Sleep(ctx, r.Poll)
-		}
-		gate.commit()
-		r.Log("baseline warmed: %d readings near the floor accepted, %d rejected as still-decaying", gate.accepted, gate.rejected)
-		// Say what was learned and what threshold it puts in force. Without
-		// this a proof that does not fire leaves nobody able to tell a wrong
-		// baseline from a wrong fault, which cost two full run cycles.
-		for _, sc := range r.scenarios {
-			if sc.Signal.BaselineMultiplier <= 0 {
-				continue
-			}
-			min := sc.Signal.BaselineMinSamples
-			if min <= 0 {
-				min = 20
-			}
-			if learned, ready := r.Baseline.Baseline(targetKeyFor(sc.ID, s.Target), min); ready {
-				r.Log("%s: learned normal %.4g, so the effective threshold is %.4g (%gx)",
-					sc.ID, learned, learned*sc.Signal.BaselineMultiplier, sc.Signal.BaselineMultiplier)
-			} else {
-				r.Log("%s: baseline not ready after warm-up, so the static threshold %.4g still applies",
-					sc.ID, sc.Signal.Threshold)
-			}
-		}
-	}
+	r.warmBaseline(ctx, s)
 
 	r.Log("injecting the fault")
 	for _, c := range s.Inject {
@@ -437,6 +391,62 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 
 	res.Passed = len(res.Failures) == 0
 	return res
+}
+
+// warmBaseline ticks a detector against the healthy cluster for the spec's
+// warm-up, so a relative-threshold entry has a learned normal to be judged
+// against. The detection proof and the remediation proof share it: an entry
+// judged against its learned threshold in one and its static fallback in the
+// other would be two different entries under one name. A zero warm-up does
+// nothing.
+func (r *Runner) warmBaseline(ctx context.Context, s Spec) {
+	if s.Warmup.D() > 0 {
+		if r.Baseline == nil {
+			r.Baseline = baseline.New("", 0.05)
+		}
+		// Learn from the floor, not from whatever the cluster happened to be
+		// doing when warm-up started. A previous proof's fault decays out of a
+		// two-minute rate window slowly, and the preflight cannot catch it
+		// because a decaying 480ms is still far under a 1000ms static
+		// threshold. Warming on that tail teaches the entry a normal three
+		// times too high, and it then sleeps through the very regression it
+		// exists to catch. Measured: a run warmed on a decaying cluster failed
+		// to fire at 486ms.
+		//
+		// So the warm-up watches the signal settle and only trusts readings
+		// near the lowest it has seen. The floor is what healthy means.
+		r.Log("warming the baseline for %s, learning from the signal's floor", s.Warmup.D())
+		warm := r.detectorFor(s)
+		gate := &floorCollector{inner: r.Baseline, tolerance: 1.5}
+		warm.Baseline = gate
+		r.onIncident = func(detect.Incident) {}
+		deadline := r.Now().Add(s.Warmup.D())
+		for r.Now().Before(deadline) && ctx.Err() == nil {
+			warm.Tick(ctx, r.Now())
+			r.Sleep(ctx, r.Poll)
+		}
+		gate.commit()
+		r.Log("baseline warmed: %d readings near the floor accepted, %d rejected as still-decaying", gate.accepted, gate.rejected)
+		// Say what was learned and what threshold it puts in force. Without
+		// this a proof that does not fire leaves nobody able to tell a wrong
+		// baseline from a wrong fault, which cost two full run cycles.
+		for _, sc := range r.scenarios {
+			if sc.Signal.BaselineMultiplier <= 0 {
+				continue
+			}
+			min := sc.Signal.BaselineMinSamples
+			if min <= 0 {
+				min = 20
+			}
+			if learned, ready := r.Baseline.Baseline(targetKeyFor(sc.ID, s.Target), min); ready {
+				r.Log("%s: learned normal %.4g, so the effective threshold is %.4g (%gx)",
+					sc.ID, learned, learned*sc.Signal.BaselineMultiplier, sc.Signal.BaselineMultiplier)
+			} else {
+				r.Log("%s: baseline not ready after warm-up, so the static threshold %.4g still applies",
+					sc.ID, sc.Signal.Threshold)
+			}
+		}
+	}
 }
 
 // alive is the cheap per-tick liveness check: is the server still answering?

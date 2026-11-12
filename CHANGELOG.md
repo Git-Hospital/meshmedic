@@ -89,7 +89,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   signal, so the ordinary proof would time the remediation and call it the
   reset.
 
-  Thirteen of eighteen entries are report-only and are skipped with a reason,
+  Eleven of eighteen entries are report-only and are skipped with a reason,
   which is a design choice rather than a coverage gap and is reported as one.
   The revert is declared rather than derived, because a patch that creates an
   object and one that edits it are undone differently, and guessing from the
@@ -102,10 +102,6 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unnamed return copies the struct before any defer runs, so whether the revert
   succeeded, how long the run took, and any failure during cleanup were all
   discarded. Three losses, no compiler complaint. Fixed with a named return.
-
-  Known rough edge, not yet fixed: when a run fails because the entry never
-  fired, the summary still prints "reported an incident and proposed a change
-  that did not stop it", which describes a different failure.
 - **A mutation suite over the guards themselves.** Every guard here claims to
   catch something and nothing checked the claim, which stopped being an
   abstract worry on 2026-08-20: four separate checks turned out to be checking
@@ -212,6 +208,87 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   blind and a harness to blame an entry.
 
 ### Fixed
+
+- **`meshmedic-prove remediate` could report a wrong verdict, and is now held
+  to the rule the detection proof follows.** It credited a patch on a single
+  clear reading, on a signal that returned no series or NaN, across a
+  suspended machine, and against a relative threshold that rose while it
+  waited; it blamed the patch, or the entry, for a blind observer, a Ctrl-C,
+  a fault that did not inject and a cleanup that failed. Each run now ends in
+  one of these verdicts, and the command exits 1 unless at least one is PASS
+  and none is FAIL, BLIND or ERROR:
+
+  - `PASS`: the breach held, the patch went on with the fault still in place,
+    and the signal then held a measured clear for the sustain. The sustain is
+    the entry's own hold, at least three polls, and it must rest on at least
+    ceil(sustain/poll)+1 consecutive measured clear readings, so two slow
+    readings cannot span it.
+  - `FAIL`: the patch was applied, or the cluster refused it, and it was
+    watched not ending the incident within `clearsWithin`.
+  - `BLIND`: the run says nothing about the patch. A suspended machine or an
+    interrupt voids it at any point, including while the fault is injected
+    and while kubectl apply runs. Before the patch, it is BLIND when a
+    measured clear follows the first reading in breach, because the fault did
+    not hold without the patch, and when the breach did not hold within
+    `firesWithin` and at least one tick of that wait could not be measured
+    (blind, no series, NaN or missing), because a gap restarts the hold.
+    After the patch, a run that did not clear is BLIND when what the observer
+    missed could have hidden a clear: some stretch of ticks with no reading in
+    breach, counting unmeasured ticks as if they had been clear, lasted the
+    sustain. One blind tick in a run watched in breach on every other tick is
+    a FAIL, and a signal that stays without series is BLIND.
+  - `ERROR`: the run could not be set up, which says nothing about the patch:
+    a spec that cannot run as written, including a command the context rule
+    refuses; a `firesWithin` or `clearsWithin` the sustain cannot fit inside;
+    an inject command that failed without an interrupt; or, with every tick of
+    the wait measured, a breach that never began or began but had not held
+    for the sustain when `firesWithin` ran out.
+  - `unchecked`: the entry proposes a patch and no spec checks it. `skipped`:
+    the entry is report-only. Neither runs anything.
+
+  The cleanup is a separate fact in its own column. Every revert and reset
+  command runs whatever the others did, failed or panicked, each phase on a
+  bounded context; a failure goes into `cleanup_errors`, makes the command
+  exit 1 and is printed on its own line, and never rewrites what the patch was
+  seen to do before it. A patch that ended the incident and was then not
+  reverted is reported as exactly that.
+
+  From the moment the fault is injected to the verdict the learned baseline is
+  frozen: the detector reads it and nothing writes to it, so the threshold the
+  result reports is the one every reading was judged against. The patch goes
+  on only once the breach has held, measured on every tick, for the sustain.
+  That is a minimal control against a fault that decays by itself, not a full
+  control run: it does not show the fault would have kept holding for the
+  whole recovery window.
+
+  A spec with a remediation block must run every inject, reset and revert
+  command, and the generated apply, in one checkable shape, or nothing runs
+  and the refusal names the command: `kubectl` with `--context=NAME` as the
+  very next token and no other `--context` anywhere; nothing before the
+  subcommand except `-n` or `--namespace` with a value; one of these subcommand
+  forms: `apply`, `delete`, `patch`, `rollout status`, `scale`, `set env`,
+  `wait`; and after it only the long flags `--ignore-not-found`,
+  `--grace-period=`, `--type=`, `--timeout=`, `--for=` and `--replicas=`
+  (glued form only) and the short flags `-f`, `-p`, `-l` and `-n`, each alone
+  with its value in the next token. Both flag kinds are allowlists, because a
+  deny list passes whatever nobody listed (`-Rs URL`, `--kustomize` which runs
+  git, `--profile-output` which truncates a file, `--edit`). A `-f` value is
+  `-` or a relative path with no `..`, and no argument may be a URL, so
+  kubectl fetches nothing from a host the spec names (the path is checked as
+  text: a symlink in the tree or a run from another directory can still name
+  a file outside the repository, and it only reaches the pinned cluster). The connection and
+  credential flags (`--server`, `--kubeconfig`, `--user`, `--token`, `--as`
+  and the like, also with `_`) keep their own refusal message. Adding a flag
+  or subcommand form is a code change with a test. That refuses `sh -c`, `env`, plugins,
+  `kubectl config` and a `--context` another flag could take as its value.
+  Detection-only specs keep their looser best-effort check, which reads the
+  last `--context` token and skips commands that are not kubectl.
+  `error-surge-outlier-ejection` gets `clearsWithin: 6m`, room for ejection,
+  a drained 2m rate window and a 120s held clear, and
+  a guard test now requires every remediation deadline to cover the signal's
+  rate window plus the sustain plus a minute. The confirmation prints the
+  patch, its apply command and its revert. None of this has had a live run
+  yet.
 
 - **The prover's preflight could call a testbed quiet on the strength of a dead
   Prometheus.** Its breach check treated any query error as "no series", which
