@@ -194,7 +194,7 @@ func (a *analysis) finish(res *Result, uworlds []UndecidedWorld) {
 	}
 	res.Undecided = UndecidedShare{Undecided: undecided, Cells: len(a.cells), Over: driver.Over, Drives: UndecidedStop,
 		ByCells: byCells, ByChartWorlds: byCW,
-		NoteAfterRR: "the stop applies after one rerun; crossrun reports the share of this input only"}
+		NoteAfterRR: "the stop applies after one rerun; crossrun computes the share over the runs given, with only W0-failure reruns applied (INTERPRETATIONS.md 14)"}
 
 	// if all open cells counted
 	hyp := append([]counted{}, cs...)

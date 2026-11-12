@@ -173,9 +173,10 @@ const (
 	ReadingChartWorlds = "chart-worlds"
 )
 
-// UndecidedStop names the reading that drives the stop. The maintainer chooses;
-// both readings are always reported.
-const UndecidedStop = ReadingCells
+// UndecidedStop names the reading that drives the stop. The maintainer chose
+// the chart-worlds reading on 2026-11-12 (INTERPRETATIONS.md 14); both readings
+// are always reported.
+const UndecidedStop = ReadingChartWorlds
 
 // Share is one reading of the undecided share.
 type Share struct {
@@ -186,15 +187,17 @@ type Share struct {
 
 // UndecidedShare is the 15% stop.
 type UndecidedShare struct {
-	// Undecided, Cells and Over are the cell reading (undecided cells over all
-	// cells), kept under their first names.
+	// Undecided and Cells are the cell reading (undecided cells over all
+	// cells), kept under their first names. Over is the stop: the reading named
+	// by Drives, not necessarily the cell reading.
 	Undecided int  `json:"undecidedCells"`
 	Cells     int  `json:"cells"`
 	Over      bool `json:"overFifteenPercent"`
 	// Drives is the reading Over is taken from: the constant UndecidedStop.
 	Drives string `json:"drivesTheStop"`
 	// ByCells is undecided cells over all cells. ByChartWorlds is undecided
-	// chart-worlds over compared chart-worlds.
+	// chart-worlds (an undecided verdict in any analysed run) over the
+	// chart-worlds of the sample.
 	ByCells       Share  `json:"cellsReading"`
 	ByChartWorlds Share  `json:"chartWorldsReading"`
 	NoteAfterRR   string `json:"note"`

@@ -86,8 +86,14 @@ func RenderMarkdown(r *Result) []byte {
 	}
 	u := r.Undecided
 	w("\nUndecided share (the 15%% stop, section 7), under both readings:\n\n")
-	w("- cells reading: %d of %d undecided cells over all cells (%s 15%%)\n", u.ByCells.Undecided, u.ByCells.Of, okWord(!u.ByCells.Over, "not over", "OVER"))
-	w("- chart-worlds reading: %d of %d undecided chart-worlds over compared chart-worlds (%s 15%%)\n", u.ByChartWorlds.Undecided, u.ByChartWorlds.Of, okWord(!u.ByChartWorlds.Over, "not over", "OVER"))
+	mark := func(reading string) string {
+		if u.Drives == reading {
+			return " [drives the stop]"
+		}
+		return ""
+	}
+	w("- cells reading: %d of %d undecided cells over all cells (%s 15%%)%s\n", u.ByCells.Undecided, u.ByCells.Of, okWord(!u.ByCells.Over, "not over", "OVER"), mark(ReadingCells))
+	w("- chart-worlds reading: %d of %d undecided chart-worlds over compared chart-worlds (%s 15%%)%s\n", u.ByChartWorlds.Undecided, u.ByChartWorlds.Of, okWord(!u.ByChartWorlds.Over, "not over", "OVER"), mark(ReadingChartWorlds))
 	w("- drives the stop: %s (the constant UndecidedStop in analyze.go)\n\n", u.Drives)
 
 	w("## ambient-np prevalence\n\n%d counted cell(s) in %d chart(s): %s.\n\n", r.Prevalence.Cells, len(r.Prevalence.Charts), joinOrNone(r.Prevalence.Charts))

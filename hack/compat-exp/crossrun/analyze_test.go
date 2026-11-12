@@ -656,6 +656,7 @@ func TestFutility(t *testing.T) {
 	})
 }
 
+// The cells reading's own 15% boundary (it no longer drives the stop).
 func TestUndecidedShareBoundary(t *testing.T) {
 	build := func(undecided, total int) *Result {
 		var r, r2 []ChartReport
@@ -684,7 +685,7 @@ func TestUndecidedShareBoundary(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("%d of %d", tc.u, tc.n), func(t *testing.T) {
 			got := build(tc.u, tc.n).Undecided
-			if got.Undecided != tc.u || got.Cells != tc.n || got.Over != tc.over {
+			if got.Undecided != tc.u || got.Cells != tc.n || got.ByCells.Over != tc.over {
 				t.Fatalf("%+v", got)
 			}
 		})

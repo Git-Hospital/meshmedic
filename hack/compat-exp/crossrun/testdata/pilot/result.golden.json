@@ -548,7 +548,7 @@
     "undecidedCells": 0,
     "cells": 10,
     "overFifteenPercent": false,
-    "drivesTheStop": "cells",
+    "drivesTheStop": "chart-worlds",
     "cellsReading": {
       "undecided": 0,
       "of": 10,
@@ -559,7 +559,7 @@
       "of": 20,
       "overFifteenPercent": false
     },
-    "note": "the stop applies after one rerun; crossrun reports the share of this input only"
+    "note": "the stop applies after one rerun; crossrun computes the share over the runs given, with only W0-failure reruns applied (INTERPRETATIONS.md 14)"
   },
   "unresolved": null,
   "unexplained": null,

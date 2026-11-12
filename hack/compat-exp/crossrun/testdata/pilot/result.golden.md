@@ -34,8 +34,8 @@ Region A is unreachable: prevalence certificates are skipped.
 Undecided share (the 15% stop, section 7), under both readings:
 
 - cells reading: 0 of 10 undecided cells over all cells (not over 15%)
-- chart-worlds reading: 0 of 20 undecided chart-worlds over compared chart-worlds (not over 15%)
-- drives the stop: cells (the constant UndecidedStop in analyze.go)
+- chart-worlds reading: 0 of 20 undecided chart-worlds over compared chart-worlds (not over 15%) [drives the stop]
+- drives the stop: chart-worlds (the constant UndecidedStop in analyze.go)
 
 ## ambient-np prevalence
 
