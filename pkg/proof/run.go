@@ -277,17 +277,18 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 	// detector to fire and then clear on its own. error-surge's 120s hold did
 	// not, and the proof blamed the entry for the prover's mistake.
 	//
-	// From here to the verdict the learned normal is read and never written,
-	// as in Remediate. The detector feeds every clear reading back into its
-	// baseline, so a fault that fills slowly would teach a relative threshold
-	// its own sub-threshold level while the proof waits: a neighbour that must
-	// stay quiet could then pass for the wrong reason, and the subject could
-	// miss a level that was over its threshold at injection. Warm-up ended
-	// before the fault went in and no detector has ticked since, so nothing
-	// has been learned from the fault yet. The threshold the detector logs is
-	// this frozen one. An entry whose baseline was not ready by now is judged
-	// against its static threshold to the end, as the warm-up log says.
-	d := r.frozenDetectorFor(s)
+	// From here to the verdict a normal that was ready when the fault went in
+	// is read and never written, as in Remediate, though a key still unready
+	// keeps learning as it always did; see readyFrozenDetectorFor. The
+	// detector feeds every clear reading back into its baseline, so a fault
+	// that fills slowly would teach a relative threshold its own
+	// sub-threshold level while the proof waits: a neighbour that must stay
+	// quiet could then pass for the wrong reason, and the subject could miss a
+	// level that was over its threshold at injection. Warm-up ended before the
+	// fault went in and no detector has ticked since, so nothing has been
+	// learned from the fault yet. The threshold the detector logs is the
+	// frozen one.
+	d := r.readyFrozenDetectorFor(s)
 	fired, others, doc, after := r.waitForFire(ctx, d, s)
 	res.Fired = fired
 	res.FiredAfter = after
@@ -618,23 +619,76 @@ func (r *Runner) waitForResolve(ctx context.Context, d *detect.Detector, s Spec)
 // multiplier of 3, a useless patch that left the signal at 31 with one dip to
 // 29 was credited with a recovery, because each clear reading raised the
 // threshold over the next.
-type frozenBaseline struct{ inner detect.BaselineStore }
+//
+// learn names the keys that may still be written. Nil freezes everything.
+type frozenBaseline struct {
+	inner detect.BaselineStore
+	learn map[string]bool
+}
 
-func (frozenBaseline) Observe(string, float64) {}
+func (f frozenBaseline) Observe(key string, value float64) {
+	if f.learn[key] {
+		f.inner.Observe(key, value)
+	}
+}
 
 func (f frozenBaseline) Baseline(key string, minSamples int) (float64, bool) {
 	return f.inner.Baseline(key, minSamples)
 }
 
-// frozenDetectorFor is detectorFor with the baseline read-only. The proofs
-// call it once warm-up is over, and nothing is learned after that. The shared
-// r.Baseline is left alone, so what the next proof on this Runner starts from
-// is what warm-up put there.
+// frozenDetectorFor is detectorFor with the whole baseline read-only, for
+// once warm-up is over and nothing may be learned. The shared r.Baseline is
+// left alone, so what the next proof on this Runner starts from is what
+// warm-up put there. The remediation proof uses it as it is.
 func (r *Runner) frozenDetectorFor(s Spec) *detect.Detector {
-	d := r.detectorFor(s)
-	if d.Baseline != nil {
-		d.Baseline = frozenBaseline{inner: d.Baseline}
+	return r.freeze(r.detectorFor(s), s, false)
+}
+
+// readyFrozenDetectorFor freezes only the keys that already have a learned
+// normal, and leaves the others learning exactly as an unfrozen detector
+// does. The detection proof uses it.
+//
+// Readiness is decided once, here, and not at each reading, so that a key
+// that is not ready now behaves for the whole run as it would with no freeze
+// at all, including becoming ready from the readings after the fault. Freezing
+// it too would pin it to its static threshold for good: a quiet neighbour
+// would pass because it was held to a number the fault never reached, and the
+// subject would be blamed for not firing at one. Checking at each reading
+// instead would freeze a key the moment it became ready, on a normal the
+// fault itself taught.
+//
+// So for every key the run is either frozen at a baseline that was ready when
+// the fault was in, or identical to a run without the freeze. It is never
+// judged against a static threshold that the unfrozen detector would have
+// left behind. The warm-up log names the keys that fall in the second group.
+func (r *Runner) readyFrozenDetectorFor(s Spec) *detect.Detector {
+	return r.freeze(r.detectorFor(s), s, true)
+}
+
+// freeze is the one place that wraps a detector's baseline. With
+// learnUnready, the keys with no ready baseline at this moment stay writable.
+func (r *Runner) freeze(d *detect.Detector, s Spec, learnUnready bool) *detect.Detector {
+	if d.Baseline == nil {
+		return d
 	}
+	var learn map[string]bool
+	if learnUnready {
+		learn = map[string]bool{}
+		for _, sc := range r.scenarios {
+			if sc.Signal.BaselineMultiplier <= 0 {
+				continue
+			}
+			min := sc.Signal.BaselineMinSamples
+			if min <= 0 {
+				min = 20
+			}
+			key := targetKeyFor(sc.ID, s.Target)
+			if _, ready := d.Baseline.Baseline(key, min); !ready {
+				learn[key] = true
+			}
+		}
+	}
+	d.Baseline = frozenBaseline{inner: d.Baseline, learn: learn}
 	return d
 }
 

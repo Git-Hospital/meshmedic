@@ -941,12 +941,13 @@ func TestWarmupIsNotFrozenOut(t *testing.T) {
 	}
 }
 
-// Nothing the fault reads may reach the shared store, in either half of the
-// run, or the next proof on the same Runner starts from a normal the fault
-// taught. The subject fires on its first tick, so the only clear readings are
+// Nothing the fault reads may reach the shared store under a key that was
+// ready when the fault went in, in either half of the run, or the next proof
+// on the same Runner starts from a normal the fault taught. A key that was not
+// ready keeps learning, and is covered below. The subject fires on its first tick, so the only clear readings are
 // the ones after the reset: this is the resolution phase reading the frozen
 // baseline and not writing it.
-func TestResolutionPhaseDoesNotLearnAndNothingLeaksToTheNextProof(t *testing.T) {
+func TestResolutionPhaseDoesNotLearnForKeysReadyAtTheFreeze(t *testing.T) {
 	store := &countingStore{vals: map[string][]float64{}}
 	res := rampedRun(t,
 		[]catalog.Scenario{relative("subject")},
@@ -968,5 +969,69 @@ func TestResolutionPhaseDoesNotLearnAndNothingLeaksToTheNextProof(t *testing.T) 
 		if v != 10 {
 			t.Fatalf("the store learned %v, want only the healthy 10", v)
 		}
+	}
+}
+
+// A key that is not ready when the fault goes in is not frozen: pinned to its
+// static fallback it could never become ready, and the proof would judge it
+// against a number the fault never reaches. Warm-up gives 3 healthy readings at
+// 10 against a need of 5; the fault puts the neighbour at 50. Left learning,
+// it is ready two readings later at a threshold of about 42 and fires, as it
+// does without any freeze. Frozen, it stayed quiet and the proof passed.
+func TestUnreadyQuietNeighbourStillFiresAndFailsTheProof(t *testing.T) {
+	res := rampedRun(t,
+		[]catalog.Scenario{scenario("subject", 1), relative("nbr")},
+		map[string]float64{"subject": 0, "nbr": 50},
+		map[string]float64{"subject": 5, "nbr": 50},
+		[]string{"nbr"},
+		func(_ *Runner, s *Spec) { s.Warmup = Duration(30 * time.Second) })
+
+	if res.Passed {
+		t.Fatal("proof passed although a neighbour at five times its healthy level stayed quiet: it was pinned to its static threshold")
+	}
+	if len(res.Unexpected) != 1 || res.Unexpected[0] != "nbr" {
+		t.Errorf("unexpected = %v, want [nbr]", res.Unexpected)
+	}
+}
+
+// The subject in the same position fires too, instead of being blamed for not
+// reaching a static threshold it was never judged by in production.
+func TestUnreadySubjectStillFires(t *testing.T) {
+	res := rampedRun(t,
+		[]catalog.Scenario{relative("subject")},
+		map[string]float64{"subject": 50},
+		map[string]float64{"subject": 50},
+		nil,
+		func(_ *Runner, s *Spec) { s.Warmup = Duration(30 * time.Second) })
+
+	if !res.Fired {
+		t.Fatalf("subject at five times its healthy level did not fire: %v", res.Failures)
+	}
+}
+
+// Both behaviours in one run. Warm-up leaves "ready" with the 3 readings it
+// needs and "unready" short of 5. After the fault the first is read-only and
+// the second keeps learning.
+func TestReadyKeyIsFrozenAndUnreadyKeyKeepsLearningInTheSameRun(t *testing.T) {
+	ready := relative("ready")
+	ready.Signal.BaselineMinSamples = 3
+	store := &countingStore{vals: map[string][]float64{}}
+	res := rampedRun(t,
+		[]catalog.Scenario{scenario("subject", 1), ready, relative("unready")},
+		map[string]float64{"subject": 0, "ready": 12, "unready": 12},
+		map[string]float64{"subject": 5, "ready": 12, "unready": 12},
+		nil,
+		func(r *Runner, s *Spec) {
+			r.Baseline = store
+			s.Warmup = Duration(30 * time.Second)
+		})
+	if !res.Passed {
+		t.Fatalf("failures: %v", res.Failures)
+	}
+	if n := len(store.vals[targetKeyFor("ready", baseSpec().Target)]); n != 3 {
+		t.Errorf("the ready key holds %d readings, want the 3 from warm-up", n)
+	}
+	if n := len(store.vals[targetKeyFor("unready", baseSpec().Target)]); n <= 5 {
+		t.Errorf("the unready key holds %d readings, want it to have kept learning past 5", n)
 	}
 }

@@ -224,10 +224,10 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   quiet could pass for the wrong reason, and the subject could miss a level
   that was over its threshold at injection. The baseline is now read-only from
   injection to verdict, using the same freeze as `meshmedic-prove remediate`;
-  warm-up before the fault learns as before. An entry whose baseline is not
-  ready when the fault goes in is judged against its static threshold for the
-  whole proof, as the run log states, and can no longer become ready from
-  readings taken during the fault. The recorded proofs of
+  warm-up before the fault learns as before. The drift is closed for an
+  entry whose baseline is ready when the fault goes in. An entry whose
+  baseline is not ready by then keeps learning during the proof exactly as
+  before, and the warm-up log names it. The recorded proofs of
   `upstream-dependency-latency` and `latency-regression-vs-baseline` have not
   been rerun on a cluster yet, so their reports may still reflect the drift.
   (closes #48)
