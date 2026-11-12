@@ -66,6 +66,14 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`meshmedic demo` shows what the tool does without a mesh.** It runs the
+  real detector, catalog, patch renderer and report code against a replayed
+  Prometheus built into the binary: a canary incident that fires with its full
+  dossier and then clears, an error surge, and a blind target that is never
+  reported clear. The numbers are constructed to match the proof reports and
+  each screen says so. Nothing is watched, changed or written (`--out DIR`
+  writes the dossier files). See docs/demo.md.
+
 - **`meshmedic-prove remediate`**, which asks the question the rest of the
   suite cannot: if I merge what this entry proposed, does the incident stop?
 
