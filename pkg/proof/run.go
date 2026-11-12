@@ -277,6 +277,18 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 	// detector to fire and then clear on its own. error-surge's 120s hold did
 	// not, and the proof blamed the entry for the prover's mistake.
 	d := r.detectorFor(s)
+	// From here to the verdict the learned normal is read and never written,
+	// as in Remediate. The detector feeds every clear reading back into its
+	// baseline, so a fault that fills slowly would teach a relative threshold
+	// its own sub-threshold level while the proof waits: a neighbour that must
+	// stay quiet could then pass for the wrong reason, and the subject could
+	// miss a level that was over its threshold at injection. Warm-up ended
+	// before the fault went in and no detector has ticked since, so nothing
+	// has been learned from the fault yet. The threshold the detector logs is
+	// this frozen one.
+	if d.Baseline != nil {
+		d.Baseline = frozenBaseline{inner: d.Baseline}
+	}
 	fired, others, doc, after := r.waitForFire(ctx, d, s)
 	res.Fired = fired
 	res.FiredAfter = after
