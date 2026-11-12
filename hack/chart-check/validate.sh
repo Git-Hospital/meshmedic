@@ -52,6 +52,6 @@ jq -c '.[]' "$here/charts.json" | while IFS= read -r spec; do
     printf '%s\t%s\texit 2: %s\n' "$id" "$version" "$(head -1 "$out/reports/$id.err")"
     continue
   fi
-  n="$(jq -r '[.findings[] | "\(.mode) \(.id) \(.check) x\(1)"] | group_by(.) | map("\(.[0] | sub(" x1$"; "")) x\(length)") | if length == 0 then "none" else join("; ") end' "$out/reports/$id.json")"
+  n="$(jq -r '[.findings[] | "\(.mode) \(.id) \(.check) \(.level)"] | group_by(.) | map("\(.[0]) x\(length)") | if length == 0 then "none" else join("; ") end' "$out/reports/$id.json")"
   printf '%s\t%s\texit %s\t%s\n' "$id" "$version" "$code" "$n"
 done

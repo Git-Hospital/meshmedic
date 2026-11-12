@@ -43,6 +43,9 @@ type Evidence struct {
 type finding struct {
 	Resource Resource
 	Reason   string
+	// Note marks a finding that depends on something the manifests cannot
+	// show (the CNI), so it is reported but is not a candidate.
+	Note bool
 	// Trigger is the field whose value made the check fire.
 	Trigger  Evidence
 	Evidence []Evidence
@@ -295,7 +298,7 @@ func checkNetworkPolicy(m *Manifest, o options) []finding {
 			seen[pp.Port] = true
 			trigger := Evidence{Kind: p.Owner.Kind, Name: p.Owner.Name, Path: pp.Path, Value: strconv.Itoa(pp.Port)}
 			pev := append(append([]Evidence{}, ev...), trigger)
-			out = append(out, finding{Resource: resource, Reason: fmt.Sprintf("kubelet probe port %d is not admitted from %s", pp.Port, probeSrcCIDR), Trigger: trigger, Evidence: pev})
+			out = append(out, finding{Resource: resource, Reason: fmt.Sprintf("kubelet probe port %d is not admitted from %s", pp.Port, probeSrcCIDR), Note: true, Trigger: trigger, Evidence: pev})
 		}
 	}
 	return out

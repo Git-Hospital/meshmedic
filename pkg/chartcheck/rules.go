@@ -22,6 +22,8 @@ type Rule struct {
 	Check string `json:"check"`
 	// Modes lists the mesh modes the check applies to.
 	Modes []Mode `json:"modes"`
+	// Title is the heading of the rule's group in the text report.
+	Title string `json:"title"`
 	// Summary says exactly what the check reads and when it fires.
 	Summary string `json:"summary"`
 	// Effect is what happens under Istio, in one plain sentence.
@@ -37,7 +39,21 @@ type Rule struct {
 	// DocsNote says plainly why Docs is empty.
 	DocsNote string `json:"docsNote,omitempty"`
 
+	// Note, when set, is the text of the rule's findings that are notes
+	// rather than candidates.
+	Note *RuleNote `json:"note,omitempty"`
+
 	run func(*Manifest, options) []finding
+}
+
+// RuleNote is the text of a weaker finding of a rule: one that depends on
+// something a manifest cannot show, so it never counts as a candidate.
+type RuleNote struct {
+	Title   string `json:"title"`
+	Effect  string `json:"effect"`
+	Fix     string `json:"fix"`
+	Confirm string `json:"confirm"`
+	Docs    []Doc  `json:"docs"`
 }
 
 func (r Rule) appliesTo(m Mode) bool {
@@ -59,18 +75,27 @@ func Rules() []Rule {
 var rules = []Rule{
 	{
 		ID:    "MM-CHART-001",
+		Title: "A NetworkPolicy does not admit ambient HBONE traffic (TCP 15008)",
 		Check: "np-hbone-probe",
 		Modes: []Mode{Ambient},
-		Summary: "A pod in the mesh that a NetworkPolicy isolates for ingress is flagged when no ingress rule of the policies selecting it admits TCP 15008, or when a kubelet probe port of the pod is not admitted from 169.254.7.127. " +
+		Summary: "A pod in the mesh that a NetworkPolicy isolates for ingress is a candidate when no ingress rule of the policies selecting it admits TCP 15008, and a note (which never sets the exit code) when a kubelet probe port of the pod is not admitted from 169.254.7.127, because Istio's page says that whether probes are blocked depends on the CNI. " +
 			"A rule admits a port when its ports list is empty or has a TCP entry that omits the port, names it, names a container port with that number, or is a range covering it; it admits 169.254.7.127 when its from list is empty or has an ipBlock whose cidr covers the address and whose except list does not.",
-		Effect:  "Ambient carries traffic between meshed pods over TCP port 15008 (HBONE) and sends kubelet probes from 169.254.7.127, and the node enforces this NetworkPolicy on both, so a policy that admits neither drops pod-to-pod traffic or fails the pod's probes.",
-		Fix:     "Add an ingress rule to the NetworkPolicy that admits TCP 15008 (ports: [{port: 15008, protocol: TCP}]) and, for a probe finding, one that admits the probed port from ipBlock 169.254.7.127/32. If the chart has a value for extra ingress rules, put the rule there instead of patching the template.",
+		Effect:  "Ambient carries traffic between meshed pods over TCP port 15008 (HBONE) and the node enforces this NetworkPolicy on it, so a policy that admits no traffic to 15008 drops pod-to-pod traffic to this workload.",
+		Fix:     "Add an ingress rule to the NetworkPolicy that admits TCP 15008 (ports: [{port: 15008, protocol: TCP}]). If the chart has a value for extra ingress rules, put the rule there instead of patching the template.",
 		Confirm: "Install the chart in a throwaway ambient cluster and watch the traffic between its own pods (replication, clustering): pods that never become Ready or keep restarting, and connection errors toward port 15008 in the ztunnel logs, confirm it. Install it without the mesh as the comparison.",
-		Docs:    docsNetworkPolicy,
-		run:     checkNetworkPolicy,
+		Note: &RuleNote{
+			Title:   "Kubelet probes may be blocked by the NetworkPolicy, depending on the CNI",
+			Effect:  "Ambient sends kubelet probes from 169.254.7.127, and depending on the CNI a NetworkPolicy that does not admit that address may block them and fail the pod's probes, while other CNIs silently exclude kubelet probes from policy.",
+			Fix:     "If your CNI blocks the probes, add an ingress rule that admits the probed port from ipBlock 169.254.7.127/32 (and fd16:9254:7127:1337:ffff:ffff:ffff:ffff/128 on IPv6 or dual-stack clusters).",
+			Confirm: "Install the chart in an ambient cluster with your CNI: probes that fail (the pod not Ready, liveness restarts, probe failures in `kubectl describe pod`) confirm it, and probes that pass mean your CNI does not block them.",
+			Docs:    docsProbe,
+		},
+		Docs: docsNetworkPolicy,
+		run:  checkNetworkPolicy,
 	},
 	{
 		ID:    "MM-CHART-002",
+		Title: "A Service port declares a protocol the sidecar will mishandle",
 		Check: "protocol-declared",
 		Modes: []Mode{Sidecar},
 		Summary: "A TCP port of a Service that selects a pod in the mesh is flagged when its number is one of the server-first ports Istio documents (25, 53, 3306, 27017) and its appProtocol, else its name prefix, declares http, http2, grpc, grpc-web or http_proxy. " +
@@ -83,6 +108,7 @@ var rules = []Rule{
 	},
 	{
 		ID:      "MM-CHART-003",
+		Title:   "A container runs as UID 1337, the sidecar proxy's user",
 		Check:   "uid-1337",
 		Modes:   []Mode{Sidecar},
 		Summary: "A container or init container of a pod in the mesh is flagged when its effective runAsUser (the container's securityContext, else the pod's) is 1337.",
@@ -94,6 +120,7 @@ var rules = []Rule{
 	},
 	{
 		ID:      "MM-CHART-004",
+		Title:   "A port Istio uses inside the pod is used by the application",
 		Check:   "reserved-port",
 		Modes:   []Mode{Sidecar, Ambient},
 		Summary: "A pod in the mesh is flagged when a container declares, or a Service selecting it targets, a TCP port Istio uses inside the pod: for sidecar 15000, 15001, 15002, 15004, 15006, 15008, 15020, 15021, 15053 or 15090 (the sidecar's ports), for ambient 15001, 15006 or 15008 (ztunnel's in-pod listeners).",
@@ -105,6 +132,7 @@ var rules = []Rule{
 	},
 	{
 		ID:      "MM-CHART-005",
+		Title:   "A classic sidecar starts after the init containers or the application",
 		Check:   "classic-sidecar-startup",
 		Modes:   []Mode{Sidecar},
 		Summary: "A pod in the mesh whose proxy is a classic sidecar (pod annotation sidecar.istio.io/nativeSidecar set to false, or native sidecars off by --native-sidecars=false) is flagged when it has init containers, or when its proxy.istio.io/config annotation does not set holdApplicationUntilProxyStarts to true.",
@@ -116,6 +144,7 @@ var rules = []Rule{
 	},
 	{
 		ID:      "MM-CHART-006",
+		Title:   "A Job or run-to-completion Pod has a classic sidecar that never exits",
 		Check:   "classic-sidecar-job",
 		Modes:   []Mode{Sidecar},
 		Summary: "A Job, a CronJob, or a bare Pod with restartPolicy Never or OnFailure, whose pod is in the mesh, is flagged when its proxy is a classic sidecar (pod annotation sidecar.istio.io/nativeSidecar set to false, or native sidecars off by --native-sidecars=false).",
@@ -127,6 +156,7 @@ var rules = []Rule{
 	},
 	{
 		ID:    "MM-CHART-007",
+		Title: "The API server calls a webhook or API backend that is in the mesh",
 		Check: "webhook-backend-in-mesh",
 		Modes: []Mode{Sidecar, Ambient},
 		Summary: "A webhook of a ValidatingWebhookConfiguration or MutatingWebhookConfiguration, an APIService, or a CustomResourceDefinition conversion webhook is flagged when its service reference names a Service port the chart renders whose Service selects a pod in the mesh. " +
@@ -139,6 +169,7 @@ var rules = []Rule{
 	},
 	{
 		ID:    "MM-CHART-008",
+		Title: "Layer 7 policy or routing in ambient with no waypoint",
 		Check: "l7-without-waypoint",
 		Modes: []Mode{Ambient},
 		Summary: "When the chart renders no Gateway of gatewayClassName istio-waypoint, an AuthorizationPolicy without targetRef or targetRefs is flagged when a rule uses an attribute outside the L4 list on Istio's ambient L4 policy page. " +

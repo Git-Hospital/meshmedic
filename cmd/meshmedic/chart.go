@@ -27,6 +27,7 @@ const chartUsage = `usage:
 flags:
   --mesh sidecar|ambient|both   which Istio data-plane mode to check (default both)
   --format text|json            report format (default text)
+  --verbose                     text format: add evidence, the checks that ran and the full limits
   -f, --values FILE             helm values file (repeatable)
   --set k=v, --set-string k=v, --set-json k=v   helm value overrides (repeatable)
   --namespace NS                release namespace (default "default")
@@ -35,7 +36,7 @@ flags:
   --native-sidecars=BOOL        assume sidecar proxies are native sidecars (default true;
                                 use false for clusters older than Kubernetes 1.33)
 
-exit codes: 0 no candidates, 1 at least one candidate, 2 usage or render error`
+exit codes: 0 no candidates (notes do not count), 1 at least one candidate, 2 usage or render error`
 
 func runChart(args []string) {
 	if len(args) == 0 || args[0] != "check" {
@@ -62,6 +63,7 @@ func chartCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	namespace := fs.String("namespace", "default", "release namespace")
 	release := fs.String("release-name", "release", "helm release name")
 	kubeVersion := fs.String("kube-version", "", "Kubernetes version for helm template")
+	verbose := fs.Bool("verbose", false, "text format: add evidence, the checks that ran and the full limits")
 	native := fs.Bool("native-sidecars", true, "assume sidecar proxies are native sidecars")
 	var values, sets, setStrings, setJSONs multiFlag
 	fs.Var(&values, "values", "helm values file (repeatable)")
@@ -163,7 +165,7 @@ func chartCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if *format == "json" {
 		err = chartcheck.WriteJSON(stdout, rep)
 	} else {
-		err = chartcheck.WriteText(stdout, rep)
+		err = chartcheck.WriteText(stdout, rep, *verbose)
 	}
 	if err != nil {
 		return fail("writing the report: %v", err)

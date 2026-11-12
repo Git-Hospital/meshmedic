@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 )
 
@@ -16,63 +17,138 @@ func WriteJSON(w io.Writer, r *Report) error {
 
 const textWidth = 100
 
-// WriteText writes the report for a person in a terminal.
-func WriteText(w io.Writer, r *Report) error {
-	var b strings.Builder
-	fmt.Fprintf(&b, "meshmedic chart check (rules written against Istio %s)\n", r.IstioVersion)
-	fmt.Fprintf(&b, "input: %s\n", r.Input)
-	fmt.Fprintf(&b, "read %d objects and %d pod templates; namespace %s; modes: %s\n", r.Examined.Objects, r.Examined.PodTemplates, r.Namespace, joinModes(r.Modes))
-	native := "assumed (pods opt out with sidecar.istio.io/nativeSidecar: \"false\")"
-	if !r.NativeSidecars {
-		native = "not assumed (every sidecar proxy is treated as a classic one)"
-	}
-	fmt.Fprintf(&b, "native sidecars: %s\n", native)
+// shortLimits is the one-paragraph form of BlindSpots for the default report.
+const shortLimits = "Only rendered manifests are read. Namespace enrolment, PeerAuthentication, policies from outside the chart and the CNI are assumed, not read, and nothing is run. Run with --verbose for the full list."
 
-	for _, f := range r.Findings {
-		fmt.Fprintf(&b, "\n%s  %s  %s\n", f.ID, f.Mode, f.Reason)
-		field(&b, "resource", resourceString(f.Resource))
-		field(&b, "field", fmt.Sprintf("%s/%s %s = %s", f.Trigger.Kind, f.Trigger.Name, f.Trigger.Path, f.Trigger.Value))
+// WriteText writes the report for a person in a terminal. The findings are
+// grouped by rule: a rule's explanation is printed once and the affected
+// resources are listed under it. verbose adds every finding's evidence, the
+// list of checks that ran and the full limits.
+func WriteText(w io.Writer, r *Report, verbose bool) error {
+	var b strings.Builder
+	groups := groupFindings(r.Findings)
+
+	fmt.Fprintf(&b, "meshmedic chart check, rules written against Istio %s\n", r.IstioVersion)
+	b.WriteString(summaryLine(r, groups))
+	native := "sidecar proxies assumed native"
+	if !r.NativeSidecars {
+		native = "sidecar proxies assumed classic"
+	}
+	b.WriteString(wrap("", "  ", fmt.Sprintf("read %s: %d objects, %d pod templates, namespace %s, modes %s; %s", r.Input, r.Examined.Objects, r.Examined.PodTemplates, r.Namespace, joinModes(r.Modes), native)))
+
+	for _, g := range groups {
+		f := g[0]
+		kind := "candidate"
+		if f.Level == LevelNote {
+			kind = "NOTE, weaker than a candidate"
+		}
+		fmt.Fprintf(&b, "\n%s  %s  %s (%s)\n", f.ID, f.Mode, f.Title, kind)
 		field(&b, "effect", f.Effect)
 		if len(f.Docs) == 0 {
 			field(&b, "istio", "no documentation anchor. "+f.DocsNote)
 		} else {
 			field(&b, "istio", fmt.Sprintf("%q", f.Docs[0].Quote))
-			field(&b, "", f.Docs[0].URL+" ("+f.Docs[0].Heading+")")
-			// More passages of the same page and heading add nothing to a
-			// line that only names where to look; the JSON keeps every quote.
-			seen := map[string]bool{f.Docs[0].URL + f.Docs[0].Heading: true}
-			for _, d := range f.Docs[1:] {
-				if k := d.URL + d.Heading; !seen[k] {
-					seen[k] = true
-					field(&b, "also", d.URL+" ("+d.Heading+")")
-				}
-			}
+			field(&b, "", f.Docs[0].URL)
 		}
 		field(&b, "fix", f.Fix)
 		field(&b, "confirm", f.Confirm)
-		b.WriteString("  evidence:\n")
-		for _, e := range f.Evidence {
-			b.WriteString(wrap("    - ", "      ", fmt.Sprintf("%s/%s %s = %s", e.Kind, e.Name, e.Path, e.Value)))
-		}
+		writeAffected(&b, g, verbose)
 	}
 
 	b.WriteString("\n")
-	if r.Candidates == 0 {
-		fmt.Fprintf(&b, "No candidates found in %d objects.\n", r.Examined.Objects)
-	} else {
-		fmt.Fprintf(&b, "%d %s found.\n", r.Candidates, plural(r.Candidates, "candidate", "candidates"))
-	}
 	b.WriteString(wrap("", "", Notice))
-	b.WriteString("\nchecks that ran:\n")
-	for _, c := range r.Checks {
-		fmt.Fprintf(&b, "  %s  %-26s %-8s %d\n", c.ID, c.Check, c.Mode, c.Findings)
-	}
-	b.WriteString("\nwhat these checks cannot see:\n")
-	for _, s := range r.BlindSpots {
-		b.WriteString(wrap("  - ", "    ", s))
+	if verbose {
+		b.WriteString("\nchecks that ran:\n")
+		for _, c := range r.Checks {
+			fmt.Fprintf(&b, "  %s  %-26s %-8s %d\n", c.ID, c.Check, c.Mode, c.Findings)
+		}
+		b.WriteString("\nwhat these checks cannot see:\n")
+		for _, s := range r.BlindSpots {
+			b.WriteString(wrap("  - ", "    ", s))
+		}
+	} else {
+		b.WriteString(wrap("limits: ", "  ", shortLimits))
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// groupFindings groups findings that share a rule, a mode and a level; the
+// input is already sorted, so each group is contiguous.
+func groupFindings(fs []Finding) [][]Finding {
+	var out [][]Finding
+	for _, f := range fs {
+		if n := len(out); n > 0 && out[n-1][0].ID == f.ID && out[n-1][0].Mode == f.Mode && out[n-1][0].Level == f.Level {
+			out[n-1] = append(out[n-1], f)
+			continue
+		}
+		out = append(out, []Finding{f})
+	}
+	return out
+}
+
+func summaryLine(r *Report, groups [][]Finding) string {
+	var b strings.Builder
+	switch {
+	case r.Candidates == 0 && r.Notes == 0:
+		fmt.Fprintf(&b, "No candidates in %d objects.\n", r.Examined.Objects)
+	default:
+		fmt.Fprintf(&b, "%d %s and %d %s", r.Candidates, plural(r.Candidates, "candidate", "candidates"), r.Notes, plural(r.Notes, "note", "notes"))
+		var parts []string
+		for _, g := range groups {
+			p := fmt.Sprintf("%s %s x%d", g[0].ID, g[0].Mode, len(g))
+			if g[0].Level == LevelNote {
+				p += " (note)"
+			}
+			parts = append(parts, p)
+		}
+		b.WriteString(": " + strings.Join(parts, ", ") + "\n")
+	}
+	return b.String()
+}
+
+// writeAffected lists the resources of one group. When every resource is hit
+// through the same field of the same object (one NetworkPolicy selecting two
+// StatefulSets), that is said once.
+func writeAffected(b *strings.Builder, g []Finding, verbose bool) {
+	same := len(g) > 1
+	for _, f := range g[1:] {
+		if f.Trigger != g[0].Trigger {
+			same = false
+		}
+	}
+	b.WriteString("  affected:\n")
+	if same {
+		var names []string
+		for _, f := range g {
+			names = append(names, resourceString(f.Resource))
+		}
+		sort.Strings(names)
+		b.WriteString(wrap("    ", "    ", fmt.Sprintf("all %d are hit through %s", len(g), triggerString(g[0].Trigger))))
+		for _, n := range names {
+			b.WriteString("    - " + n + "\n")
+		}
+		if verbose {
+			writeEvidence(b, g[0])
+		}
+		return
+	}
+	for _, f := range g {
+		b.WriteString(wrap("    - ", "      ", fmt.Sprintf("%s: %s; %s", resourceString(f.Resource), f.Reason, triggerString(f.Trigger))))
+		if verbose {
+			writeEvidence(b, f)
+		}
+	}
+}
+
+func writeEvidence(b *strings.Builder, f Finding) {
+	for _, e := range f.Evidence {
+		b.WriteString(wrap("        evidence: ", "                  ", fmt.Sprintf("%s/%s %s = %s", e.Kind, e.Name, e.Path, e.Value)))
+	}
+}
+
+func triggerString(e Evidence) string {
+	return fmt.Sprintf("%s/%s %s = %s", e.Kind, e.Name, e.Path, e.Value)
 }
 
 func field(b *strings.Builder, label, text string) {
@@ -110,7 +186,7 @@ func joinModes(ms []Mode) string {
 	for i, m := range ms {
 		s[i] = string(m)
 	}
-	return strings.Join(s, ", ")
+	return strings.Join(s, "+")
 }
 
 func plural(n int, one, many string) string {

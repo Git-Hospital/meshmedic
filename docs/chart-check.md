@@ -26,6 +26,7 @@ $ helm template my-release ./my-chart | meshmedic chart check --manifests -
 | `--manifests FILE` or `--manifests -` | rendered manifests from a file or stdin; helm is not needed and not run |
 | `--mesh sidecar\|ambient\|both` | which Istio data-plane mode to check; default `both`. Each check runs only for the modes it applies to |
 | `--format text\|json` | `text` for a person (default), `json` for a program |
+| `--verbose` | text only: add every finding's evidence, the list of checks that ran and the full limits (the default report is grouped by rule and short) |
 | `-f`, `--values FILE` | values file, repeatable, passed to helm |
 | `--set`, `--set-string`, `--set-json` | value overrides, repeatable, passed to helm |
 | `--namespace NS` | release namespace (default `default`); also the namespace given to objects that name none |
@@ -45,11 +46,12 @@ The same three the other commands use.
 
 | code | meaning |
 |---|---|
-| 0 | no candidates |
+| 0 | no candidates (notes do not count) |
 | 1 | at least one candidate |
 | 2 | usage error, render error, unreadable or invalid input, or an input with no Kubernetes objects |
 
-An input with no objects is exit 2, never 0: a run that read nothing must not
+A **note** is a finding that is weaker than a candidate (see MM-CHART-001): it is
+reported but never sets exit code 1. An input with no objects is exit 2, never 0: a run that read nothing must not
 look like a clean one.
 
 ### Determinism
@@ -66,81 +68,46 @@ carry those names.
 
 Bitnami redis 28.3.9 with its default values, rendered from the chart archive
 (`helm pull oci://registry-1.docker.io/bitnamicharts/redis --version 28.3.9`).
-Real output; the one omission is marked.
+Real output.
 
 ```console
 $ meshmedic chart check redis-28.3.9.tgz --namespace pilot --release-name redis
-meshmedic chart check (rules written against Istio 1.31)
-input: chart redis-28.3.9.tgz
-read 14 objects and 2 pod templates; namespace pilot; modes: ambient, sidecar
+meshmedic chart check, rules written against Istio 1.31
+2 candidates and 0 notes: MM-CHART-001 ambient x2
+read chart redis-28.3.9.tgz: 14 objects, 2 pod templates, namespace pilot, modes ambient+sidecar;
+  sidecar proxies assumed native
 
-MM-CHART-001  ambient  no ingress rule admits TCP 15008 (HBONE)
-  resource: StatefulSet pilot/redis-master
-  field:    NetworkPolicy/redis spec.ingress = 6379/TCP from any source
-  effect:   Ambient carries traffic between meshed pods over TCP port 15008 (HBONE) and sends
-            kubelet probes from 169.254.7.127, and the node enforces this NetworkPolicy on both, so
-            a policy that admits neither drops pod-to-pod traffic or fails the pod's probes.
+MM-CHART-001  ambient  A NetworkPolicy does not admit ambient HBONE traffic (TCP 15008) (candidate)
+  effect:   Ambient carries traffic between meshed pods over TCP port 15008 (HBONE) and the node
+            enforces this NetworkPolicy on it, so a policy that admits no traffic to 15008 drops
+            pod-to-pod traffic to this workload.
   istio:    "However, NetworkPolicy is enforced on the host, outside the pod. This means that if you
             have preexisting NetworkPolicy in place that, for example, will deny list inbound
             traffic to an ambient pod on every port but 443, you will have to add an exception to
             that NetworkPolicy for port 15008."
-            https://istio.io/latest/docs/ambient/usage/networkpolicy/ (Ambient traffic overlay and
-            Kubernetes NetworkPolicy)
-  also:     https://istio.io/latest/docs/ambient/usage/networkpolicy/ (Ambient, health probes, and
-            Kubernetes NetworkPolicy)
+            https://istio.io/latest/docs/ambient/usage/networkpolicy/
   fix:      Add an ingress rule to the NetworkPolicy that admits TCP 15008 (ports: [{port: 15008,
-            protocol: TCP}]) and, for a probe finding, one that admits the probed port from ipBlock
-            169.254.7.127/32. If the chart has a value for extra ingress rules, put the rule there
+            protocol: TCP}]). If the chart has a value for extra ingress rules, put the rule there
             instead of patching the template.
   confirm:  Install the chart in a throwaway ambient cluster and watch the traffic between its own
             pods (replication, clustering): pods that never become Ready or keep restarting, and
             connection errors toward port 15008 in the ztunnel logs, confirm it. Install it without
             the mesh as the comparison.
-  evidence:
-    - StatefulSet/redis-master spec.template.metadata.labels =
-      app.kubernetes.io/component=master,app.kubernetes.io/instance=redis,app.kubernetes.io/managed-by=Helm,app.kubernetes.io/name=redis,app.kubernetes.io/version=8.10.2,helm.sh/chart=redis-28.3.9
-    - NetworkPolicy/redis spec.podSelector = selects this pod; isolates ingress
-    - NetworkPolicy/redis spec.ingress[0] = 6379/TCP from any source
+  affected:
+    all 2 are hit through NetworkPolicy/redis spec.ingress = 6379/TCP from any source
+    - StatefulSet pilot/redis-master
+    - StatefulSet pilot/redis-replicas
 
-[the second finding is the same except for its resource, StatefulSet pilot/redis-replicas; left out here]
-
-2 candidates found.
 These are candidates found by reading manifests, not failures observed in a cluster. A clean result
-is not a guarantee that the chart works under Istio.
-
-checks that ran:
-  MM-CHART-001  np-hbone-probe             ambient  2
-  MM-CHART-002  protocol-declared          sidecar  0
-  MM-CHART-003  uid-1337                   sidecar  0
-  MM-CHART-004  reserved-port              ambient  0
-  MM-CHART-004  reserved-port              sidecar  0
-  MM-CHART-005  classic-sidecar-startup    sidecar  0
-  MM-CHART-006  classic-sidecar-job        sidecar  0
-  MM-CHART-007  webhook-backend-in-mesh    ambient  0
-  MM-CHART-007  webhook-backend-in-mesh    sidecar  0
-  MM-CHART-008  l7-without-waypoint        ambient  0
-
-what these checks cannot see:
-  - Only the rendered manifests are read. A requirement that lives in a container image (for example
-    an image whose USER is 1337 with no runAsUser in the manifest), in application code (the address
-    it binds, the ports it really listens on) or in the cluster is not seen.
-  - The release namespace is assumed to be enrolled in the mesh, and a pod is in the mesh unless it
-    opts out itself. Namespace labels, PeerAuthentication, mesh-wide settings and policies from
-    outside the chart are not read; STRICT mutual TLS is assumed where a finding depends on it.
-  - NetworkPolicy: only policies the chart renders are read, not a default-deny policy from
-    elsewhere; the peers of an ingress rule are not evaluated for port 15008; the IPv6 probe address
-    is not checked; the behavior of a particular CNI (Calico, Cilium) is not modelled.
-  - Nothing is run. Traffic between the chart's own pods, client-first protocols broken by the mesh,
-    whether a webhook is ever called and its failure policy, and whether a container port is really
-    bound are not observed.
-  - A pod that leaves the mesh on purpose (for example a Helm test pod with sidecar injection
-    disabled) is not checked, although under STRICT mutual TLS a pod outside the mesh cannot call
-    one inside it.
-  - helm template cannot evaluate lookup or cluster capabilities, so a real install can render
-    something different.
+is not a guarantee that the chart works under Istio. A note is weaker than a candidate: it depends
+on something the manifests cannot show and does not set the exit code.
+limits: Only rendered manifests are read. Namespace enrolment, PeerAuthentication, policies from
+  outside the chart and the CNI are assumed, not read, and nothing is run. Run with --verbose for
+  the full list.
 ```
 
-Exit code 1. The same chart with the one-rule fix, a values file with
+Exit code 1 (32 lines). The two StatefulSets are hit through one NetworkPolicy, and
+the report says so once instead of repeating the rule for each. The same chart with the one-rule fix, a values file with
 `networkPolicy.extraIngress` (the certified fix of the
 [compat pilot](compat-pilot.md#findings)):
 
@@ -155,32 +122,21 @@ networkPolicy:
 
 ```console
 $ meshmedic chart check redis-28.3.9.tgz --namespace pilot --release-name redis -f fix-values.yaml
-meshmedic chart check (rules written against Istio 1.31)
-input: chart redis-28.3.9.tgz
-read 14 objects and 2 pod templates; namespace pilot; modes: ambient, sidecar
+meshmedic chart check, rules written against Istio 1.31
+No candidates in 14 objects.
+read chart redis-28.3.9.tgz: 14 objects, 2 pod templates, namespace pilot, modes ambient+sidecar;
+  sidecar proxies assumed native
 
-No candidates found in 14 objects.
 These are candidates found by reading manifests, not failures observed in a cluster. A clean result
-is not a guarantee that the chart works under Istio.
-
-checks that ran:
-  MM-CHART-001  np-hbone-probe             ambient  0
-  MM-CHART-002  protocol-declared          sidecar  0
-  MM-CHART-003  uid-1337                   sidecar  0
-  MM-CHART-004  reserved-port              ambient  0
-  MM-CHART-004  reserved-port              sidecar  0
-  MM-CHART-005  classic-sidecar-startup    sidecar  0
-  MM-CHART-006  classic-sidecar-job        sidecar  0
-  MM-CHART-007  webhook-backend-in-mesh    ambient  0
-  MM-CHART-007  webhook-backend-in-mesh    sidecar  0
-  MM-CHART-008  l7-without-waypoint        ambient  0
-
-what these checks cannot see:
-[the same six items as above]
+is not a guarantee that the chart works under Istio. A note is weaker than a candidate: it depends
+on something the manifests cannot show and does not set the exit code.
+limits: Only rendered manifests are read. Namespace enrolment, PeerAuthentication, policies from
+  outside the chart and the CNI are assumed, not read, and nothing is run. Run with --verbose for
+  the full list.
 ```
 
-Exit code 0. The report still says what was looked at and which checks ran, so
-"clean" can be told from "did not look".
+Exit code 0. The report still says what was looked at, so "clean" can be told
+from "did not look"; `--verbose` also lists the checks that ran.
 
 The same chart as rendered YAML on stdin, ambient only, as JSON:
 
@@ -236,7 +192,9 @@ $ helm template redis redis-28.3.9.tgz --namespace pilot | meshmedic chart check
     {
       "id": "MM-CHART-001",
       "check": "np-hbone-probe",
+      "title": "A NetworkPolicy does not admit ambient HBONE traffic (TCP 15008)",
       "mode": "ambient",
+      "level": "candidate",
       "resource": {
         "kind": "StatefulSet",
         "namespace": "pilot",
@@ -249,25 +207,15 @@ $ helm template redis redis-28.3.9.tgz --namespace pilot | meshmedic chart check
         "value": "6379/TCP from any source"
       },
       "reason": "no ingress rule admits TCP 15008 (HBONE)",
-      "effect": "Ambient carries traffic between meshed pods over TCP port 15008 (HBONE) and sends kubelet probes from 169.254.7.127, and the node enforces this NetworkPolicy on both, so a policy that admits neither drops pod-to-pod traffic or fails the pod's probes.",
+      "effect": "Ambient carries traffic between meshed pods over TCP port 15008 (HBONE) and the node enforces this NetworkPolicy on it, so a policy that admits no traffic to 15008 drops pod-to-pod traffic to this workload.",
       "docs": [
         {
           "url": "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
           "heading": "Ambient traffic overlay and Kubernetes NetworkPolicy",
           "quote": "However, NetworkPolicy is enforced on the host, outside the pod. This means that if you have preexisting NetworkPolicy in place that, for example, will deny list inbound traffic to an ambient pod on every port but 443, you will have to add an exception to that NetworkPolicy for port 15008."
-        },
-        {
-          "url": "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
-          "heading": "Ambient, health probes, and Kubernetes NetworkPolicy",
-          "quote": "This behavior is transparently enabled when you add pods to the ambient mesh, and by default ambient uses the link-local addresses 169.254.7.127 (IPv4) and fd16:9254:7127:1337:ffff:ffff:ffff:ffff (IPv6) to identify and correctly allow kubelet health probe packets."
-        },
-        {
-          "url": "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
-          "heading": "Ambient, health probes, and Kubernetes NetworkPolicy",
-          "quote": "Note: If your workload, namespace, or cluster enforces Kubernetes NetworkPolicy, you must allow both the IPv4 and IPv6 addresses used by ambient mode."
         }
       ],
-      "fix": "Add an ingress rule to the NetworkPolicy that admits TCP 15008 (ports: [{port: 15008, protocol: TCP}]) and, for a probe finding, one that admits the probed port from ipBlock 169.254.7.127/32. If the chart has a value for extra ingress rules, put the rule there instead of patching the template.",
+      "fix": "Add an ingress rule to the NetworkPolicy that admits TCP 15008 (ports: [{port: 15008, protocol: TCP}]). If the chart has a value for extra ingress rules, put the rule there instead of patching the template.",
       "confirm": "Install the chart in a throwaway ambient cluster and watch the traffic between its own pods (replication, clustering): pods that never become Ready or keep restarting, and connection errors toward port 15008 in the ztunnel logs, confirm it. Install it without the mesh as the comparison.",
       "evidence": [
         {
@@ -293,7 +241,9 @@ $ helm template redis redis-28.3.9.tgz --namespace pilot | meshmedic chart check
     {
       "id": "MM-CHART-001",
       "check": "np-hbone-probe",
+      "title": "A NetworkPolicy does not admit ambient HBONE traffic (TCP 15008)",
       "mode": "ambient",
+      "level": "candidate",
       "resource": {
         "kind": "StatefulSet",
         "namespace": "pilot",
@@ -306,25 +256,15 @@ $ helm template redis redis-28.3.9.tgz --namespace pilot | meshmedic chart check
         "value": "6379/TCP from any source"
       },
       "reason": "no ingress rule admits TCP 15008 (HBONE)",
-      "effect": "Ambient carries traffic between meshed pods over TCP port 15008 (HBONE) and sends kubelet probes from 169.254.7.127, and the node enforces this NetworkPolicy on both, so a policy that admits neither drops pod-to-pod traffic or fails the pod's probes.",
+      "effect": "Ambient carries traffic between meshed pods over TCP port 15008 (HBONE) and the node enforces this NetworkPolicy on it, so a policy that admits no traffic to 15008 drops pod-to-pod traffic to this workload.",
       "docs": [
         {
           "url": "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
           "heading": "Ambient traffic overlay and Kubernetes NetworkPolicy",
           "quote": "However, NetworkPolicy is enforced on the host, outside the pod. This means that if you have preexisting NetworkPolicy in place that, for example, will deny list inbound traffic to an ambient pod on every port but 443, you will have to add an exception to that NetworkPolicy for port 15008."
-        },
-        {
-          "url": "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
-          "heading": "Ambient, health probes, and Kubernetes NetworkPolicy",
-          "quote": "This behavior is transparently enabled when you add pods to the ambient mesh, and by default ambient uses the link-local addresses 169.254.7.127 (IPv4) and fd16:9254:7127:1337:ffff:ffff:ffff:ffff (IPv6) to identify and correctly allow kubelet health probe packets."
-        },
-        {
-          "url": "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
-          "heading": "Ambient, health probes, and Kubernetes NetworkPolicy",
-          "quote": "Note: If your workload, namespace, or cluster enforces Kubernetes NetworkPolicy, you must allow both the IPv4 and IPv6 addresses used by ambient mode."
         }
       ],
-      "fix": "Add an ingress rule to the NetworkPolicy that admits TCP 15008 (ports: [{port: 15008, protocol: TCP}]) and, for a probe finding, one that admits the probed port from ipBlock 169.254.7.127/32. If the chart has a value for extra ingress rules, put the rule there instead of patching the template.",
+      "fix": "Add an ingress rule to the NetworkPolicy that admits TCP 15008 (ports: [{port: 15008, protocol: TCP}]). If the chart has a value for extra ingress rules, put the rule there instead of patching the template.",
       "confirm": "Install the chart in a throwaway ambient cluster and watch the traffic between its own pods (replication, clustering): pods that never become Ready or keep restarting, and connection errors toward port 15008 in the ztunnel logs, confirm it. Install it without the mesh as the comparison.",
       "evidence": [
         {
@@ -349,7 +289,8 @@ $ helm template redis redis-28.3.9.tgz --namespace pilot | meshmedic chart check
     }
   ],
   "candidates": 2,
-  "notice": "These are candidates found by reading manifests, not failures observed in a cluster. A clean result is not a guarantee that the chart works under Istio.",
+  "notes": 0,
+  "notice": "These are candidates found by reading manifests, not failures observed in a cluster. A clean result is not a guarantee that the chart works under Istio. A note is weaker than a candidate: it depends on something the manifests cannot show and does not set the exit code.",
   "blindSpots": [
     "Only the rendered manifests are read. A requirement that lives in a container image (for example an image whose USER is 1337 with no runAsUser in the manifest), in application code (the address it binds, the ports it really listens on) or in the cluster is not seen.",
     "The release namespace is assumed to be enrolled in the mesh, and a pod is in the mesh unless it opts out itself. Namespace labels, PeerAuthentication, mesh-wide settings and policies from outside the chart are not read; STRICT mutual TLS is assumed where a finding depends on it.",
@@ -377,7 +318,7 @@ value.
 
 | id | check | mode | what it reads | documentation |
 |---|---|---|---|---|
-| MM-CHART-001 | `np-hbone-probe` | ambient | a NetworkPolicy that isolates ingress for a pod and admits neither TCP 15008 (HBONE), nor a kubelet probe port from 169.254.7.127 | [Ambient and NetworkPolicy](https://istio.io/latest/docs/ambient/usage/networkpolicy/) |
+| MM-CHART-001 | `np-hbone-probe` | ambient | a NetworkPolicy that isolates ingress for a pod and admits no traffic to TCP 15008 (HBONE): a candidate. A kubelet probe port not admitted from 169.254.7.127 is a **note**, because it depends on the CNI | [Ambient and NetworkPolicy](https://istio.io/latest/docs/ambient/usage/networkpolicy/) |
 | MM-CHART-002 | `protocol-declared` | sidecar | a server-first port (25, 53, 3306, 27017) declared as HTTP or gRPC; one container port declared with different protocols by its Services | [Application requirements: server first protocols](https://istio.io/latest/docs/ops/deployment/application-requirements/) |
 | MM-CHART-003 | `uid-1337` | sidecar | a container that runs as user 1337 | [Application requirements: pod requirements](https://istio.io/latest/docs/ops/deployment/application-requirements/) |
 | MM-CHART-004 | `reserved-port` | sidecar, ambient | a containerPort or Service targetPort that Istio uses inside the pod | [Application requirements: ports used by Istio](https://istio.io/latest/docs/ops/deployment/application-requirements/) |
@@ -399,12 +340,43 @@ checked against the 1.31 and 1.32 documentation on 2026-11-11.
 > deny list inbound traffic to an ambient pod on every port but 443, you will
 > have to add an exception to that NetworkPolicy for port 15008.
 
-Fix: add an ingress rule that admits TCP 15008, and for a probe finding one that
-admits the probed port from `ipBlock` `169.254.7.127/32`. If the chart has a
-value for extra ingress rules, use it instead of patching the template.
-Confirm: install in a throwaway ambient cluster and watch the traffic between
-the chart's own pods; pods that never become Ready or restart repeatedly, and
-connection errors toward port 15008 in the ztunnel logs, confirm it.
+This is the candidate. Fix: add an ingress rule that admits TCP 15008. If the
+chart has a value for extra ingress rules, use it instead of patching the
+template. Confirm: install in a throwaway ambient cluster and watch the traffic
+between the chart's own pods; pods that never become Ready or restart
+repeatedly, and connection errors toward port 15008 in the ztunnel logs,
+confirm it.
+
+**The probe part is a note, not a candidate.** Ambient sends kubelet probes
+from 169.254.7.127. The same Istio page, section "Ambient, health probes, and
+Kubernetes NetworkPolicy", does not say that a NetworkPolicy blocks them
+everywhere. It says:
+
+> Various CNI implementations solve this in different ways and seek to either
+> work around the problem by silently excluding kubelet health probes from
+> normal policy enforcement, or configuring policy exceptions for them.
+
+> Note: If your workload, namespace, or cluster enforces Kubernetes
+> NetworkPolicy, you must allow both the IPv4 and IPv6 addresses used by ambient
+> mode. Depending on your CNI, packets with these addresses may otherwise be
+> blocked, which will cause application pod health probes to fail once they join
+> the ambient mesh.
+
+and, of its example policy, "Depending on your CNI, kubelet probes and
+link-local addresses may be ignored by this policy, or be blocked by it". (Read
+on <https://istio.io/latest/docs/ambient/usage/networkpolicy/> on 2026-11-12,
+Istio 1.32 documentation.) The requirement is therefore conditional on the CNI,
+and a manifest cannot show the CNI. So a probe port that the chart's
+NetworkPolicy does not admit from 169.254.7.127 is reported as a note: visibly
+weaker, with its own wording ("depending on the CNI"), and it never sets exit
+code 1. The 2026-11-12 cluster run did not reproduce it on kind's default CNI
+(argo-cd's pods stayed Ready), which is what the page leads one to expect of a
+CNI that excludes kubelet probes from policy. Fix for a cluster whose CNI does
+block them: admit the probed port from `ipBlock` `169.254.7.127/32` (and the
+IPv6 address on IPv6 or dual-stack clusters). Confirm: probes that fail in an
+ambient cluster with your CNI (pod not Ready, liveness restarts, probe failures
+in `kubectl describe pod`) confirm it; probes that pass mean your CNI does not
+block them.
 
 ### MM-CHART-002 protocol-declared (sidecar)
 
@@ -502,7 +474,7 @@ check cannot tell it from an ALLOW policy and flags both.
 ## The JSON report
 
 `schemaVersion` is 1. It changes when a field is removed or changes meaning;
-adding a field does not change it.
+adding a field does not change it. The `title`, `level` and `notes` fields were added with the note level (they are additions).
 
 | field | meaning |
 |---|---|
@@ -516,11 +488,12 @@ adding a field does not change it.
 | `examined` | `objects` and `podTemplates` read |
 | `checks` | one entry per check and mode that ran: `id`, `check`, `mode`, `findings` |
 | `findings` | the candidates (below), sorted by id, mode, resource, reason |
-| `candidates` | `len(findings)`; the exit code is 1 when it is not 0 |
+| `candidates` | the findings of level `candidate`; the exit code is 1 when it is not 0 |
+| `notes` | the findings of level `note`; they do not affect the exit code |
 | `notice` | the sentence that these are candidates and a clean result is no guarantee |
 | `blindSpots` | what the checks cannot see |
 
-A finding has `id`, `check`, `mode`, `resource` (`kind`, `namespace`, `name`;
+A finding has `id`, `check`, `title` (the rule's heading), `mode`, `level` (`candidate` or `note`), `resource` (`kind`, `namespace`, `name`;
 the namespace is empty for cluster-scoped kinds), `trigger` (`kind`, `name`,
 `path`, `value`: the field whose value made the check fire), `reason` (what the
 check saw in this resource), `effect` (what will happen under Istio, one
@@ -544,7 +517,8 @@ The report prints these in every run.
 - NetworkPolicy: only policies the chart renders are read; the peers of an
   ingress rule are not evaluated for port 15008 (HBONE arrives from the client
   pods the rule already admits on the application port); the IPv6 probe address
-  is not checked; the behavior of a CNI is not modelled.
+  is not checked; the CNI is not modelled, which is why the probe finding is a
+  note.
 - Nothing is run. Traffic between the chart's own pods, client-first protocols
   broken by the mesh, whether a webhook is ever called and its failure policy,
   and whether a container port is really bound are not observed.
@@ -588,8 +562,8 @@ Those rows say "not observed", not "false positive".
 |---|---|---|---|---|
 | podinfo 6.15.0 | ambient | nothing | as without a mesh | agree |
 | podinfo 6.15.0 | sidecar | nothing | `helm test` fails | **missed**: the test pods opt out of injection and call a pod in the mesh; no check looks at that |
-| argo-cd 10.11.1 | ambient | MM-CHART-001, 7 findings: no rule admits 15008 for 5 workloads (dex-server, notifications-controller, redis, repo-server, application-controller) | as without a mesh | HBONE findings: **not observed**. The run made no traffic between the chart's own components (for example the server and the repo-server calling redis), which is what a missing 15008 rule would drop. Candidate for a real problem, unconfirmed |
-| argo-cd 10.11.1 | ambient | MM-CHART-001, and 2 of the 7 findings are probes: repo-server liveness on 8084 and application-controller readiness on 8082 are admitted only from a namespace selector, not from 169.254.7.127 | pods Ready, no restarts | probe findings: **unexplained**. The probes ran and passed, so either the check is wrong about these probes or kind's NetworkPolicy implementation lets node probes through whatever the rules say; the pilot notes that it does not know which. Not resolved here |
+| argo-cd 10.11.1 | ambient | MM-CHART-001, 5 candidates: no rule admits 15008 for 5 workloads (dex-server, notifications-controller, redis, repo-server, application-controller) | as without a mesh | **not observed**. The run made no traffic between the chart's own components (for example the server and the repo-server calling redis), which is what a missing 15008 rule would drop. Candidate for a real problem, unconfirmed |
+| argo-cd 10.11.1 | ambient | the other 2 of the 7 findings are probe **notes**: repo-server liveness on 8084 and application-controller readiness on 8082 are admitted only from a namespace selector, not from 169.254.7.127 | pods Ready, no restarts | **explained, conditional on the CNI**. Istio's page says that whether such probes are blocked depends on the CNI ("Depending on your CNI ..."), and some CNIs exclude kubelet probes from policy. That kind's default CNI did so is consistent with the page but was not verified. They are notes, not candidates, and do not set the exit code |
 | argo-cd 10.11.1 | sidecar | MM-CHART-002: container port 8080 of the server declared `http` by one Service port and `https` by another | as without a mesh | **not observed**, hypothesis only. The chart sends two ports of one Service (80 and 443) to container port 8080. The notes written for the rule before this run name this exact case as its expected false-positive class (the server answers both on one port); that was not verified here. The rule is broader than the passage it quotes, which speaks of the same port number, and it is left as it is |
 | prometheus-pushgateway 3.9.1 | both | nothing | as without a mesh | agree |
 | kube-prometheus-stack 92.12.0 | sidecar | MM-CHART-007, 2 findings (the mutating and the validating admission configuration, backend `kube-prometheus-stack-operator:443`) | API server could not reach `kube-prometheus-stack-operator:443` | **confirmed** |
@@ -611,8 +585,12 @@ sidecar), four are flagged and one is missed. Over the 18 chart-and-mode cells
 (valkey left out, the redis fix not counted): 9 agree (nothing flagged,
 nothing observed), 4 are confirmed, 3 are flagged and not observed for a
 stated reason (the two ambient webhook cells, argo-cd sidecar), 1 is missed
-(podinfo sidecar), and 1 is mixed: argo-cd ambient, where 5 findings are not
-observed and 2 are unexplained. **Unexplained flags: 2 findings, in one cell.**
+(podinfo sidecar), and 1 is mixed: argo-cd ambient, where 5 candidates are not
+observed and 2 probe notes are explained as conditional on the CNI. **Unexplained
+flags: 0.** That is a relabelling, so its basis is the page's wording quoted
+under MM-CHART-001, not the cluster run: the run only shows the probes passed.
+Before the note level existed the same two findings were candidates and were
+counted as unexplained.
 No check was removed or tuned to produce this table. The only change made
 after the first run was to group the webhooks of one configuration that point
 to one backend into a single finding (cloudnative-pg has nine webhooks, so it
@@ -631,13 +609,13 @@ chart's real render.
 ```console
 $ hack/chart-check/validate.sh
 podinfo	6.15.0	exit 0	none
-argo-cd	10.11.1	exit 1	ambient MM-CHART-001 np-hbone-probe x7; sidecar MM-CHART-002 protocol-declared x1
+argo-cd	10.11.1	exit 1	ambient MM-CHART-001 np-hbone-probe candidate x5; ambient MM-CHART-001 np-hbone-probe note x2; sidecar MM-CHART-002 protocol-declared candidate x1
 prometheus-pushgateway	3.9.1	exit 0	none
-kube-prometheus-stack	92.12.0	exit 1	ambient MM-CHART-007 webhook-backend-in-mesh x2; sidecar MM-CHART-007 webhook-backend-in-mesh x2
-redis	28.3.9	exit 1	ambient MM-CHART-001 np-hbone-probe x2
+kube-prometheus-stack	92.12.0	exit 1	ambient MM-CHART-007 webhook-backend-in-mesh candidate x2; sidecar MM-CHART-007 webhook-backend-in-mesh candidate x2
+redis	28.3.9	exit 1	ambient MM-CHART-001 np-hbone-probe candidate x2
 redis-fixed	28.3.9	exit 0	none
-rabbitmq	16.0.14	exit 1	ambient MM-CHART-001 np-hbone-probe x1
-cloudnative-pg	0.29.1	exit 1	ambient MM-CHART-007 webhook-backend-in-mesh x2; sidecar MM-CHART-007 webhook-backend-in-mesh x2
+rabbitmq	16.0.14	exit 1	ambient MM-CHART-001 np-hbone-probe candidate x1
+cloudnative-pg	0.29.1	exit 1	ambient MM-CHART-007 webhook-backend-in-mesh candidate x2; sidecar MM-CHART-007 webhook-backend-in-mesh candidate x2
 nats	2.15.1	exit 0	none
 grafana	14.0.1	exit 0	none
 valkey	0.12.0	exit 2: meshmedic chart check: helm template failed: Error: execution error at (valkey/templates/statefulset.yaml:3:4): Replica mode requires persistent storage. Please set replica.persistence.size (e.g., '5Gi')

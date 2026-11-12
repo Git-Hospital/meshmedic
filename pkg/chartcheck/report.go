@@ -33,9 +33,14 @@ type Options struct {
 // Finding is one candidate: something in the manifests that is likely to break
 // under Istio in the given mode.
 type Finding struct {
-	ID       string   `json:"id"`
-	Check    string   `json:"check"`
-	Mode     Mode     `json:"mode"`
+	ID    string `json:"id"`
+	Check string `json:"check"`
+	// Title is the rule's heading for this kind of finding.
+	Title string `json:"title"`
+	Mode  Mode   `json:"mode"`
+	// Level is "candidate" or "note". A note depends on something the
+	// manifests cannot show (the CNI) and never sets the exit code.
+	Level    string   `json:"level"`
 	Resource Resource `json:"resource"`
 	// Trigger is the field, and its value, that made the check fire.
 	Trigger Evidence `json:"trigger"`
@@ -81,13 +86,20 @@ type Report struct {
 	Checks         []CheckRun `json:"checks"`
 	Findings       []Finding  `json:"findings"`
 	Candidates     int        `json:"candidates"`
+	Notes          int        `json:"notes"`
 	Notice         string     `json:"notice"`
 	BlindSpots     []string   `json:"blindSpots"`
 }
 
+// Finding levels.
+const (
+	LevelCandidate = "candidate"
+	LevelNote      = "note"
+)
+
 // Notice is printed with every report, clean or not.
 const Notice = "These are candidates found by reading manifests, not failures observed in a cluster. " +
-	"A clean result is not a guarantee that the chart works under Istio."
+	"A clean result is not a guarantee that the chart works under Istio. A note is weaker than a candidate: it depends on something the manifests cannot show and does not set the exit code."
 
 // BlindSpots is what the checks cannot see. It is part of every report.
 var BlindSpots = []string{
@@ -145,16 +157,28 @@ func Analyze(m *Manifest, o Options) (*Report, error) {
 				if ev == nil {
 					ev = []Evidence{}
 				}
-				rep.Findings = append(rep.Findings, Finding{
-					ID: r.ID, Check: r.Check, Mode: md, Resource: f.Resource, Trigger: f.Trigger,
+				fd := Finding{
+					ID: r.ID, Check: r.Check, Title: r.Title, Mode: md, Level: LevelCandidate,
+					Resource: f.Resource, Trigger: f.Trigger,
 					Reason: f.Reason, Effect: r.Effect, Docs: docs, DocsNote: r.DocsNote,
 					Fix: r.Fix, Confirm: r.Confirm, Evidence: ev,
-				})
+				}
+				if f.Note && r.Note != nil {
+					fd.Level, fd.Title, fd.Effect, fd.Fix, fd.Confirm = LevelNote, r.Note.Title, r.Note.Effect, r.Note.Fix, r.Note.Confirm
+					fd.Docs, fd.DocsNote = r.Note.Docs, ""
+				}
+				rep.Findings = append(rep.Findings, fd)
 			}
 		}
 	}
 	sort.SliceStable(rep.Findings, func(i, j int) bool { return lessFinding(rep.Findings[i], rep.Findings[j]) })
-	rep.Candidates = len(rep.Findings)
+	for _, f := range rep.Findings {
+		if f.Level == LevelNote {
+			rep.Notes++
+		} else {
+			rep.Candidates++
+		}
+	}
 	return rep, nil
 }
 
@@ -177,6 +201,8 @@ func lessFinding(a, b Finding) bool {
 		return a.ID < b.ID
 	case a.Mode != b.Mode:
 		return a.Mode < b.Mode
+	case a.Level != b.Level:
+		return a.Level < b.Level
 	case a.Resource.Kind != b.Resource.Kind:
 		return a.Resource.Kind < b.Resource.Kind
 	case a.Resource.Namespace != b.Resource.Namespace:

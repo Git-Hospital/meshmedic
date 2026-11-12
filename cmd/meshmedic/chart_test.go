@@ -30,6 +30,7 @@ func TestChartCheckExitCodes(t *testing.T) {
 	}{
 		{"candidate in ambient", []string{"--manifests", def}, "", 1, ""},
 		{"same input, sidecar only, is clean", []string{"--manifests", def, "--mesh", "sidecar"}, "", 0, ""},
+		{"a probe note alone is not a candidate", []string{"--manifests", filepath.Join(chartFixtures, "np-rule-no-ports.yaml")}, "", 0, ""},
 		{"fixed input is clean", []string{"--manifests", fixed}, "", 0, ""},
 		{"stdin", []string{"--manifests", "-", "--mesh", "ambient"}, mustRead(t, def), 1, ""},
 		{"json", []string{"--manifests", def, "--format", "json"}, "", 1, ""},
@@ -65,6 +66,7 @@ func TestChartCheckJSONAndText(t *testing.T) {
 		IstioVersion  string `json:"istioVersion"`
 		Input         string `json:"input"`
 		Candidates    int    `json:"candidates"`
+		Notes         int    `json:"notes"`
 		Findings      []struct {
 			ID   string `json:"id"`
 			Mode string `json:"mode"`
@@ -81,7 +83,7 @@ func TestChartCheckJSONAndText(t *testing.T) {
 	}
 
 	_, text, _ := runChartCheck(t, "", "--manifests", def)
-	for _, want := range []string{"MM-CHART-001", "ambient", "candidates found by reading manifests", "what these checks cannot see", "Istio 1.31"} {
+	for _, want := range []string{"MM-CHART-001", "ambient", "candidates found by reading manifests", "limits:", "Istio 1.31"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("text report lacks %q", want)
 		}
@@ -124,7 +126,7 @@ func TestChartCheckRendersWithHelm(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if !strings.Contains(out, "input: chart ./chart") {
+	if !strings.Contains(out, "read chart ./chart") {
 		t.Errorf("output: %s", out)
 	}
 	got, _ := os.ReadFile(argsFile)

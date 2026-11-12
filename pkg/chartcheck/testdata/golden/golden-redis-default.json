@@ -42,7 +42,9 @@
     {
       "id": "MM-CHART-001",
       "check": "np-hbone-probe",
+      "title": "A NetworkPolicy does not admit ambient HBONE traffic (TCP 15008)",
       "mode": "ambient",
+      "level": "candidate",
       "resource": {
         "kind": "StatefulSet",
         "namespace": "demo",
@@ -55,25 +57,15 @@
         "value": "6379/TCP from any source"
       },
       "reason": "no ingress rule admits TCP 15008 (HBONE)",
-      "effect": "Ambient carries traffic between meshed pods over TCP port 15008 (HBONE) and sends kubelet probes from 169.254.7.127, and the node enforces this NetworkPolicy on both, so a policy that admits neither drops pod-to-pod traffic or fails the pod's probes.",
+      "effect": "Ambient carries traffic between meshed pods over TCP port 15008 (HBONE) and the node enforces this NetworkPolicy on it, so a policy that admits no traffic to 15008 drops pod-to-pod traffic to this workload.",
       "docs": [
         {
           "url": "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
           "heading": "Ambient traffic overlay and Kubernetes NetworkPolicy",
           "quote": "However, NetworkPolicy is enforced on the host, outside the pod. This means that if you have preexisting NetworkPolicy in place that, for example, will deny list inbound traffic to an ambient pod on every port but 443, you will have to add an exception to that NetworkPolicy for port 15008."
-        },
-        {
-          "url": "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
-          "heading": "Ambient, health probes, and Kubernetes NetworkPolicy",
-          "quote": "This behavior is transparently enabled when you add pods to the ambient mesh, and by default ambient uses the link-local addresses 169.254.7.127 (IPv4) and fd16:9254:7127:1337:ffff:ffff:ffff:ffff (IPv6) to identify and correctly allow kubelet health probe packets."
-        },
-        {
-          "url": "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
-          "heading": "Ambient, health probes, and Kubernetes NetworkPolicy",
-          "quote": "Note: If your workload, namespace, or cluster enforces Kubernetes NetworkPolicy, you must allow both the IPv4 and IPv6 addresses used by ambient mode."
         }
       ],
-      "fix": "Add an ingress rule to the NetworkPolicy that admits TCP 15008 (ports: [{port: 15008, protocol: TCP}]) and, for a probe finding, one that admits the probed port from ipBlock 169.254.7.127/32. If the chart has a value for extra ingress rules, put the rule there instead of patching the template.",
+      "fix": "Add an ingress rule to the NetworkPolicy that admits TCP 15008 (ports: [{port: 15008, protocol: TCP}]). If the chart has a value for extra ingress rules, put the rule there instead of patching the template.",
       "confirm": "Install the chart in a throwaway ambient cluster and watch the traffic between its own pods (replication, clustering): pods that never become Ready or keep restarting, and connection errors toward port 15008 in the ztunnel logs, confirm it. Install it without the mesh as the comparison.",
       "evidence": [
         {
@@ -98,7 +90,8 @@
     }
   ],
   "candidates": 1,
-  "notice": "These are candidates found by reading manifests, not failures observed in a cluster. A clean result is not a guarantee that the chart works under Istio.",
+  "notes": 0,
+  "notice": "These are candidates found by reading manifests, not failures observed in a cluster. A clean result is not a guarantee that the chart works under Istio. A note is weaker than a candidate: it depends on something the manifests cannot show and does not set the exit code.",
   "blindSpots": [
     "Only the rendered manifests are read. A requirement that lives in a container image (for example an image whose USER is 1337 with no runAsUser in the manifest), in application code (the address it binds, the ports it really listens on) or in the cluster is not seen.",
     "The release namespace is assumed to be enrolled in the mesh, and a pod is in the mesh unless it opts out itself. Namespace labels, PeerAuthentication, mesh-wide settings and policies from outside the chart are not read; STRICT mutual TLS is assumed where a finding depends on it.",

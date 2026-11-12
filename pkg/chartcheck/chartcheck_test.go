@@ -61,12 +61,12 @@ func TestChecks(t *testing.T) {
 		{"np-redis-fixed.yaml", Ambient, native, "np-hbone-probe", nil},
 		{"np-rule-no-ports.yaml", Ambient, native, "np-hbone-probe", []string{"StatefulSet/redis-replicas: kubelet probe port 6379 is not admitted from 169.254.7.127/32"}},
 		{"np-deny-all.yaml", Ambient, native, "np-hbone-probe", []string{
-			"StatefulSet/redis-replicas: kubelet probe port 6379 is not admitted from 169.254.7.127/32",
 			"StatefulSet/redis-replicas: no ingress rule admits TCP 15008 (HBONE)",
+			"StatefulSet/redis-replicas: kubelet probe port 6379 is not admitted from 169.254.7.127/32",
 		}},
 		{"np-no-policytypes.yaml", Ambient, native, "np-hbone-probe", []string{
-			"StatefulSet/redis-replicas: kubelet probe port 6379 is not admitted from 169.254.7.127/32",
 			"StatefulSet/redis-replicas: no ingress rule admits TCP 15008 (HBONE)",
+			"StatefulSet/redis-replicas: kubelet probe port 6379 is not admitted from 169.254.7.127/32",
 		}},
 		{"np-egress-only.yaml", Ambient, native, "np-hbone-probe", nil},
 		{"np-port-range.yaml", Ambient, native, "np-hbone-probe", nil},
@@ -240,7 +240,7 @@ func TestOutputDeterministic(t *testing.T) {
 		if err := WriteJSON(&j, rep); err != nil {
 			t.Fatal(err)
 		}
-		if err := WriteText(&x, rep); err != nil {
+		if err := WriteText(&x, rep, false); err != nil {
 			t.Fatal(err)
 		}
 		if i == 0 {
@@ -381,7 +381,7 @@ func TestGolden(t *testing.T) {
 	if err := WriteJSON(&j, rep); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteText(&x, rep); err != nil {
+	if err := WriteText(&x, rep, false); err != nil {
 		t.Fatal(err)
 	}
 	for name, got := range map[string][]byte{"golden-redis-default.json": j.Bytes(), "golden-redis-default.txt": x.Bytes()} {
@@ -468,5 +468,69 @@ func TestDocsMentionEveryRule(t *testing.T) {
 		if !strings.Contains(string(b), "### "+r.ID+" "+r.Check) {
 			t.Errorf("docs/chart-check.md has no section for %s %s", r.ID, r.Check)
 		}
+	}
+}
+
+// Istio's page says that whether kubelet probes are blocked depends on the
+// CNI ("Depending on your CNI, ..."), so a probe finding is a note: it is
+// reported, says so, and does not make a candidate.
+func TestProbeFindingIsANote(t *testing.T) {
+	for _, tc := range []struct {
+		file       string
+		candidates int
+		notes      int
+	}{
+		{"np-rule-no-ports.yaml", 0, 1},
+		{"np-probe-blocked.yaml", 0, 1},
+		{"np-deny-all.yaml", 1, 1},
+		{"np-redis-default.yaml", 1, 0},
+		{"np-probe-ipblock.yaml", 0, 0},
+	} {
+		rep := analyzeFile(t, tc.file, Ambient, true)
+		if rep.Candidates != tc.candidates || rep.Notes != tc.notes {
+			t.Errorf("%s: %d candidates and %d notes, want %d and %d", tc.file, rep.Candidates, rep.Notes, tc.candidates, tc.notes)
+		}
+		for _, f := range rep.Findings {
+			isProbe := strings.HasPrefix(f.Reason, "kubelet probe")
+			if isProbe != (f.Level == LevelNote) {
+				t.Errorf("%s: %q has level %q", tc.file, f.Reason, f.Level)
+			}
+			if isProbe {
+				if !strings.Contains(f.Effect, "depending on the CNI") || !strings.Contains(f.Title, "depending on the CNI") {
+					t.Errorf("a probe note must say it depends on the CNI: %q / %q", f.Title, f.Effect)
+				}
+				if len(f.Docs) == 0 || !strings.Contains(f.Docs[1].Quote, "Depending on your CNI") {
+					t.Errorf("a probe note must quote the CNI condition: %+v", f.Docs)
+				}
+			}
+		}
+	}
+}
+
+func TestTextIsGroupedAndShort(t *testing.T) {
+	rep := analyzeFile(t, "np-two-workloads.yaml", Ambient, true)
+	rep.Input = "manifests:np-two-workloads.yaml"
+	var short, long bytes.Buffer
+	if err := WriteText(&short, rep, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteText(&long, rep, true); err != nil {
+		t.Fatal(err)
+	}
+	s := short.String()
+	if n := strings.Count(s, "However, NetworkPolicy is enforced"); n != 1 {
+		t.Errorf("the rule's quote is printed %d times, want once", n)
+	}
+	if !strings.Contains(s, "all 2 are hit through NetworkPolicy/shared") {
+		t.Errorf("no one-line statement that one object hits both workloads:\n%s", s)
+	}
+	if strings.Contains(s, "evidence:") || strings.Contains(s, "what these checks cannot see") {
+		t.Error("the default report carries verbose parts")
+	}
+	if !strings.Contains(long.String(), "evidence:") || !strings.Contains(long.String(), "what these checks cannot see") {
+		t.Error("the verbose report lacks evidence or the full limits")
+	}
+	if lines := strings.Count(s, "\n"); lines > 40 {
+		t.Errorf("default report is %d lines", lines)
 	}
 }

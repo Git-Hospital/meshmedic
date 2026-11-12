@@ -12,15 +12,25 @@ var docsNetworkPolicy = []Doc{
 		Heading: "Ambient traffic overlay and Kubernetes NetworkPolicy",
 		Quote:   "However, NetworkPolicy is enforced on the host, outside the pod. This means that if you have preexisting NetworkPolicy in place that, for example, will deny list inbound traffic to an ambient pod on every port but 443, you will have to add an exception to that NetworkPolicy for port 15008.",
 	},
+}
+
+// docsProbe is the page on kubelet probes. What it says depends on the CNI,
+// and the note that rests on it says so.
+var docsProbe = []Doc{
 	{
 		URL:     "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
 		Heading: "Ambient, health probes, and Kubernetes NetworkPolicy",
-		Quote:   "This behavior is transparently enabled when you add pods to the ambient mesh, and by default ambient uses the link-local addresses 169.254.7.127 (IPv4) and fd16:9254:7127:1337:ffff:ffff:ffff:ffff (IPv6) to identify and correctly allow kubelet health probe packets.",
+		Quote:   "Various CNI implementations solve this in different ways and seek to either work around the problem by silently excluding kubelet health probes from normal policy enforcement, or configuring policy exceptions for them.",
 	},
 	{
 		URL:     "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
 		Heading: "Ambient, health probes, and Kubernetes NetworkPolicy",
-		Quote:   "Note: If your workload, namespace, or cluster enforces Kubernetes NetworkPolicy, you must allow both the IPv4 and IPv6 addresses used by ambient mode.",
+		Quote:   "Note: If your workload, namespace, or cluster enforces Kubernetes NetworkPolicy, you must allow both the IPv4 and IPv6 addresses used by ambient mode. Depending on your CNI, packets with these addresses may otherwise be blocked, which will cause application pod health probes to fail once they join the ambient mesh.",
+	},
+	{
+		URL:     "https://istio.io/latest/docs/ambient/usage/networkpolicy/",
+		Heading: "Ambient, health probes, and Kubernetes NetworkPolicy",
+		Quote:   "Depending on your CNI, kubelet probes and link-local addresses may be ignored by this policy, or be blocked by it:",
 	},
 }
 
