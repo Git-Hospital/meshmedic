@@ -33,9 +33,14 @@ Unknown fields are rejected at every level. Row fields:
 
 A new key (`newKeys`): `key`, `anchor`, `certifiedFix`, `reproduction` (script
 path), `reviewer` (`verdict` admit, `run`). Order in the list is the rank among
-new keys.
+new keys. A key that causes.json flags `needsNewKeyRule: true` (no documentation
+anchor was found at the freeze) is credited the same way: a row or a part may
+name it only when `newKeys` holds a complete, admitted record for it, and `check`
+accepts that record (it refuses a record for any other key of causes.json). Such
+a key ranks among the new keys, after the frozen list, in `newKeys` order, and
+never earns S (crossrun/INTERPRETATIONS.md 26).
 
-What `check` enforces: enums; cause known or fully recorded; no two rows for
+What `check` enforces: enums; cause frozen or fully recorded as a new key (a flagged key needs the record); no two rows for
 one cell; a cell credited to one key only (parts name distinct keys, one of
 them the cause); with `parts`, `fix.entry` is the combined entry and
 `runs.certification` the combined runs (a part that leaves the cell differing

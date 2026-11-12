@@ -161,7 +161,7 @@ func newFixture(r1, r2 []ChartReport, pubs map[string]string) *fixture {
 
 // mustCauses is causes.json's shape with every key's static check named after
 // the key and applying in both mesh worlds, except bind-address (null, as in
-// the real file). The real file is read by TestRealCausesFile.
+// the real file); apiserver-caller carries needsNewKeyRule, as in the real file. The real file is read by TestRealCausesFile.
 func mustCauses() *ledger.Causes {
 	var items []string
 	for _, k := range []string{"ambient-np", "protocol", "bind-address", "uid-1337", "reserved-port", "startup-order", "job-lifecycle", "apiserver-caller", "ambient-l7"} {
@@ -169,7 +169,11 @@ func mustCauses() *ledger.Causes {
 		if k == "bind-address" {
 			sc = "null"
 		}
-		items = append(items, `{"key":"`+k+`","worlds":["W1","W3"],"staticCheck":`+sc+`}`)
+		flag := ""
+		if k == "apiserver-caller" {
+			flag = `,"needsNewKeyRule":true` // as in the real file
+		}
+		items = append(items, `{"key":"`+k+`","worlds":["W1","W3"],"staticCheck":`+sc+flag+`}`)
 	}
 	c, err := ledger.ParseCauses([]byte(`{"keys":[` + strings.Join(items, ",") + `]}`))
 	if err != nil {

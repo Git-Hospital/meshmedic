@@ -137,6 +137,11 @@ type StaticKey struct {
 	// NoCheckReason says why: NoCheckNull for a frozen key whose staticCheck is
 	// null, NoCheckAfterFreeze for a key admitted after the freeze.
 	NoCheckReason string `json:"noStaticCheckReason,omitempty"`
+	// NotCountedReason is set for a key that carries needsNewKeyRule in
+	// causes.json and was admitted by the new-key rule: its static check is
+	// still run and reported, but the key never earns S (a key admitted after
+	// the freeze never does). Qualifies is then false whatever the check says.
+	NotCountedReason string `json:"notCountedTowardS,omitempty"`
 	// NotApplicable lists counted findings in a world the check does not apply
 	// to. A check that cannot look at a world cannot flag a finding there, so
 	// the key does not qualify (and the cell is not reported as "not flagged").
@@ -661,7 +666,9 @@ func (a *analysis) universal(res *Result) {
 	// numerator = those with a held cell credited to the key (INTERPRETATIONS.md).
 	keys := append([]string{}, a.in.Causes.Keys...)
 	for _, nk := range a.in.Ledger.NewKeys {
-		keys = append(keys, nk.Key)
+		if !a.in.Causes.Has(nk.Key) { // a flagged key is in causes.json already
+			keys = append(keys, nk.Key)
+		}
 	}
 	credited := map[string]map[chartWorld]bool{}
 	for i := range a.in.Ledger.Rows {
@@ -736,6 +743,10 @@ func (c *CellResult) classKey() string {
 	return c.Class
 }
 
+// NotCountedNewKeyRule labels the static row of a key that entered by the
+// new-key rule although causes.json describes it (needsNewKeyRule).
+const NotCountedNewKeyRule = "does not count toward S: admitted by the new-key rule (needsNewKeyRule in causes.json), and a key admitted after the freeze never earns S"
+
 // Why a key has no static check.
 const (
 	NoCheckNull        = "no static check: staticCheck is null in causes.json"
@@ -746,7 +757,8 @@ const (
 // for a frozen key whose causes.json entry has staticCheck null and for a key
 // outside causes.json: a key admitted after the freeze has no check in the
 // frozen instrument, so it never earns S and static results are not required
-// for it.
+// for it. A key flagged needsNewKeyRule has its described check (ok true), and
+// staticKey keeps it out of S.
 func (a *analysis) checkID(key string) (id string, ok bool, why string) {
 	if !a.in.Causes.Has(key) {
 		return "", false, NoCheckAfterFreeze

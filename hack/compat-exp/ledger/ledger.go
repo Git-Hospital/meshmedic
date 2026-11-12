@@ -229,6 +229,12 @@ type Causes struct {
 	Static map[string]string
 	// Worlds maps a cause key to the mesh worlds it applies to.
 	Worlds map[string][]string
+	// NewKeyRule is true for a key whose causes.json entry carries
+	// needsNewKeyRule: no documentation anchor was found at the freeze, so the
+	// key is in the file (its mechanism and static check are described) but
+	// enters only by the new-key rule of section 3, like a key that is not in
+	// the file at all.
+	NewKeyRule map[string]bool
 }
 
 // LoadCauses reads hack/compat-exp/causes.json.
@@ -250,6 +256,7 @@ func ParseCauses(data []byte) (*Causes, error) {
 			Key         string   `json:"key"`
 			Worlds      []string `json:"worlds"`
 			StaticCheck *string  `json:"staticCheck"`
+			NeedsRule   bool     `json:"needsNewKeyRule"`
 		} `json:"keys"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
@@ -258,7 +265,7 @@ func ParseCauses(data []byte) (*Causes, error) {
 	if len(doc.Keys) == 0 {
 		return nil, fmt.Errorf("causes: no keys found")
 	}
-	c := &Causes{Static: map[string]string{}, Worlds: map[string][]string{}}
+	c := &Causes{Static: map[string]string{}, Worlds: map[string][]string{}, NewKeyRule: map[string]bool{}}
 	seen := map[string]bool{}
 	for i, it := range doc.Keys {
 		if it.Key == "" {
@@ -273,6 +280,9 @@ func ParseCauses(data []byte) (*Causes, error) {
 		seen[it.Key] = true
 		c.Keys = append(c.Keys, it.Key)
 		c.Worlds[it.Key] = it.Worlds
+		if it.NeedsRule {
+			c.NewKeyRule[it.Key] = true
+		}
 		if it.StaticCheck != nil && *it.StaticCheck != "" {
 			c.Static[it.Key] = *it.StaticCheck
 		}
@@ -280,7 +290,8 @@ func ParseCauses(data []byte) (*Causes, error) {
 	return c, nil
 }
 
-// Has reports whether key is in the frozen list.
+// Has reports whether key is in causes.json. A key with needsNewKeyRule is in
+// the file and still not frozen: see Frozen.
 func (c *Causes) Has(key string) bool {
 	for _, k := range c.Keys {
 		if k == key {
@@ -290,21 +301,68 @@ func (c *Causes) Has(key string) bool {
 	return false
 }
 
-// Order returns the rank of key: its index in causes.json, or len(Keys) plus
-// its index in the ledger's newKeys for a new key (new keys rank last, in the
-// order the ledger lists them). Unknown keys rank after all of those.
+// NeedsNewKeyRule reports whether key is in causes.json with needsNewKeyRule
+// true: it may be credited only through a complete, admitted new-key record
+// (section 3), and it never earns S.
+func (c *Causes) NeedsNewKeyRule(key string) bool { return c.NewKeyRule[key] }
+
+// Frozen reports whether key is a key of the frozen list proper: in
+// causes.json and not flagged needsNewKeyRule. Only such a key may be
+// credited without a new-key record, rank in the frozen part of rule 3's
+// order, and be in S.
+func (c *Causes) Frozen(key string) bool { return c.Has(key) && !c.NewKeyRule[key] }
+
+// FrozenKeys is the frozen list in rank order: causes.json without the flagged
+// keys.
+func (c *Causes) FrozenKeys() []string {
+	var out []string
+	for _, k := range c.Keys {
+		if !c.NewKeyRule[k] {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// Order returns the rank of key: its index in the frozen list (causes.json
+// without flagged keys), or len(frozen list) plus its index in the ledger's
+// newKeys for a new key, a flagged key included (new keys rank after the
+// frozen list, in the order they are admitted). Unknown keys, and a flagged key
+// with no new-key record, rank after all of those.
 func (c *Causes) Order(f *File, key string) int {
-	for i, k := range c.Keys {
+	frozen := c.FrozenKeys()
+	for i, k := range frozen {
 		if k == key {
 			return i
 		}
 	}
 	for i, nk := range f.NewKeys {
 		if nk.Key == key {
-			return len(c.Keys) + i
+			return len(frozen) + i
 		}
 	}
-	return len(c.Keys) + len(f.NewKeys)
+	return len(frozen) + len(f.NewKeys)
+}
+
+// completeNewKey reports whether the record holds everything section 3 asks
+// for: an anchor (or issue or code reference), a certified fix, a
+// chart-independent reproduction path, and the admitting reviewer's verdict
+// with its run.
+func completeNewKey(nk NewKey) bool {
+	return strings.TrimSpace(nk.Anchor) != "" && strings.TrimSpace(nk.CertifiedFix) != "" &&
+		strings.TrimSpace(nk.Reproduction) != "" &&
+		nk.Reviewer != nil && nk.Reviewer.Verdict == KeyAdmit && nk.Reviewer.Run != ""
+}
+
+// AdmittedNewKey reports whether the ledger holds a complete, admitted new-key
+// record for key.
+func AdmittedNewKey(f *File, key string) bool {
+	for _, nk := range f.NewKeys {
+		if nk.Key == key && completeNewKey(nk) {
+			return true
+		}
+	}
+	return false
 }
 
 var sha256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -348,7 +406,7 @@ func Check(f *File, causes *Causes) []Problem {
 			add(w, "key is empty")
 			continue
 		}
-		if causes.Has(nk.Key) {
+		if causes.Frozen(nk.Key) {
 			add(w, "key is already in causes.json")
 		}
 		if newKeys[nk.Key] {
@@ -386,8 +444,10 @@ func Check(f *File, causes *Causes) []Problem {
 			add(w, "status %q is not one of counted, excluded, unexplained, unresolved", r.Status)
 			continue
 		}
-		if r.Cause != "" && !causes.Has(r.Cause) && !newKeys[r.Cause] {
-			add(w, "cause %q is not in causes.json and has no complete new-key record", r.Cause)
+		if r.Cause != "" {
+			if msg := unknownCause(causes, f, newKeys, r.Cause); msg != "" {
+				add(w, "cause %s", msg)
+			}
 		}
 		if r.Type != "" && !isOneOf(r.Type, TypeDefect, TypeGap) {
 			add(w, "type %q is not defect or gap", r.Type)
@@ -424,8 +484,10 @@ func Check(f *File, causes *Causes) []Problem {
 			if p.Cause == "" || p.Entry == "" || len(p.Runs) == 0 {
 				add(w, "parts[%d] needs cause, entry and runs", k)
 			}
-			if p.Cause != "" && !causes.Has(p.Cause) && !newKeys[p.Cause] {
-				add(w, "parts[%d].cause %q is not a known key", k, p.Cause)
+			if p.Cause != "" {
+				if msg := unknownCause(causes, f, newKeys, p.Cause); msg != "" {
+					add(w, "parts[%d].cause %s", k, msg)
+				}
 			}
 			if partCauses[p.Cause] {
 				add(w, "parts[%d].cause %q repeated: a cell is credited to exactly one key", k, p.Cause)
@@ -492,6 +554,23 @@ func Check(f *File, causes *Causes) []Problem {
 
 	sort.SliceStable(ps, func(a, b int) bool { return ps[a].Where < ps[b].Where })
 	return ps
+}
+
+// unknownCause returns why a row's cause cannot be credited, or "". A frozen
+// key needs nothing; a key outside causes.json, and a key flagged
+// needsNewKeyRule, need a complete, admitted new-key record (section 3).
+func unknownCause(causes *Causes, f *File, newKeys map[string]bool, key string) string {
+	switch {
+	case causes.Frozen(key):
+		return ""
+	case causes.NeedsNewKeyRule(key):
+		if !newKeys[key] || !AdmittedNewKey(f, key) {
+			return fmt.Sprintf("%q needs the new-key rule (causes.json: needsNewKeyRule, no documentation anchor): it is credited only with a complete, admitted new-key record in newKeys", key)
+		}
+	case !newKeys[key]:
+		return fmt.Sprintf("%q is not in causes.json and has no complete new-key record", key)
+	}
+	return ""
 }
 
 // checkExclusion holds the rules for the two excluded reasons that rest on a

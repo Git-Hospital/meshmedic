@@ -161,6 +161,9 @@ func RenderMarkdown(r *Result) []byte {
 			if s.NoCheck {
 				ws = append(ws, s.NoCheckReason)
 			}
+			if s.NotCountedReason != "" {
+				ws = append(ws, s.NotCountedReason)
+			}
 			w("| %s | %s | %v | %s | %v |\n", s.Key, s.Check, s.FlagsAll, strings.Join(ws, "; "), s.Qualifies)
 		}
 	}

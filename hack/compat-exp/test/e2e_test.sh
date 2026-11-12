@@ -566,6 +566,24 @@ grep -q 'rule 3 credits the cell to "ambient-l7"' "$T/parts-b.err" && ok "  and 
 parts_inputs "$T/parts-c" app-2-pc-stuck '["1010","1011"]' false app-2-pb-stuck '["1008","1009"]' protocol 1008 1009 1010 1011
 eq "rule 3: neither part alone clears the cells: the first key in the list, protocol, with the combined certificate" "$?:$(jq -c '[.cells[] | select(.chart == "app-2" and .status == "counted") | .credit]' "$T/parts-c.json")" '0:["protocol","protocol"]'
 
+# A key that causes.json flags needsNewKeyRule (apiserver-caller) enters only by the new-key rule (crossrun/INTERPRETATIONS.md 26):
+# the real causes.json, the real ledger check and the real crossrun. Without a new-key record the ledger is refused;
+# with an admitted record the cells count (N_new, P_new) and the key's check is reported but never earns S.
+jq '.rows |= map(if .chart == "app-2" then .cause = "apiserver-caller" else . end)' "$T/ledger.json" >"$T/nkr.ledger.json"
+"$B/ledger" check -ledger "$T/nkr.ledger.json" -causes "$repo/hack/compat-exp/causes.json" >"$T/nkr.lc" 2>&1
+eq "needsNewKeyRule: a row crediting apiserver-caller without a new-key record fails the ledger check (exit 1)" "$?" 1
+grep -q 'needs the new-key rule' "$T/nkr.lc" && ok "  and the error says so" || bad "  error text: $(head -3 "$T/nkr.lc")"
+jq --arg c "$id2" '.newKeys = [{key: "apiserver-caller", anchor: "https://github.com/istio/istio/issues/0", certifiedFix: "app-2-fix", reproduction: "hack/compat-exp/repro/apiserver-caller.sh", reviewer: {verdict: "admit", run: "9002"}}]' "$T/nkr.ledger.json" >"$T/nkr2.ledger.json"
+"$B/ledger" check -ledger "$T/nkr2.ledger.json" -causes "$repo/hack/compat-exp/causes.json" >"$T/nkr2.lc" 2>&1 && ok "needsNewKeyRule: with a complete, admitted new-key record the ledger check passes" || { bad "ledger check with the record"; head -3 "$T/nkr2.lc"; }
+jq --arg l "$T/nkr.ledger.json" '.ledger = $l' "$T/analysis/inputs.json" >"$T/nkr.inputs.json"
+"$B/crossrun" -inputs "$T/nkr.inputs.json" -json "$T/nkr.json" >"$T/nkr.err" 2>&1
+eq "needsNewKeyRule: crossrun refuses the ledger without the record (exit 2, the ledger fails its check)" "$?" 2
+jq --arg l "$T/nkr2.ledger.json" '.ledger = $l' "$T/analysis/inputs.json" >"$T/nkr2.inputs.json"
+"$B/crossrun" -inputs "$T/nkr2.inputs.json" -json "$T/nkr2.json" -md "$T/nkr2.md" >"$T/nkr2.err" 2>&1
+eq "needsNewKeyRule: with the record the cells are credited to apiserver-caller and count" "$?:$(jq -c '[.cells[] | select(.chart == "app-2" and .status == "counted") | .credit]' "$T/nkr2.json")" '0:["apiserver-caller","apiserver-caller"]'
+eq "needsNewKeyRule: counted in N_new and P_new, S is 0" "$(jq -c '.metrics | [.nNew, .pNew, .s]' "$T/nkr2.json")" '[1,1,0]'
+eq "needsNewKeyRule: its static check is reported and does not count toward S" "$(jq -c '.staticChecks[] | select(.key == "apiserver-caller") | [.check, .qualifies, (.notCountedTowardS | length > 0)]' "$T/nkr2.json")" '["webhook-backend-in-mesh",false,true]'
+
 # The replacement rule (crossrun/INTERPRETATIONS.md 22). Variant runs 1101 and 1102 are runs 1001 and 1002 with the
 # reserve app-51 added, and in run 1102 the W0 of app-6 and app-7 cannot pull its image (real observe jobs, the registry
 # refusal of the pilots). Each is rerun once in a separate observe run restricted to the chart (1012, 1013): app-6's W0

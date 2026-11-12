@@ -517,6 +517,19 @@ refuses "a new key the reviewer did not admit" "neither a key of causes.json nor
 mk_nk "[$(jq -c '.reviewer.run = ""' <<<"$full")]"
 g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
 refuses "a new key whose reviewer run is empty" "neither a key of causes.json nor a new key"
+
+# a key that causes.json flags needsNewKeyRule (apiserver-caller) is not a frozen key: a fix entry may name it
+# only with a complete, admitted new-key record, like a key that is not in causes.json
+mk_nk '[]'
+fx "[{\"id\":\"c1-fix\",\"fixOf\":\"c1\",\"cause\":\"apiserver-caller\",\"chart\":\"c1\",\"version\":\"1.0.0\",\"repo\":\"https://example.test/1\",\"values\":[\"--set\",\"a=b\"]}]"
+g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
+refuses "a flagged key (needsNewKeyRule) without a new-key record" "neither a key of causes.json nor a new key"
+mk_nk "[$(jq -c '.key = "apiserver-caller"' <<<"$full")]"
+g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
+passes "a flagged key with a complete, admitted new-key record"
+mk_nk "[$(jq -c '.key = "apiserver-caller" | .reviewer.verdict = "merge"' <<<"$full")]"
+g "$r2" observe GUARD_FIXES_FILE=hack/compat-exp/fixes/f.json
+refuses "a flagged key whose record the reviewer did not admit" "neither a key of causes.json nor a new key"
 mk_nk '[]'
 
 if [[ $fails -ne 0 ]]; then echo "$fails failure(s)" >&2; exit 1; fi
