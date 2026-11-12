@@ -850,7 +850,7 @@ func relative(id string, suppresses ...string) catalog.Scenario {
 // takes 3 minutes to fill its rate window: the first three minutes read the
 // partial level, then the fault reads in full. The two maps give each entry's
 // value at the two stages.
-func rampedRun(t *testing.T, scenarios []catalog.Scenario, partial, full map[string]float64, quiet []string) Result {
+func rampedRun(t *testing.T, scenarios []catalog.Scenario, partial, full map[string]float64, quiet []string, tweak ...func(*Runner, *Spec)) Result {
 	t.Helper()
 	var injectedAt time.Time
 	var r *Runner
@@ -869,8 +869,11 @@ func rampedRun(t *testing.T, scenarios []catalog.Scenario, partial, full map[str
 	r.Sleep = func(_ context.Context, d time.Duration) { now = now.Add(d) }
 	r.Poll = 10 * time.Second
 	r.Exec = func(_ context.Context, argv []string) error {
-		if argv[0] == "inject" {
+		switch argv[0] {
+		case "inject":
 			injectedAt = r.Now()
+		case "reset":
+			injectedAt = time.Time{}
 		}
 		return nil
 	}
@@ -878,6 +881,9 @@ func rampedRun(t *testing.T, scenarios []catalog.Scenario, partial, full map[str
 	s.Warmup = Duration(5 * time.Minute)
 	s.FiresWithin = Duration(10 * time.Minute)
 	s.Expect.Quiet = quiet
+	for _, f := range tweak {
+		f(r, &s)
+	}
 	return r.Run(context.Background(), s)
 }
 
@@ -920,10 +926,11 @@ func TestRelativeSubjectStillFiresAtItsThresholdFromInjection(t *testing.T) {
 	}
 }
 
-// Warm-up still learns. A freeze that began before the baseline was taught
-// would leave the relative entries on their static fallback of 1000, and a
-// subject at 40 could never fire.
-func TestWarmupStillLearnsBeforeTheFreeze(t *testing.T) {
+// A guard against freezing too early, not a test of the fix: it passes either
+// way. A freeze that began before the baseline was taught would leave the
+// relative entries on their static fallback of 1000, and a subject at 40 could
+// never fire.
+func TestWarmupIsNotFrozenOut(t *testing.T) {
 	res := rampedRun(t,
 		[]catalog.Scenario{relative("subject")},
 		map[string]float64{"subject": 40},
@@ -931,5 +938,128 @@ func TestWarmupStillLearnsBeforeTheFreeze(t *testing.T) {
 		nil)
 	if !res.Fired {
 		t.Fatalf("a fault at 40 did not fire: the warm-up taught nothing and the static 1000 applied (%v)", res.Failures)
+	}
+}
+
+// With the baseline frozen, an entry that did not become ready in warm-up never
+// will, and would be judged against its static fallback for the whole proof.
+// That is not a verdict about the entry, so the run is blind and nothing is
+// injected. Here the subject is warmed for 3 readings and needs 5.
+func TestSubjectWithoutAReadyBaselineIsBlindBeforeInjection(t *testing.T) {
+	var injected bool
+	res := rampedRun(t,
+		[]catalog.Scenario{relative("subject")},
+		map[string]float64{"subject": 480},
+		map[string]float64{"subject": 480},
+		nil,
+		func(r *Runner, s *Spec) {
+			s.Warmup = Duration(30 * time.Second)
+			exec := r.Exec
+			r.Exec = func(ctx context.Context, argv []string) error {
+				if argv[0] == "inject" {
+					injected = true
+				}
+				return exec(ctx, argv)
+			}
+		})
+
+	if !res.Blind || !Retryable(res) {
+		t.Fatalf("blind = %v, failures = %v; want a blind, retryable run", res.Blind, res.Failures)
+	}
+	if !strings.Contains(res.BlindReason, "subject") || !strings.Contains(res.BlindReason, "3 readings") {
+		t.Errorf("blind reason %q does not name the entry and the readings accepted", res.BlindReason)
+	}
+	if injected {
+		t.Error("the fault was injected into a run that could not be judged")
+	}
+	if res.Passed {
+		t.Error("a blind run passed")
+	}
+}
+
+// The same for a neighbour in the quiet list: judged against a static number
+// it could never reach, "stayed quiet" would be vacuous.
+func TestQuietNeighbourWithoutAReadyBaselineIsBlind(t *testing.T) {
+	nbr := relative("nbr")
+	nbr.Signal.BaselineMinSamples = 50 // warm-up gives 30
+	res := rampedRun(t,
+		[]catalog.Scenario{scenario("subject", 1), nbr},
+		map[string]float64{"subject": 5, "nbr": 25},
+		map[string]float64{"subject": 5, "nbr": 25},
+		[]string{"nbr"})
+
+	if !res.Blind {
+		t.Fatalf("a quiet neighbour with no baseline was judged: passed = %v, failures = %v", res.Passed, res.Failures)
+	}
+	if !strings.Contains(res.BlindReason, "nbr") || !strings.Contains(res.BlindReason, "30 readings") {
+		t.Errorf("blind reason %q does not name the neighbour and the readings accepted", res.BlindReason)
+	}
+}
+
+// A spec that asked for no warm-up keeps the documented static fallback.
+func TestNoWarmupKeepsTheStaticFallback(t *testing.T) {
+	res := rampedRun(t,
+		[]catalog.Scenario{scenario("subject", 1)},
+		map[string]float64{"subject": 5},
+		map[string]float64{"subject": 5},
+		nil,
+		func(_ *Runner, s *Spec) { s.Warmup = 0 })
+	if res.Blind || !res.Passed {
+		t.Fatalf("a spec without warm-up was not judged normally: %+v", res)
+	}
+}
+
+// The proof records the threshold it judged the subject against, and whether it
+// was the learned one: a verdict without it is half a fact.
+func TestRunRecordsTheThresholdItWasJudgedAgainst(t *testing.T) {
+	res := rampedRun(t,
+		[]catalog.Scenario{relative("subject")},
+		map[string]float64{"subject": 40},
+		map[string]float64{"subject": 40},
+		nil)
+	if !res.Passed {
+		t.Fatalf("failed: %v", res.Failures)
+	}
+	if !res.ThresholdRelative || res.Threshold < 29 || res.Threshold > 31 {
+		t.Errorf("threshold = %v relative = %v, want about 30 and learned", res.Threshold, res.ThresholdRelative)
+	}
+
+	res = rampedRun(t,
+		[]catalog.Scenario{scenario("subject", 1)},
+		map[string]float64{"subject": 5},
+		map[string]float64{"subject": 5},
+		nil)
+	if res.ThresholdRelative || res.Threshold != 1 {
+		t.Errorf("static entry: threshold = %v relative = %v, want 1 and not learned", res.Threshold, res.ThresholdRelative)
+	}
+}
+
+// Nothing the fault reads may reach the shared store, in either half of the
+// run, or the next proof on the same Runner starts from a normal the fault
+// taught. The subject fires on its first tick, so the only clear readings are
+// the ones after the reset: this is the resolution phase reading the frozen
+// baseline and not writing it.
+func TestResolutionPhaseDoesNotLearnAndNothingLeaksToTheNextProof(t *testing.T) {
+	store := &countingStore{vals: map[string][]float64{}}
+	res := rampedRun(t,
+		[]catalog.Scenario{relative("subject")},
+		map[string]float64{"subject": 40},
+		map[string]float64{"subject": 40},
+		nil,
+		func(r *Runner, s *Spec) {
+			r.Baseline = store
+			s.ResolvesWithin = Duration(2 * time.Minute)
+		})
+	if !res.Passed || !res.Resolved {
+		t.Fatalf("resolved = %v, failures = %v", res.Resolved, res.Failures)
+	}
+	got := store.vals[targetKeyFor("subject", baseSpec().Target)]
+	if len(got) != 30 {
+		t.Fatalf("the store holds %d readings after the run, want the 30 warm-up left", len(got))
+	}
+	for _, v := range got {
+		if v != 10 {
+			t.Fatalf("the store learned %v, want only the healthy 10", v)
+		}
 	}
 }

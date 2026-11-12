@@ -221,14 +221,18 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   while it waits for the fault.** `Run` kept the detector learning from
   injection to verdict, so a clear reading taken while the fault filled its
   rate window became part of the learned normal. A neighbour required to stay
-  quiet could pass for the wrong reason (in a unit test its threshold rose
-  from 30 to about 67 and it read 35 without firing), and the subject could
-  miss a level that was over its threshold at injection. The baseline is now
-  read-only from injection to verdict, using the same freeze as
-  `meshmedic-prove remediate`; warm-up before the fault learns as before. The
-  recorded proofs of `upstream-dependency-latency` and
-  `latency-regression-vs-baseline` have not been rerun on a cluster yet, so
-  their reports may still reflect the drift. (closes #48)
+  quiet could pass for the wrong reason, and the subject could miss a level
+  that was over its threshold at injection. The baseline is now read-only from
+  injection to verdict, using the same freeze as `meshmedic-prove remediate`;
+  warm-up before the fault learns as before. Because the baseline can no
+  longer become ready after the fault, a proof with a warm-up whose subject or
+  quiet neighbour has no learned baseline is now reported as blind, before
+  anything is injected, instead of being judged against a static threshold.
+  The threshold the subject was judged against is recorded in the result and
+  printed with the verdict. The recorded proofs of
+  `upstream-dependency-latency` and `latency-regression-vs-baseline` have not
+  been rerun on a cluster yet, so their reports may still reflect the drift.
+  (closes #48)
 
 - **`meshmedic-prove remediate` could report a wrong verdict, and is now held
   to the rule the detection proof follows.** It credited a patch on a single

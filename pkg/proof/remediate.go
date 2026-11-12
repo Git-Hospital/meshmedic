@@ -593,22 +593,6 @@ func readingsFor(d, poll time.Duration) int {
 	return int((d+poll-1)/poll) + 1
 }
 
-// frozenBaseline lets the detector read the normal learned in warm-up and
-// stops it learning anything more. The detector feeds every clear reading back
-// into its baseline, which is right in production and wrong here: once the
-// fault is in, every reading under a relative threshold is the fault's own
-// level, and learning it raises the bar the patch is judged against. Measured
-// in a test: warmed at 10 with a multiplier of 3, a useless patch that left
-// the signal at 31 with one dip to 29 was credited with a recovery, because
-// each clear reading raised the threshold over the next.
-type frozenBaseline struct{ inner detect.BaselineStore }
-
-func (frozenBaseline) Observe(string, float64) {}
-
-func (f frozenBaseline) Baseline(key string, minSamples int) (float64, bool) {
-	return f.inner.Baseline(key, minSamples)
-}
-
 // Remediate proves that the patch an entry proposes stops the incident it
 // reported, with the fault still in place.
 //
@@ -738,10 +722,7 @@ func (r *Runner) Remediate(ctx context.Context, s Spec) (res RemediationResult) 
 	// so the threshold below is the one every reading is judged against. No
 	// detector has ticked since warm-up ended, so nothing has been learned
 	// from the fault either.
-	d := r.detectorFor(s)
-	if d.Baseline != nil {
-		d.Baseline = frozenBaseline{inner: d.Baseline}
-	}
+	d := r.frozenDetectorFor(s)
 	target := detect.Target{Params: s.Target}
 	threshold, _ := d.EffectiveThreshold(entry, target)
 	res.Threshold = threshold

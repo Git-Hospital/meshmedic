@@ -42,6 +42,13 @@ type Result struct {
 	Blind       bool
 	BlindReason string
 
+	// Threshold is what the subject was judged against, frozen at the fault:
+	// the learned normal times the multiplier when ThresholdRelative, the
+	// entry's static number otherwise. Zero when the run ended before the
+	// fault went in.
+	Threshold         float64
+	ThresholdRelative bool
+
 	// Failures are the specific reasons the proof did not pass, in the words
 	// an operator needs to fix either the entry or the proof.
 	Failures []string
@@ -254,7 +261,18 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 	// a cold baseline: the detector falls back to the static number, and for
 	// the latency entry that number is high enough that firing it also fires
 	// the canary entry, which suppresses it.
-	r.warmBaseline(ctx, s)
+	gate := r.warmBaseline(ctx, s)
+
+	// The detector for the whole proof, with the baseline frozen. Built before
+	// the fault so a baseline that never became ready is caught while there is
+	// nothing to clean up. See frozenDetectorFor.
+	d := r.frozenDetectorFor(s)
+	if reason := r.unreadyBaseline(d, s, gate); reason != "" {
+		res.Blind, res.BlindReason = true, reason
+		res.Failures = append(res.Failures,
+			"BLIND: "+reason+". The entry would be judged against its static threshold for the whole proof, which says nothing about it, and no fault was injected")
+		return res
+	}
 
 	r.Log("injecting the fault")
 	for _, c := range s.Inject {
@@ -269,25 +287,18 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 		r.Sleep(ctx, s.Settle.D())
 	}
 
-	// One detector for the whole proof. A resolution report is only emitted on
-	// the firing-to-clear edge, so a second detector built for the resolution
-	// phase starts with an empty state machine, never sees the incident open,
-	// and can never see it close. Two entries passed anyway, by accident: with
-	// a 60s hold their fault outlived the reset long enough for the fresh
-	// detector to fire and then clear on its own. error-surge's 120s hold did
-	// not, and the proof blamed the entry for the prover's mistake.
-	d := r.detectorFor(s)
-	// From here to the verdict the learned normal is read and never written,
-	// as in Remediate. The detector feeds every clear reading back into its
-	// baseline, so a fault that fills slowly would teach a relative threshold
-	// its own sub-threshold level while the proof waits: a neighbour that must
-	// stay quiet could then pass for the wrong reason, and the subject could
-	// miss a level that was over its threshold at injection. Warm-up ended
-	// before the fault went in and no detector has ticked since, so nothing
-	// has been learned from the fault yet. The threshold the detector logs is
-	// this frozen one.
-	if d.Baseline != nil {
-		d.Baseline = frozenBaseline{inner: d.Baseline}
+	// One detector for the whole proof, built above. A resolution report is
+	// only emitted on the firing-to-clear edge, so a second detector built for
+	// the resolution phase starts with an empty state machine, never sees the
+	// incident open, and can never see it close. Two entries passed anyway, by
+	// accident: with a 60s hold their fault outlived the reset long enough for
+	// the fresh detector to fire and then clear on its own. error-surge's 120s
+	// hold did not, and the proof blamed the entry for the prover's mistake.
+	//
+	// The baseline is frozen from here to the verdict, so this is the
+	// threshold every reading is judged against, and the one the report keeps.
+	if entry, ok := r.scenario(s.Entry); ok {
+		res.Threshold, res.ThresholdRelative = d.EffectiveThreshold(entry, detect.Target{Params: s.Target})
 	}
 	fired, others, doc, after := r.waitForFire(ctx, d, s)
 	res.Fired = fired
@@ -411,7 +422,9 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 // judged against its learned threshold in one and its static fallback in the
 // other would be two different entries under one name. A zero warm-up does
 // nothing.
-func (r *Runner) warmBaseline(ctx context.Context, s Spec) {
+//
+// It returns what the warm-up accepted, nil when there was none.
+func (r *Runner) warmBaseline(ctx context.Context, s Spec) (gate *floorCollector) {
 	if s.Warmup.D() > 0 {
 		if r.Baseline == nil {
 			r.Baseline = baseline.New("", 0.05)
@@ -429,7 +442,7 @@ func (r *Runner) warmBaseline(ctx context.Context, s Spec) {
 		// near the lowest it has seen. The floor is what healthy means.
 		r.Log("warming the baseline for %s, learning from the signal's floor", s.Warmup.D())
 		warm := r.detectorFor(s)
-		gate := &floorCollector{inner: r.Baseline, tolerance: 1.5}
+		gate = &floorCollector{inner: r.Baseline, tolerance: 1.5}
 		warm.Baseline = gate
 		r.onIncident = func(detect.Incident) {}
 		deadline := r.Now().Add(s.Warmup.D())
@@ -459,6 +472,7 @@ func (r *Runner) warmBaseline(ctx context.Context, s Spec) {
 			}
 		}
 	}
+	return gate
 }
 
 // alive is the cheap per-tick liveness check: is the server still answering?
@@ -608,6 +622,71 @@ func (r *Runner) waitForResolve(ctx context.Context, d *detect.Detector, s Spec)
 	return false, r.Now().Sub(start)
 }
 
+// frozenBaseline lets the detector read the normal learned in warm-up and
+// stops it learning anything more. The detector feeds every clear reading back
+// into its baseline, which is right in production and wrong in a proof: once
+// the fault is in, every reading under a relative threshold is the fault's own
+// level, and learning it moves the bar the run is judged against. In the
+// detection proof a neighbour required to stay quiet passed for the wrong
+// reason and the subject could miss a level that was over its threshold at
+// injection. In the remediation proof, measured in a test: warmed at 10 with a
+// multiplier of 3, a useless patch that left the signal at 31 with one dip to
+// 29 was credited with a recovery, because each clear reading raised the
+// threshold over the next.
+type frozenBaseline struct{ inner detect.BaselineStore }
+
+func (frozenBaseline) Observe(string, float64) {}
+
+func (f frozenBaseline) Baseline(key string, minSamples int) (float64, bool) {
+	return f.inner.Baseline(key, minSamples)
+}
+
+// frozenDetectorFor is detectorFor with the baseline read-only. The proofs
+// call it once warm-up is over, and nothing is learned after that. The shared
+// r.Baseline is left alone, so what the next proof on this Runner starts from
+// is what warm-up put there.
+func (r *Runner) frozenDetectorFor(s Spec) *detect.Detector {
+	d := r.detectorFor(s)
+	if d.Baseline != nil {
+		d.Baseline = frozenBaseline{inner: d.Baseline}
+	}
+	return d
+}
+
+// unreadyBaseline says why a run cannot be judged, or "" when it can. A spec
+// that asked for a warm-up and has the subject, or an entry it requires to
+// stay quiet, on a relative threshold with no learned normal is in that
+// position: the baseline is frozen, so the entry can never become ready and
+// would be held to its static fallback, blaming it for a fire it was never
+// given a fair threshold for, or crediting a neighbour with a quiet that
+// proves nothing. A spec without a warm-up asked for the static fallback and
+// keeps it.
+func (r *Runner) unreadyBaseline(d *detect.Detector, s Spec, gate *floorCollector) string {
+	if s.Warmup.D() <= 0 {
+		return ""
+	}
+	ids := append([]string{s.Entry}, s.Expect.Quiet...)
+	for _, id := range ids {
+		sc, ok := r.scenario(id)
+		if !ok || sc.Signal.BaselineMultiplier <= 0 {
+			continue
+		}
+		if _, relative := d.EffectiveThreshold(sc, detect.Target{Params: s.Target}); relative {
+			continue
+		}
+		min := sc.Signal.BaselineMinSamples
+		if min <= 0 {
+			min = 20
+		}
+		got := 0
+		if gate != nil {
+			got = gate.acceptedBy[targetKeyFor(id, s.Target)]
+		}
+		return fmt.Sprintf("%s has no learned baseline after the warm-up (%d readings accepted, %d needed)", id, got, min)
+	}
+	return ""
+}
+
 // detectorFor builds the single detector a proof uses for both phases. Its
 // handler forwards to whatever r.onIncident currently is, which lets the two
 // phases install different behaviour without replacing the state machine.
@@ -669,6 +748,9 @@ type floorCollector struct {
 	tolerance          float64
 	seen               map[string][]float64
 	accepted, rejected int
+	// acceptedBy counts the accepted readings per key, for saying why a
+	// baseline did not become ready.
+	acceptedBy map[string]int
 }
 
 func (c *floorCollector) Observe(key string, value float64) {
@@ -710,6 +792,9 @@ func median(vals []float64) float64 {
 // needed and the entry falling back to a static threshold it could never
 // reach. The median is robust to both the decaying head and the low outlier.
 func (c *floorCollector) commit() {
+	if c.acceptedBy == nil {
+		c.acceptedBy = map[string]int{}
+	}
 	for key, vals := range c.seen {
 		floor := median(vals)
 		for _, v := range vals {
@@ -718,6 +803,7 @@ func (c *floorCollector) commit() {
 				continue
 			}
 			c.accepted++
+			c.acceptedBy[key]++
 			c.inner.Observe(key, v)
 		}
 	}
