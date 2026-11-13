@@ -14,6 +14,17 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `go 1.21`, so `go install` keeps working on older toolchains, and a new CI
   job builds and tests on 1.21 to keep that true.
 
+- **`waypoint-overload-scale` fires against a capacity the target states.**
+  Its static threshold of 1000 requests per second per waypoint pod was about
+  sixty times the demo testbed's normal, and no single number fits every
+  cluster. The target now gives `waypoint_rps_per_pod`, and the signal is the
+  per-replica rate as a share of it, firing above 1. A target without that
+  parameter does not evaluate the entry, so a target whose workload is an
+  application no longer divides by that application's pods. A proof in
+  `proof/` replaces the declaration in `proof/UNPROVABLE.yaml`, and the run's
+  report is in `demo/proof-reports/`. Breaking for configs that relied on the
+  entry: add the parameter to the waypoint's target. (closes #24)
+
 - **Env values inside the `last-applied-configuration` annotation are now
   redacted.** A catalog path that reads `metadata` or `metadata.annotations` of
   a Deployment made with `kubectl apply` no longer copies the applied spec's

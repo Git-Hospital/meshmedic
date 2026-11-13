@@ -24,18 +24,3 @@ unprovable:
       The waypoint exposed per-application-cluster retry counters, or the
       testbed moved the entry's signal onto a retry metric Istio does surface.
       Until then this is a property of the testbed, not of the entry.
-
-  - entry: waypoint-overload-scale
-    reason: >
-      The signal is namespace request rate divided by ready waypoint pods,
-      firing above 1000. Measured on the live testbed at 12.46 with one
-      waypoint pod, so reaching the threshold needs roughly eighty times the
-      current traffic. A single-node kind cluster cannot produce that load
-      without the load generator itself becoming the bottleneck, which would
-      make the measurement about the generator rather than the waypoint.
-    would_become_provable_if: >
-      The entry gained a baselineMultiplier so it fired on deviation from this
-      cluster's own normal instead of a fixed number, which is the same remedy
-      the calibration gate recommends for every threshold that is right for one
-      cluster and wrong for the rest. That is a catalog change, and it needs its
-      own validation.
