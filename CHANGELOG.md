@@ -204,7 +204,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and reset run after a timed-out apply exactly as after any other failure.
   (closes #45)
 
-## [0.4.0] - 2026-10-28
+## [0.4.0] - 2026-10-30
 
 ### Changed
 
