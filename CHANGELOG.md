@@ -347,6 +347,27 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   patch, its apply command and its revert. None of this has had a live run
   yet.
 
+- **`meshmedic-prove remediate` now bounds the `kubectl apply` that puts the
+  patch on, and no longer blames the patch when kubectl fails before it sends
+  it.** The apply ran with the run's context and no deadline of its own, so a
+  dead API server held the run until Ctrl-C. It now runs under its own timeout
+  of three minutes (`Runner.ApplyTimeout`). The fault injection commands are
+  still unbounded, and a killed kubectl whose child process (a credential
+  plugin) keeps the output pipe open can still hold the run. A timed-out
+  apply, and one where kubectl failed before sending the patch (it could not
+  fetch the API discovery or the schema, the `failed to download openapi` and
+  `unable to recognize` lines `apply` prints, or it printed `Unable to connect
+  to the server` or `The connection to the server ... was refused`), ends in
+  `ERROR` instead of `FAIL` and says to check the testbed before the next run,
+  because whether any part of the patch landed is unknown. Lines are matched
+  from column 0, and any `Error from server` line means the server answered.
+  A connection that drops on the write itself (`error when creating ...: Post
+  "...": ...`) is not recognised, and neither are a patch the server rejected
+  (validation, admission, conflict), an expired token, a server-side timeout or
+  a missing CRD: those are still reported as the patch's failure. The revert
+  and reset run after a timed-out apply exactly as after any other failure.
+  (closes #45)
+
 - **The prover's preflight could call a testbed quiet on the strength of a dead
   Prometheus.** Its breach check treated any query error as "no series", which
   is the healthy reading for a failure counter but is not what a refused

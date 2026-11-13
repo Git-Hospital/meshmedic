@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -72,6 +73,9 @@ type Runner struct {
 	Poll time.Duration
 	// Sleep waits, injected so tests do not.
 	Sleep func(context.Context, time.Duration)
+	// ApplyTimeout bounds the command that applies a remediation patch. Zero
+	// uses applyTimeout.
+	ApplyTimeout time.Duration
 
 	// Baseline lets a relative-threshold entry be proven. Without one the
 	// detector falls back to the static threshold, and for
@@ -160,11 +164,51 @@ func execCommandInput(ctx context.Context, argv []string, stdin string) error {
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
+	// Open: if a killed command's own child, such as a credential plugin,
+	// keeps the output pipe open, this still waits until that child closes it.
+	// A wait delay on the command would bound that, but it also starts when
+	// the command exits on its own, so it would turn a successful command
+	// into an error.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s: %w: %s", strings.Join(argv, " "), err, strings.TrimSpace(string(out)))
+		return &commandError{argv: argv, err: err, output: strings.TrimSpace(string(out)), ctxErr: endedByContext(ctx.Err(), cmd.ProcessState)}
 	}
 	return nil
+}
+
+// endedByContext returns the context's error when the context, and not the
+// command, ended the process: the context is done and the process did not exit
+// on its own (it was killed, or never started). A command that exited by
+// itself a moment before the deadline failed on its own terms, and ctx.Err()
+// read afterwards would only say the context is done now.
+func endedByContext(ctxErr error, ps *os.ProcessState) error {
+	if ctxErr == nil || (ps != nil && ps.Exited()) {
+		return nil
+	}
+	return ctxErr
+}
+
+// commandError is a failed command with what it printed kept apart from the
+// reason it failed, so a caller can read kubectl's own lines instead of
+// searching one flattened string. Error() keeps the old shape. When the
+// context ended the command, the context's error is wrapped too, so a caller
+// can tell a command that timed out from one that failed first.
+type commandError struct {
+	argv   []string
+	err    error
+	output string
+	ctxErr error
+}
+
+func (e *commandError) Error() string {
+	return fmt.Sprintf("%s: %v: %s", strings.Join(e.argv, " "), e.err, e.output)
+}
+
+func (e *commandError) Unwrap() []error {
+	if e.ctxErr != nil {
+		return []error{e.err, e.ctxErr}
+	}
+	return []error{e.err}
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) {
