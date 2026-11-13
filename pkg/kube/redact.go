@@ -68,8 +68,9 @@ func redactAll(v any) any {
 }
 
 // redactTree copies v and replaces, in every object shaped like a Kubernetes env entry (a string
-// name and a value) with a secret-like name, the value, and in every other string the values
-// of secret-like name=value pairs. changed is asked, with a key for the value's place in the tree
+// name and a value) with a secret-like name, the value; in every map the value of a secret-like
+// key; in a core Secret (kind Secret, apiVersion v1) every value under data and stringData; and in
+// every other string the values of secret-like name=value pairs. changed is asked, with a key for the value's place in the tree
 // and the plain value, whether to mark it changed. scope names the place: the object keys on the
 // way down and the names of named objects such as containers, never list indexes.
 func redactTree(v any, scope string, changed func(key, value string) bool) any {
@@ -82,9 +83,18 @@ func redactTree(v any, scope string, changed func(key, value string) bool) any {
 			inner = scope + "/" + name
 		}
 		out := make(map[string]any, len(t))
+		secret := isSecretObject(t)
 		for k, e := range t {
 			if str, ok := e.(string); ok && k == lastAppliedKey {
 				out[k] = redactLastApplied(str, inner+"."+k, changed)
+				continue
+			}
+			if secret && (k == "data" || k == "stringData") {
+				out[k] = redactSecretData(e, secretID(t)+"\x00"+k, changed)
+				continue
+			}
+			if secretLike(k) && e != nil {
+				out[k] = redactUnderKey(e, inner+"."+k, scope+"\x00key\x00"+k, changed)
 				continue
 			}
 			out[k] = redactTree(e, inner+"."+k, changed)
@@ -120,6 +130,94 @@ func redactTree(v any, scope string, changed func(key, value string) bool) any {
 		return r
 	default:
 		return v
+	}
+}
+
+// isSecretObject reports whether m is a core Secret: kind Secret with apiVersion v1, as
+// `kubectl get secret -o json` prints it, alone or as an item of a List (#43).
+func isSecretObject(m map[string]any) bool {
+	return m["kind"] == "Secret" && m["apiVersion"] == "v1"
+}
+
+// secretID names a Secret by namespace and name when it has them, so that the same key in two
+// Secrets is not compared across them.
+func secretID(m map[string]any) string {
+	md, _ := m["metadata"].(map[string]any)
+	ns, _ := md["namespace"].(string)
+	name, _ := md["name"].(string)
+	return ns + "/" + name
+}
+
+// plainValue is the text a value is compared by when deciding whether a redacted value changed.
+func plainValue(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+// redactSecretData hides every value under a Secret's data or stringData, whatever its key is
+// called: data is base64, which is the value itself, and a Secret holds nothing else. Values of
+// any type are replaced by the same marker (a string, number, bool, map or list alike), so the
+// output carries no length, prefix, hash or structure of a value. The key names stay, since they
+// say which entries exist; a key name is not itself redacted. A data field that is not an object
+// is replaced whole. A changed value shows as [redacted, changed], as for an env value.
+func redactSecretData(v any, scope string, changed func(key, value string) bool) any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		if v == nil {
+			return nil
+		}
+		return redactedOrChanged(scope, plainValue(v), changed)
+	}
+	out := make(map[string]any, len(m))
+	for k, e := range m {
+		if e == nil {
+			out[k] = nil // null holds no value
+			continue
+		}
+		out[k] = redactedOrChanged(scope+"\x00"+k, plainValue(e), changed)
+	}
+	return out
+}
+
+func redactedOrChanged(key, value string, changed func(key, value string) bool) string {
+	if changed(key, value) {
+		return redactedChanged
+	}
+	return redacted
+}
+
+// redactUnderKey redacts the value of a map entry whose key is secret-like (#43), using the same
+// name test as env entries. A string, number or bool is replaced by the marker. A nested object
+// is not replaced whole, since its own keys decide (credentials: {user: a, password: b}); it is
+// redacted by the usual rules. A list of plain values is replaced by one marker, so not even its
+// length shows; a list that holds objects keeps its shape, each object redacted by the usual rules
+// and each plain element in it replaced. null stays null. changedKey identifies the entry for the
+// changed marker.
+func redactUnderKey(v any, scope, changedKey string, changed func(key, value string) bool) any {
+	switch t := v.(type) {
+	case map[string]any:
+		return redactTree(t, scope, changed)
+	case []any:
+		structured := false
+		for _, e := range t {
+			switch e.(type) {
+			case map[string]any, []any:
+				structured = true
+			}
+		}
+		if !structured {
+			return redactedOrChanged(changedKey, plainValue(t), changed)
+		}
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = redactUnderKey(e, scope, changedKey, func(string, string) bool { return false })
+		}
+		return out
+	default:
+		return redactedOrChanged(changedKey, plainValue(v), changed)
 	}
 }
 

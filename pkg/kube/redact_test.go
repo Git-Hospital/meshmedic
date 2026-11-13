@@ -379,3 +379,155 @@ func TestDiffTemplatesRedactsLastAppliedAnnotation(t *testing.T) {
 		t.Errorf("changed credential in the annotation not marked: %s", b)
 	}
 }
+
+func marshalRedacted(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(redactAll(v))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// A secret-like key hides its value in any map, not only in an env entry (#43). Ordinary keys,
+// and the key names themselves, stay readable.
+func TestRedactSecretLikeMapKeys(t *testing.T) {
+	cm := func(data map[string]any) map[string]any {
+		return map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "data": data}
+	}
+	tests := []struct {
+		name  string
+		obj   map[string]any
+		leaks []string
+		wants []string
+	}{
+		{"plain key", cm(map[string]any{"DB_PASSWORD": "fake-pw-1", "host": "db.local"}),
+			[]string{"fake-pw-1"}, []string{`"DB_PASSWORD":"[redacted]"`, `"host":"db.local"`}},
+		{"lower and mixed case", cm(map[string]any{"api_token": "fake-t-1", "ApiKey": "fake-k-1", "tls.cert": "fake-c-1"}),
+			[]string{"fake-t-1", "fake-k-1", "fake-c-1"}, []string{`"api_token":"[redacted]"`, `"ApiKey":"[redacted]"`, `"tls.cert":"[redacted]"`}},
+		{"nested map", cm(map[string]any{"db": map[string]any{"user": "app", "password": "fake-pw-2"}}),
+			[]string{"fake-pw-2"}, []string{`"user":"app"`, `"password":"[redacted]"`}},
+		{"list of maps", map[string]any{"items": []any{
+			map[string]any{"name": "a", "secret": "fake-s-1"},
+			map[string]any{"name": "b", "replicas": 3.0},
+		}}, []string{"fake-s-1"}, []string{`"secret":"[redacted]"`, `"replicas":3`, `"name":"b"`}},
+		{"number and bool", cm(map[string]any{"pin_token": 4711.0, "key_enabled": true}),
+			[]string{"4711", "true"}, []string{`"pin_token":"[redacted]"`, `"key_enabled":"[redacted]"`}},
+		{"map under a secret-like key is decided by its own keys", cm(map[string]any{"credentials": map[string]any{"user": "app", "password": "fake-pw-3"}}),
+			[]string{"fake-pw-3"}, []string{`"user":"app"`, `"password":"[redacted]"`}},
+		{"list of plain values hides its length", cm(map[string]any{"tokens": []any{"fake-a", "fake-b"}}),
+			[]string{"fake-a", "fake-b"}, []string{`"tokens":"[redacted]"`}},
+		{"list of objects keeps its shape", cm(map[string]any{"secrets": []any{map[string]any{"name": "regcred"}}}),
+			nil, []string{`"name":"regcred"`}},
+		{"null stays null", cm(map[string]any{"password": nil}), nil, []string{`"password":null`}},
+		{"ordinary config is untouched", cm(map[string]any{"replicas": 3.0, "host": "h", "name": "n", "mode": "fast"}),
+			nil, []string{`"replicas":3`, `"host":"h"`, `"name":"n"`, `"mode":"fast"`}},
+	}
+	for _, tc := range tests {
+		got := marshalRedacted(t, tc.obj)
+		for _, l := range tc.leaks {
+			if strings.Contains(got, l) {
+				t.Errorf("%s: leaks %q: %s", tc.name, l, got)
+			}
+		}
+		for _, w := range tc.wants {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: missing %q: %s", tc.name, w, got)
+			}
+		}
+	}
+}
+
+// Every value under a core Secret's data and stringData is hidden, whatever its key is called;
+// only a Secret with apiVersion v1 is recognised, and other kinds keep an innocent key readable.
+func TestRedactSecretData(t *testing.T) {
+	secret := func(kind, apiVersion string) map[string]any {
+		return map[string]any{
+			"apiVersion": apiVersion, "kind": kind,
+			"metadata":   map[string]any{"name": "creds", "namespace": "app"},
+			"type":       "Opaque",
+			"data":       map[string]any{"username": "ZmFrZS11c2Vy", "config": "ZmFrZS1jZmc=", "n": 7.0, "m": map[string]any{"x": "fake-nested"}, "gone": nil},
+			"stringData": map[string]any{"dsn": "postgres://fake-dsn", "plain": "fake-plain"},
+		}
+	}
+	got := marshalRedacted(t, secret("Secret", "v1"))
+	for _, leak := range []string{"ZmFrZS11c2Vy", "ZmFrZS1jZmc=", "fake-nested", "postgres://fake-dsn", "fake-plain", ":7"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("Secret leaks %q: %s", leak, got)
+		}
+	}
+	for _, want := range []string{`"username":"[redacted]"`, `"dsn":"[redacted]"`, `"m":"[redacted]"`, `"gone":null`, `"type":"Opaque"`, `"name":"creds"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Secret output missing %q: %s", want, got)
+		}
+	}
+	// A Secret inside a List is recognised by its own kind.
+	list := marshalRedacted(t, map[string]any{"kind": "List", "items": []any{secret("Secret", "v1")}})
+	if strings.Contains(list, "ZmFrZS11c2Vy") {
+		t.Errorf("Secret in a List leaks: %s", list)
+	}
+	// Not a core Secret: innocent keys are shown as they are.
+	for _, other := range []map[string]any{secret("ConfigMap", "v1"), secret("Secret", "example.io/v1"), secret("Secret", "")} {
+		out := marshalRedacted(t, other)
+		if !strings.Contains(out, "ZmFrZS11c2Vy") || !strings.Contains(out, "fake-plain") {
+			t.Errorf("%v/%v over-redacted: %s", other["kind"], other["apiVersion"], out)
+		}
+	}
+	// data that is not an object is replaced whole.
+	odd := marshalRedacted(t, map[string]any{"apiVersion": "v1", "kind": "Secret", "data": "ZmFrZQ=="})
+	if strings.Contains(odd, "ZmFrZQ==") || !strings.Contains(odd, `"data":"[redacted]"`) {
+		t.Errorf("non-object data: %s", odd)
+	}
+}
+
+// A catalog path that points at one value, or at the data object, goes through the same rules.
+func TestExtractFieldRedactsMapKeysAndSecretData(t *testing.T) {
+	cm := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "data": map[string]any{"DB_PASSWORD": "fake-pw", "host": "db"}}
+	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "data": map[string]any{"username": "ZmFrZQ==", "host": "aG9zdA=="}}
+	for _, tc := range []struct {
+		obj  map[string]any
+		path string
+		want string
+	}{
+		{cm, "data.DB_PASSWORD", "[redacted]"},
+		{cm, "data.host", "db"},
+		{cm, "data", `{"DB_PASSWORD":"[redacted]","host":"db"}`},
+		{secret, "data.username", "[redacted]"},
+		{secret, "data.host", "[redacted]"},
+		{secret, "data", `{"host":"[redacted]","username":"[redacted]"}`},
+	} {
+		got, err := ExtractField(tc.obj, tc.path)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: got %q, %v; want %q", tc.path, got, err, tc.want)
+		}
+	}
+	if cm["data"].(map[string]any)["DB_PASSWORD"] != "fake-pw" {
+		t.Error("ExtractField changed the object it was given")
+	}
+}
+
+// A redacted map value or Secret value that changed still reads as changed, and no template
+// that differs ever prints as no change.
+func TestDiffTemplatesMarksChangedMapKeysAndSecretData(t *testing.T) {
+	obj := func(pw, key, host string) map[string]any {
+		return map[string]any{"kind": "Secret", "apiVersion": "v1",
+			"metadata":   map[string]any{"name": "s", "namespace": "n"},
+			"data":       map[string]any{"user": key},
+			"stringData": map[string]any{"host": host},
+			"auth":       map[string]any{"password": pw}}
+	}
+	got := diffTemplates(obj("fake-pw-old", "fake-u-old", "same"), obj("fake-pw-new", "fake-u-new", "same"))
+	for _, leak := range []string{"fake-pw-old", "fake-pw-new", "fake-u-old", "fake-u-new", `"same"`} {
+		if strings.Contains(got, leak) {
+			t.Errorf("diff leaks %q: %s", leak, got)
+		}
+	}
+	for _, want := range []string{`"password": "[redacted, changed]"`, `"user": "[redacted, changed]"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("diff missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, `"host": "[redacted, changed]"`) {
+		t.Errorf("unchanged Secret value marked changed: %s", got)
+	}
+}
