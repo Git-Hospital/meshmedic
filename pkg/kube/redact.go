@@ -69,11 +69,18 @@ func redactAll(v any) any {
 
 // redactTree copies v and replaces, in every object shaped like a Kubernetes env entry (a string
 // name and a value) with a secret-like name, the value; in every map the value of a secret-like
-// key; in a core Secret (kind Secret, apiVersion v1) every value under data and stringData; and in
+// key (everything beneath it) and the values beside a secret-like key name; in a core Secret (kind Secret, apiVersion v1) every value under data and stringData; and in
 // every other string the values of secret-like name=value pairs. changed is asked, with a key for the value's place in the tree
 // and the plain value, whether to mark it changed. scope names the place: the object keys on the
 // way down and the names of named objects such as containers, never list indexes.
 func redactTree(v any, scope string, changed func(key, value string) bool) any {
+	return redactNode(v, scope, changed, true)
+}
+
+// redactNode is redactTree. nameKeys is false for the one map directly under a v1 ConfigMap's data
+// or binaryData: there every key is a name someone chose, so an entry called key is an ordinary
+// entry and the literal secret-like key rule hides it, not the key-name rule below.
+func redactNode(v any, scope string, changed func(key, value string) bool, nameKeys bool) any {
 	switch t := v.(type) {
 	case map[string]any:
 		name, okName := t["name"].(string)
@@ -84,6 +91,14 @@ func redactTree(v any, scope string, changed func(key, value string) bool) any {
 		}
 		out := make(map[string]any, len(t))
 		secret := isSecretObject(t)
+		configMap := t["kind"] == "ConfigMap" && t["apiVersion"] == "v1"
+		// A Kubernetes field called key with a string value is a NAME, like the name of an env entry
+		// (toleration key, matchExpressions key, secretKeyRef key, an AuthorizationPolicy condition's
+		// key such as request.headers[x-api-token]): it stays readable. When that name is
+		// secret-like, the value, values and notValues beside it are hidden entirely (#43).
+		keyName, keyIsName := t["key"].(string)
+		keyIsName = keyIsName && nameKeys
+		hideSiblings := keyIsName && secretLike(keyName)
 		for k, e := range t {
 			if str, ok := e.(string); ok && k == lastAppliedKey {
 				out[k] = redactLastApplied(str, inner+"."+k, changed)
@@ -93,8 +108,16 @@ func redactTree(v any, scope string, changed func(key, value string) bool) any {
 				out[k] = redactSecretData(e, secretID(t)+"\x00"+k, changed)
 				continue
 			}
-			if secretLike(k) && e != nil {
-				out[k] = redactUnderKey(e, inner+"."+k, scope+"\x00key\x00"+k, changed)
+			if configMap && (k == "data" || k == "binaryData") {
+				out[k] = redactNode(e, inner+"."+k, changed, false)
+				continue
+			}
+			if keyIsName && k == "key" {
+				out[k] = redactTree(e, inner+"."+k, changed) // text such as NAME=value is still redacted
+				continue
+			}
+			if e != nil && (secretLike(k) || (hideSiblings && (k == "value" || k == "values" || k == "notValues"))) {
+				out[k] = redactHidden(e, scope+"\x00key\x00"+k, changed)
 				continue
 			}
 			out[k] = redactTree(e, inner+"."+k, changed)
@@ -189,17 +212,24 @@ func redactedOrChanged(key, value string, changed func(key, value string) bool) 
 	return redacted
 }
 
-// redactUnderKey redacts the value of a map entry whose key is secret-like (#43), using the same
-// name test as env entries. A string, number or bool is replaced by the marker. A nested object
-// is not replaced whole, since its own keys decide (credentials: {user: a, password: b}); it is
-// redacted by the usual rules. A list of plain values is replaced by one marker, so not even its
-// length shows; a list that holds objects keeps its shape, each object redacted by the usual rules
-// and each plain element in it replaced. null stays null. changedKey identifies the entry for the
-// changed marker.
-func redactUnderKey(v any, scope, changedKey string, changed func(key, value string) bool) any {
+// redactHidden hides everything beneath a secret-like key, or beside a secret-like key name (#43):
+// every plain value (string, number, bool) at any depth becomes the marker, whatever the keys
+// inside it are called, so a nested header match such as x-api-key: {exact: abc} or a credential
+// under a name such as secretKeyRef is not shown. The inner key names and the shape stay visible,
+// except that a list of plain values collapses to one marker, so not even its length shows. null
+// stays null. This costs some harmless evidence (the name inside a secretKeyRef is hidden too); it
+// is the price of having no exception by key name. ckey identifies the place for the changed
+// marker, which works as for an env value.
+func redactHidden(v any, ckey string, changed func(key, value string) bool) any {
 	switch t := v.(type) {
+	case nil:
+		return nil
 	case map[string]any:
-		return redactTree(t, scope, changed)
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = redactHidden(e, ckey+"."+k, changed)
+		}
+		return out
 	case []any:
 		structured := false
 		for _, e := range t {
@@ -209,15 +239,15 @@ func redactUnderKey(v any, scope, changedKey string, changed func(key, value str
 			}
 		}
 		if !structured {
-			return redactedOrChanged(changedKey, plainValue(t), changed)
+			return redactedOrChanged(ckey, plainValue(t), changed)
 		}
 		out := make([]any, len(t))
 		for i, e := range t {
-			out[i] = redactUnderKey(e, scope, changedKey, func(string, string) bool { return false })
+			out[i] = redactHidden(e, ckey, func(string, string) bool { return false })
 		}
 		return out
 	default:
-		return redactedOrChanged(changedKey, plainValue(v), changed)
+		return redactedOrChanged(ckey, plainValue(v), changed)
 	}
 }
 

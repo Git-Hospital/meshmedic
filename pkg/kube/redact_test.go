@@ -389,7 +389,7 @@ func marshalRedacted(t *testing.T, v any) string {
 	return string(b)
 }
 
-// A secret-like key hides its value in any map, not only in an env entry (#43). Ordinary keys,
+// A secret-like key hides its value, and everything beneath it, in any map, not only in an env entry (#43). Ordinary keys,
 // and the key names themselves, stay readable.
 func TestRedactSecretLikeMapKeys(t *testing.T) {
 	cm := func(data map[string]any) map[string]any {
@@ -413,12 +413,12 @@ func TestRedactSecretLikeMapKeys(t *testing.T) {
 		}}, []string{"fake-s-1"}, []string{`"secret":"[redacted]"`, `"replicas":3`, `"name":"b"`}},
 		{"number and bool", cm(map[string]any{"pin_token": 4711.0, "key_enabled": true}),
 			[]string{"4711", "true"}, []string{`"pin_token":"[redacted]"`, `"key_enabled":"[redacted]"`}},
-		{"map under a secret-like key is decided by its own keys", cm(map[string]any{"credentials": map[string]any{"user": "app", "password": "fake-pw-3"}}),
-			[]string{"fake-pw-3"}, []string{`"user":"app"`, `"password":"[redacted]"`}},
+		{"everything under a secret-like key is hidden, inner keys stay", cm(map[string]any{"credentials": map[string]any{"user": "fake-u", "deep": map[string]any{"password": "fake-pw-3"}}}),
+			[]string{"fake-u", "fake-pw-3"}, []string{`"user":"[redacted]"`, `"deep":{"password":"[redacted]"}`}},
 		{"list of plain values hides its length", cm(map[string]any{"tokens": []any{"fake-a", "fake-b"}}),
 			[]string{"fake-a", "fake-b"}, []string{`"tokens":"[redacted]"`}},
-		{"list of objects keeps its shape", cm(map[string]any{"secrets": []any{map[string]any{"name": "regcred"}}}),
-			nil, []string{`"name":"regcred"`}},
+		{"list of objects keeps its shape, leaves hidden", cm(map[string]any{"secrets": []any{map[string]any{"name": "regcred"}}}),
+			[]string{"regcred"}, []string{`"secrets":[{"name":"[redacted]"}]`}},
 		{"null stays null", cm(map[string]any{"password": nil}), nil, []string{`"password":null`}},
 		{"ordinary config is untouched", cm(map[string]any{"replicas": 3.0, "host": "h", "name": "n", "mode": "fast"}),
 			nil, []string{`"replicas":3`, `"host":"h"`, `"name":"n"`, `"mode":"fast"`}},
@@ -529,5 +529,108 @@ func TestDiffTemplatesMarksChangedMapKeysAndSecretData(t *testing.T) {
 	}
 	if strings.Contains(got, `"host": "[redacted, changed]"`) {
 		t.Errorf("unchanged Secret value marked changed: %s", got)
+	}
+}
+
+func listOf(kind string, items ...map[string]any) map[string]any {
+	l := make([]any, len(items))
+	for i, it := range items {
+		l[i] = it
+	}
+	return map[string]any{"apiVersion": "v1", "kind": kind + "List", "items": l}
+}
+
+// A field called key with a string value is a name: readable. When the name is secret-like, the
+// value, values and notValues beside it are hidden; otherwise nothing in the map changes (#43).
+func TestRedactKeyNames(t *testing.T) {
+	cmWith := func(entries map[string]any) map[string]any {
+		return map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "data": entries}
+	}
+	tests := []struct {
+		name  string
+		obj   any
+		leaks []string
+		wants []string
+	}{
+		{"condition with a secret-like name", map[string]any{"when": []any{map[string]any{"key": "request.headers[x-api-token]", "values": []any{"abc123"}, "notValues": []any{"def456"}}}},
+			[]string{"abc123", "def456"}, []string{`"key":"request.headers[x-api-token]"`, `"values":"[redacted]"`, `"notValues":"[redacted]"`}},
+		{"condition with an innocent name", map[string]any{"when": []any{map[string]any{"key": "request.headers[x-env]", "values": []any{"prod"}, "notValues": []any{"dev"}}}},
+			nil, []string{`"key":"request.headers[x-env]"`, `"values":["prod"]`, `"notValues":["dev"]`}},
+		{"single value beside a secret-like name", map[string]any{"key": "API_TOKEN", "value": "abc123"},
+			[]string{"abc123"}, []string{`"key":"API_TOKEN"`, `"value":"[redacted]"`}},
+		{"toleration", map[string]any{"tolerations": []any{map[string]any{"key": "node-role", "operator": "Equal", "value": "infra", "effect": "NoSchedule"}}},
+			nil, []string{`"key":"node-role"`, `"value":"infra"`, `"effect":"NoSchedule"`}},
+		{"matchExpressions", map[string]any{"matchExpressions": []any{map[string]any{"key": "app", "operator": "In", "values": []any{"web", "api"}}}},
+			nil, []string{`"key":"app"`, `"values":["web","api"]`}},
+		{"secretKeyRef leaves hidden, inner keys visible", map[string]any{"valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "db-creds", "key": "password"}}},
+			[]string{"db-creds", `"password"`}, []string{`"secretKeyRef":{"key":"[redacted]","name":"[redacted]"}`}},
+		{"VirtualService header with a secret-like name", map[string]any{"match": []any{map[string]any{"headers": map[string]any{"x-api-key": map[string]any{"exact": "abc123"}, "x-env": map[string]any{"exact": "prod"}}}}},
+			[]string{"abc123"}, []string{`"x-api-key":{"exact":"[redacted]"}`, `"x-env":{"exact":"prod"}`}},
+		{"ConfigMap data entry called key is hidden", cmWith(map[string]any{"key": "s3cret", "other": "fine"}),
+			[]string{"s3cret"}, []string{`"key":"[redacted]"`, `"other":"fine"`}},
+		{"ConfigMap data entry called key does not hide its siblings by R3", cmWith(map[string]any{"key": "node-role", "value": "infra"}),
+			[]string{"node-role"}, []string{`"value":"infra"`}},
+		{"Secret data entry called key is hidden", map[string]any{"apiVersion": "v1", "kind": "Secret", "data": map[string]any{"key": "s3cret"}},
+			[]string{"s3cret"}, []string{`"key":"[redacted]"`}},
+	}
+	for _, tc := range tests {
+		got := marshalRedacted(t, tc.obj)
+		for _, l := range tc.leaks {
+			if strings.Contains(got, l) {
+				t.Errorf("%s: leaks %q: %s", tc.name, l, got)
+			}
+		}
+		for _, w := range tc.wants {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: missing %q: %s", tc.name, w, got)
+			}
+		}
+	}
+}
+
+// The two shapes the shipped catalog reads: authz-deny-flood (items[*].spec.rules of
+// AuthorizationPolicy) and no-route-blackhole (items[*].spec.http[*].match of VirtualService).
+func TestExtractFieldCatalogPaths(t *testing.T) {
+	authz := listOf("AuthorizationPolicy", map[string]any{"spec": map[string]any{"rules": []any{map[string]any{
+		"to": []any{map[string]any{"operation": map[string]any{"methods": []any{"GET"}}}},
+		"when": []any{
+			map[string]any{"key": "request.headers[x-api-token]", "values": []any{"abc123"}},
+			map[string]any{"key": "request.headers[x-env]", "values": []any{"prod"}},
+		}}}}})
+	vs := listOf("VirtualService", map[string]any{"spec": map[string]any{"http": []any{map[string]any{"match": []any{map[string]any{
+		"headers": map[string]any{"x-api-key": map[string]any{"exact": "abc123"}, "x-env": map[string]any{"exact": "prod"}}}}}}}})
+	got, err := ExtractField(authz, "items[*].spec.rules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "abc123") || !strings.Contains(got, `"key":"request.headers[x-api-token]"`) || !strings.Contains(got, `"values":"[redacted]"`) || !strings.Contains(got, `"values":["prod"]`) || !strings.Contains(got, `"methods":["GET"]`) {
+		t.Errorf("authz rules: %s", got)
+	}
+	got, err = ExtractField(vs, "items[*].spec.http[*].match")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "abc123") || !strings.Contains(got, `"x-api-key":{"exact":"[redacted]"}`) || !strings.Contains(got, `"x-env":{"exact":"prod"}`) {
+		t.Errorf("virtualservice match: %s", got)
+	}
+}
+
+// A hidden value that changed reads as changed, for R2 (a nested value) and R3 (a sibling of a
+// secret-like key name) too.
+func TestDiffTemplatesMarksChangedHiddenValues(t *testing.T) {
+	obj := func(tok, exact string) map[string]any {
+		return map[string]any{"spec": map[string]any{
+			"when":    []any{map[string]any{"key": "request.headers[x-api-token]", "values": []any{tok}}},
+			"headers": map[string]any{"x-api-key": map[string]any{"exact": exact}},
+		}}
+	}
+	got := diffTemplates(obj("fake-t-old", "fake-e-old"), obj("fake-t-new", "fake-e-new"))
+	for _, leak := range []string{"fake-t-old", "fake-t-new", "fake-e-old", "fake-e-new"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("diff leaks %q: %s", leak, got)
+		}
+	}
+	if strings.Count(got, "[redacted, changed]") < 2 {
+		t.Errorf("changed markers missing: %s", got)
 	}
 }

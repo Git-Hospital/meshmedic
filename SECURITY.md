@@ -59,22 +59,31 @@ no value and are shown as they are. The annotation
 spec as a JSON string, is parsed and redacted by the same rules, then written
 out again as compact JSON; if its value is not valid JSON it is replaced whole
 with `[redacted]`. The same name test applies to every key of every map, not
-only env entries: if a catalog path reads a ConfigMap or a Secret (none that
-ships with meshmedic does), `data: {DB_PASSWORD: ...}` or `password: ...` in
-any object shows `[redacted]`, and so does a number or boolean under such a
-key; a list of plain values under one is replaced by a single `[redacted]`,
-and an object under one is decided by its own keys. For a core Secret (`kind:
-Secret`, `apiVersion: v1`, alone or as a list item) every value under `data`
-and `stringData` is redacted whatever its key is called, since `data` is only
-base64; the key names stay visible. A path that ends on one such value shows
-`[redacted]` as well. Nothing else is redacted: a credential under an ordinary
-name (a ConfigMap value whose key is `dsn` or `connection`), inside a
-free-text value that has no `NAME=value` form, in a Secret-like object of
-another kind or apiVersion, in a key name, after a flag in a separate argument
+only env entries (#43). Under a secret-like key, everything beneath is hidden:
+every plain value (string, number, boolean) at any depth shows `[redacted]`,
+whatever the inner keys are called, so `x-api-key: {exact: abc123}` in a
+VirtualService header match is hidden; inner key names and the shape stay, and
+a list of plain values becomes one `[redacted]`, so not even its length shows.
+This also hides harmless evidence, such as the name inside a `secretKeyRef`.
+A field called `key` with a string value is read as a name, like the `name` of
+an env entry, and stays readable (a toleration's, a `matchExpressions`', an
+AuthorizationPolicy condition's). When that name matches the word list, as
+`request.headers[x-api-token]` does, the `value`, `values` and `notValues`
+beside it are hidden entirely; when it does not, nothing in that object
+changes. Directly under a ConfigMap's `data` or `binaryData` every key is a
+name someone chose, so an entry called `key` is hidden like any secret-like
+key. For a core Secret (`kind: Secret`, `apiVersion: v1`, alone or as a list
+item) every value under `data` and `stringData` is hidden whatever its key is
+called, since `data` is only base64; the key names stay visible. A path that
+ends on one such value shows `[redacted]` as well. Nothing else is redacted:
+a credential in a header match or condition whose name is not on the word list
+(`authorization`, `cookie`), a credential under an ordinary name (a ConfigMap
+value whose key is `dsn` or `connection`), key names themselves, free text with
+no `NAME=value` form, a Secret-like object of another kind or apiVersion,
+`binaryData` of a Secret, a credential after a flag in a separate argument
 (`--password`, `hunter2`), in a URL's user info or path, in a JSON log line, in
 JSON inside any other annotation or string, or in a metric label reaches the
-report unchanged, so scope what the entries read accordingly. The key rule errs
-toward hiding: a `key:` in a toleration or a `secretKeyRef` is hidden too.
+report unchanged, so scope what the entries read accordingly.
 
 ## meshmedic-prove is different, on purpose
 

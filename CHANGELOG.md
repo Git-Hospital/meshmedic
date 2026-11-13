@@ -7,16 +7,18 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **Values under a secret-like map key, and everything in a Secret's data, are
-  now redacted.** Redaction used to look only at env entries and `NAME=value`
-  text, so a catalog path that reads a ConfigMap or a Secret would have shown
-  `data: {DB_PASSWORD: ...}` as it is. Now any map value whose key contains
-  PASSWORD, PASSWD, SECRET, TOKEN, KEY, CREDENTIAL or CERT shows `[redacted]`,
-  and for a core Secret (`kind: Secret`, `apiVersion: v1`) every value under
-  `data` and `stringData` does, whatever its key. A changed value in a diff
-  reads `[redacted, changed]`. No catalog entry that ships with meshmedic reads
-  either kind, so this matters for custom catalogs. SECURITY.md lists what
-  stays unredacted. (closes #43)
+- **Everything under a secret-like map key, and everything in a Secret's data,
+  is now redacted.** Redaction used to look only at env entries and `NAME=value`
+  text, so a catalog path that reads a ConfigMap, a Secret, an
+  AuthorizationPolicy or a VirtualService could show `data: {DB_PASSWORD: ...}`
+  or a header match on `x-api-key` as it is. Now every plain value beneath a
+  key containing PASSWORD, PASSWD, SECRET, TOKEN, KEY, CREDENTIAL or CERT shows
+  `[redacted]`, at any depth. A field called `key` is a name and stays readable;
+  when it is secret-like (`request.headers[x-api-token]`) the `value`, `values`
+  and `notValues` beside it are hidden. For a core Secret (`kind: Secret`,
+  `apiVersion: v1`) every value under `data` and `stringData` is hidden, whatever
+  its key. A changed value in a diff reads `[redacted, changed]`. SECURITY.md
+  lists what stays unredacted. (closes #43)
 
 - **Released binaries are now built with Go 1.26.** The release and archive
   workflows took their toolchain from `go.mod`, so binaries were compiled with
