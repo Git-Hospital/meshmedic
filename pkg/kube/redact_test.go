@@ -575,6 +575,9 @@ func TestRedactListItemKeepsItsOwnKind(t *testing.T) {
 		if strings.Count(got, `"kind"`) != 2 {
 			t.Errorf("item kind %v dropped: %s", k, got)
 		}
+		if strings.Contains(got, "fake") {
+			t.Errorf("an item whose kind is %v was not read as a Secret: %s", k, got)
+		}
 	}
 }
 

@@ -169,8 +169,8 @@ func redactedOrChanged(key, value string, changed func(key, value string) bool) 
 }
 
 // redactListItems redacts the items of a SecretList or ConfigMapList as Secrets or ConfigMaps even
-// when an item carries no kind of its own. The kind added for that is taken off again; a kind the
-// item came with is left alone.
+// when an item names no kind of its own: none at all, an empty one, or one that is not a string.
+// The item is given the list's kind for the walk only. Afterwards its kind field is as it came.
 func redactListItems(list []any, kind, scope string, changed func(key, value string) bool) []any {
 	out := make([]any, len(list))
 	for i, e := range list {
@@ -179,17 +179,22 @@ func redactListItems(list []any, kind, scope string, changed func(key, value str
 			out[i] = redactNode(e, scope, "items", changed)
 			continue
 		}
-		if _, has := m["kind"]; has {
+		if objectKind(m) != "" {
 			out[i] = redactNode(e, scope, "items", changed)
 			continue
 		}
+		own, had := m["kind"]
 		withKind := make(map[string]any, len(m)+1)
 		for k, x := range m {
 			withKind[k] = x
 		}
 		withKind["kind"] = kind
 		r := redactNode(withKind, scope, "items", changed).(map[string]any)
-		delete(r, "kind")
+		if had {
+			r["kind"] = own
+		} else {
+			delete(r, "kind")
+		}
 		out[i] = r
 	}
 	return out
