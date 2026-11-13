@@ -1,0 +1,18 @@
+# An ALLOW policy with HTTP methods, targeted with a selector: ztunnel
+# cannot evaluate it, so the pod denies everything.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-get
+spec:
+  selector:
+    matchLabels:
+      app: web
+  rules:
+    - from:
+        - source:
+            namespaces: [demo]
+      to:
+        - operation:
+            methods: [GET]
+            ports: ["8080"]

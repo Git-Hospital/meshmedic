@@ -1,0 +1,40 @@
+# The webhook port is excluded from the sidecar's inbound capture: fine in
+# sidecar mode, still in the mesh in ambient, where the annotation does nothing.
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.metrics.example.io
+spec:
+  service:
+    name: op-webhook
+    namespace: demo
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: op-webhook
+  namespace: demo
+spec:
+  selector:
+    app: op
+  ports:
+    - port: 443
+      targetPort: webhook
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: op
+spec:
+  template:
+    metadata:
+      labels:
+        app: op
+      annotations:
+        traffic.sidecar.istio.io/excludeInboundPorts: "9443"
+    spec:
+      containers:
+        - name: op
+          ports:
+            - name: webhook
+              containerPort: 9443

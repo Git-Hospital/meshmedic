@@ -1,0 +1,42 @@
+# The default redis shape, with a duplicate mapping key in the StatefulSet. yaml.v3
+# refuses such a document as a map, but helm and the API server accept it (the
+# last value wins), so it is read.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: redis
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - {}
+  ingress:
+    - ports:
+        - port: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-replicas
+spec:
+  replicas: 1
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: redis
+        app.kubernetes.io/name: redis
+    spec:
+      containers:
+        - name: redis
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            tcpSocket:
+              port: redis

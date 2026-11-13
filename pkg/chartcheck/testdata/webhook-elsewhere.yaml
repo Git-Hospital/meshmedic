@@ -1,0 +1,42 @@
+# The webhook points at a Service the chart does not render, and a second
+# one at a port the Service does not have.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: other
+webhooks:
+  - name: a.example.io
+    clientConfig:
+      service:
+        name: not-rendered
+        namespace: demo
+  - name: b.example.io
+    clientConfig:
+      service:
+        name: op-webhook
+        namespace: demo
+        port: 8443
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: op-webhook
+spec:
+  selector:
+    app: op
+  ports:
+    - port: 443
+      targetPort: 9443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: op
+spec:
+  template:
+    metadata:
+      labels:
+        app: op
+    spec:
+      containers:
+        - name: op

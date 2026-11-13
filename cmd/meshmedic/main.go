@@ -1,9 +1,11 @@
-// Command meshmedic is the CLI entry point. Three subcommands work today:
+// Command meshmedic is the CLI entry point. Among its subcommands:
 //
 //	validate  load the catalog and list what the engine knows how to fix
 //	render    fill a scenario's patch template with incident parameters
 //	watch     evaluate catalog signals against a live Prometheus and print
 //	          an incident report with the proposed patch when one fires
+//	chart     check a Helm chart's rendered manifests for what is likely to
+//	          break under Istio, without a cluster
 //	demo      replay a recorded Prometheus through the same detection path
 //
 // The PR opener lands behind these.
@@ -56,6 +58,8 @@ func main() {
 		runApprove(os.Args[2:])
 	case "calibrate":
 		runCalibrate(os.Args[2:])
+	case "chart":
+		runChart(os.Args[2:])
 	case "demo":
 		os.Exit(runDemo(os.Args[2:], os.Stdout, os.Stderr))
 	case "version", "--version", "-v":
@@ -79,6 +83,8 @@ func usage() {
   meshmedic approve --scenario id --istio 1.24.1 --testbed <commit> [--all]
   meshmedic calibrate --config watch.yaml [--window 10m]  (does the catalog stay
                                        quiet on a HEALTHY cluster, and by how much?)
+  meshmedic chart check CHART | --manifests FILE|-   (what in a Helm chart is likely to
+                                       break under Istio? static, no cluster; exit 1 if any)
 
 The second watch form needs no config file, which is the quickest way to point
 MeshMedic at a Prometheus you already run:

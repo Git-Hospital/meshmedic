@@ -1,0 +1,46 @@
+# One NetworkPolicy that selects two StatefulSets and admits only their app port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shared
+spec:
+  podSelector:
+    matchLabels:
+      app: db
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db-primary
+spec:
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      containers:
+        - name: db
+          image: example/db:1
+          ports:
+            - containerPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db-replica
+spec:
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      containers:
+        - name: db
+          image: example/db:1
+          ports:
+            - containerPort: 6379

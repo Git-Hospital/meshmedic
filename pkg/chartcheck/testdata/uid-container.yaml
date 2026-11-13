@@ -1,0 +1,19 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+spec:
+  template:
+    metadata:
+      labels:
+        app: migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 1000
+      initContainers:
+        - name: wait
+          securityContext:
+            runAsUser: 1337
+      containers:
+        - name: migrate

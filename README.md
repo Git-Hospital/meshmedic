@@ -84,6 +84,22 @@ How it compares to `istioctl analyze`, Istio's own configuration analyzer, and
 the reproducible scenarios behind that comparison, are in
 [boards](https://github.com/Git-Hospital/boards).
 
+## Check a Helm chart
+
+```console
+$ meshmedic chart check ./my-chart -f values.yaml
+$ helm template my-release ./my-chart | meshmedic chart check --manifests -
+```
+
+Before you install anything, this lists what in the chart is likely to break
+under Istio (sidecar, ambient or both with `--mesh`). Each finding names the
+field, what will happen, the Istio documentation it rests on, a fix hint and
+how to confirm it in a cluster. Exit 0 means no candidates, 1 at least one, 2
+a usage or render error, or an input not read in full and with no candidate in the rest. These are candidates found by reading manifests, not
+failures observed in a cluster, and a clean result is not a guarantee.
+Details, the limits and the validation against the compat pilot are in
+[docs/chart-check.md](docs/chart-check.md).
+
 ## The gap it fills
 
 [`istioctl analyze`](https://istio.io/latest/docs/ops/diagnostic-tools/istioctl-analyze/)
