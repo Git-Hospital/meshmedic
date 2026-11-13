@@ -1,0 +1,11 @@
+This is a REPLAY of data held inside this binary. Nothing is being watched and nothing is changed.
+
+* canary-latency-rollback          A canary gets slow: incident fires, then clears
+  blind-no-telemetry               Prometheus has no mesh telemetry: blind, never clear
+  error-surge-outlier-ejection     One bad workload serves 5xx: incident fires, then clears
+
+Run one with: meshmedic demo --scenario NAME   (* is the default)
+
+Next, on a real setup (a Prometheus that scrapes Istio metrics):
+  meshmedic check --prometheus http://localhost:9090 --target service=payments,namespace=demo   # exits 1 if it cannot see the target
+  meshmedic watch --prometheus http://localhost:9090 --target service=payments,namespace=demo

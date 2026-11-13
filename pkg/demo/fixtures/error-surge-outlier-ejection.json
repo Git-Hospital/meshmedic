@@ -1,0 +1,55 @@
+{
+  "name": "error-surge-outlier-ejection",
+  "title": "One bad workload serves 5xx: incident fires, then clears",
+  "source": "demo/proof-reports/error-surge-outlier-ejection.md",
+  "recorded": [
+    "the signal value at firing (0.1675) and the time the breach began (14:33:51Z)",
+    "the four evidence rows (errors and requests per workload)",
+    "the suspect Deployment's env"
+  ],
+  "constructed": [
+    "every Prometheus response body and the coverage count; every cycle after the first and the recovery value",
+    "the cycle timing (60s apart, so the 120s hold is easy to see)"
+  ],
+  "target": {
+    "service": "payments",
+    "namespace": "demo",
+    "workload": "payments-v2",
+    "subset": "v2",
+    "stable_subset": "v1"
+  },
+  "scenarios": ["error-surge-outlier-ejection"],
+  "coverageSeries": 36,
+  "evidence": {
+    "errors-by-workload": [
+      {"labels": {"destination_workload": "payments-v2"}, "value": 0.6667},
+      {"labels": {"destination_workload": "payments-v1"}, "value": 0}
+    ],
+    "requests-by-workload": [
+      {"labels": {"destination_workload": "payments-v1"}, "value": 3.314},
+      {"labels": {"destination_workload": "payments-v2"}, "value": 0.6667}
+    ]
+  },
+  "objects": {
+    "Deployment demo/payments-v2": {
+      "spec": {"template": {"spec": {"containers": [{
+        "name": "app",
+        "env": [
+          {"name": "NAME", "value": "payments-v2"},
+          {"name": "MESSAGE", "value": "ok"},
+          {"name": "TIMING_50_PERCENTILE", "value": "20ms"},
+          {"name": "UPSTREAM_URIS", "value": "http://ledger:9090"},
+          {"name": "ERROR_RATE", "value": "0.9"},
+          {"name": "ERROR_CODE", "value": "500"}
+        ]
+      }]}}}
+    }
+  },
+  "steps": [
+    {"at": "2026-08-19T14:33:51Z", "telemetry": true, "signal": 0.1675},
+    {"at": "2026-08-19T14:34:51Z", "telemetry": true, "signal": 0.1675},
+    {"at": "2026-08-19T14:35:51Z", "telemetry": true, "signal": 0.1675},
+    {"at": "2026-08-19T14:36:51Z", "telemetry": true, "signal": 0.1675},
+    {"at": "2026-08-19T14:37:51Z", "telemetry": true, "signal": 0.0214}
+  ]
+}
