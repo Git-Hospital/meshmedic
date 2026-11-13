@@ -14,6 +14,23 @@ and zero cluster mutation.
 fault, the pull request MeshMedic opened with evidence from Prometheus, a
 human merge, and Argo CD syncing the fix. Recording script in `demo/video/`.*
 
+## See it without a mesh
+
+No mesh or Prometheus yet? Run the detector against a replay built into the binary:
+
+```console
+$ meshmedic demo
+```
+
+It prints the cycles of a canary latency incident: the signal in breach, the
+hold duration, the full dossier (diagnosis, evidence, configuration reads,
+patch, rollback note), and the resolution report when it clears.
+`--scenario blind-no-telemetry` shows the tool refusing to call a target it
+cannot see healthy. The detection and report code is the code `watch` runs.
+The Prometheus data is replayed and constructed from the proof reports, not
+recorded, and every screen says so. Nothing is watched or changed. `--list`
+lists scenarios; see [docs/demo.md](docs/demo.md).
+
 ## Run it
 
 Against a Prometheus you already run. No config file, no demo cluster, nothing

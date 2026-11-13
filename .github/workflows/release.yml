@@ -17,7 +17,10 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # What we ship is built with the current stable Go, the one the image uses,
+          # so the binaries carry its standard-library security fixes. go.mod keeps
+          # the minimum language version for people who go install.
+          go-version: '1.26.x'
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
