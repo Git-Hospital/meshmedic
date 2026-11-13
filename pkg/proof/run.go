@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -72,6 +73,9 @@ type Runner struct {
 	Poll time.Duration
 	// Sleep waits, injected so tests do not.
 	Sleep func(context.Context, time.Duration)
+	// ApplyTimeout bounds the command that applies a remediation patch. Zero
+	// uses applyTimeout.
+	ApplyTimeout time.Duration
 
 	// Baseline lets a relative-threshold entry be proven. Without one the
 	// detector falls back to the static threshold, and for
@@ -160,11 +164,51 @@ func execCommandInput(ctx context.Context, argv []string, stdin string) error {
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
+	// Open: if a killed command's own child, such as a credential plugin,
+	// keeps the output pipe open, this still waits until that child closes it.
+	// A wait delay on the command would bound that, but it also starts when
+	// the command exits on its own, so it would turn a successful command
+	// into an error.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s: %w: %s", strings.Join(argv, " "), err, strings.TrimSpace(string(out)))
+		return &commandError{argv: argv, err: err, output: strings.TrimSpace(string(out)), ctxErr: endedByContext(ctx.Err(), cmd.ProcessState)}
 	}
 	return nil
+}
+
+// endedByContext returns the context's error when the context, and not the
+// command, ended the process: the context is done and the process did not exit
+// on its own (it was killed, or never started). A command that exited by
+// itself a moment before the deadline failed on its own terms, and ctx.Err()
+// read afterwards would only say the context is done now.
+func endedByContext(ctxErr error, ps *os.ProcessState) error {
+	if ctxErr == nil || (ps != nil && ps.Exited()) {
+		return nil
+	}
+	return ctxErr
+}
+
+// commandError is a failed command with what it printed kept apart from the
+// reason it failed, so a caller can read kubectl's own lines instead of
+// searching one flattened string. Error() keeps the old shape. When the
+// context ended the command, the context's error is wrapped too, so a caller
+// can tell a command that timed out from one that failed first.
+type commandError struct {
+	argv   []string
+	err    error
+	output string
+	ctxErr error
+}
+
+func (e *commandError) Error() string {
+	return fmt.Sprintf("%s: %v: %s", strings.Join(e.argv, " "), e.err, e.output)
+}
+
+func (e *commandError) Unwrap() []error {
+	if e.ctxErr != nil {
+		return []error{e.err, e.ctxErr}
+	}
+	return []error{e.err}
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) {
@@ -276,7 +320,19 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 	// a 60s hold their fault outlived the reset long enough for the fresh
 	// detector to fire and then clear on its own. error-surge's 120s hold did
 	// not, and the proof blamed the entry for the prover's mistake.
-	d := r.detectorFor(s)
+	//
+	// From here to the verdict a normal that was ready when the fault went in
+	// is read and never written, as in Remediate, though a key still unready
+	// keeps learning as it always did; see readyFrozenDetectorFor. The
+	// detector feeds every clear reading back into its baseline, so a fault
+	// that fills slowly would teach a relative threshold its own
+	// sub-threshold level while the proof waits: a neighbour that must stay
+	// quiet could then pass for the wrong reason, and the subject could miss a
+	// level that was over its threshold at injection. Warm-up ended before the
+	// fault went in and no detector has ticked since, so nothing has been
+	// learned from the fault yet. The threshold the detector logs is the
+	// frozen one.
+	d := r.readyFrozenDetectorFor(s)
 	fired, others, doc, after := r.waitForFire(ctx, d, s)
 	res.Fired = fired
 	res.FiredAfter = after
@@ -594,6 +650,90 @@ func (r *Runner) waitForResolve(ctx context.Context, d *detect.Detector, s Spec)
 		r.Sleep(ctx, r.Poll)
 	}
 	return false, r.Now().Sub(start)
+}
+
+// frozenBaseline lets the detector read the normal learned in warm-up and
+// stops it learning anything more. The detector feeds every clear reading back
+// into its baseline, which is right in production and wrong in a proof: once
+// the fault is in, every reading under a relative threshold is the fault's own
+// level, and learning it moves the bar the run is judged against. In the
+// detection proof a neighbour required to stay quiet passed for the wrong
+// reason and the subject could miss a level that was over its threshold at
+// injection. In the remediation proof, measured in a test: warmed at 10 with a
+// multiplier of 3, a useless patch that left the signal at 31 with one dip to
+// 29 was credited with a recovery, because each clear reading raised the
+// threshold over the next.
+//
+// learn names the keys that may still be written. Nil freezes everything.
+type frozenBaseline struct {
+	inner detect.BaselineStore
+	learn map[string]bool
+}
+
+func (f frozenBaseline) Observe(key string, value float64) {
+	if f.learn[key] {
+		f.inner.Observe(key, value)
+	}
+}
+
+func (f frozenBaseline) Baseline(key string, minSamples int) (float64, bool) {
+	return f.inner.Baseline(key, minSamples)
+}
+
+// frozenDetectorFor is detectorFor with the whole baseline read-only, for
+// once warm-up is over and nothing may be learned. The shared r.Baseline is
+// left alone, so what the next proof on this Runner starts from is what
+// warm-up put there. The remediation proof uses it as it is.
+func (r *Runner) frozenDetectorFor(s Spec) *detect.Detector {
+	return r.freeze(r.detectorFor(s), s, false)
+}
+
+// readyFrozenDetectorFor freezes only the keys that already have a learned
+// normal, and leaves the others learning exactly as an unfrozen detector
+// does. The detection proof uses it.
+//
+// Readiness is decided once, here, and not at each reading, so that a key
+// that is not ready now behaves for the whole run as it would with no freeze
+// at all, including becoming ready from the readings after the fault. Freezing
+// it too would pin it to its static threshold for good: a quiet neighbour
+// would pass because it was held to a number the fault never reached, and the
+// subject would be blamed for not firing at one. Checking at each reading
+// instead would freeze a key the moment it became ready, on a normal the
+// fault itself taught.
+//
+// So for every key the run is either frozen at a baseline that was ready when
+// the fault was in, or identical to a run without the freeze. It is never
+// judged against a static threshold that the unfrozen detector would have
+// left behind. The warm-up log names the keys that fall in the second group.
+func (r *Runner) readyFrozenDetectorFor(s Spec) *detect.Detector {
+	return r.freeze(r.detectorFor(s), s, true)
+}
+
+// freeze is the one place that wraps a detector's baseline. With
+// learnUnready, the keys with no ready baseline at this moment stay writable.
+func (r *Runner) freeze(d *detect.Detector, s Spec, learnUnready bool) *detect.Detector {
+	if d.Baseline == nil {
+		return d
+	}
+	var learn map[string]bool
+	if learnUnready {
+		learn = map[string]bool{}
+		for _, sc := range r.scenarios {
+			if sc.Signal.BaselineMultiplier <= 0 {
+				continue
+			}
+			minSamples := sc.Signal.BaselineMinSamples
+			if minSamples <= 0 {
+				minSamples = 20
+			}
+			key := targetKeyFor(sc.ID, s.Target)
+			if _, ready := d.Baseline.Baseline(key, minSamples); !ready {
+				learn[key] = true
+			}
+		}
+	}
+	d.Baseline = frozenBaseline{inner: d.Baseline, learn: learn}
+	return d
 }
 
 // detectorFor builds the single detector a proof uses for both phases. Its

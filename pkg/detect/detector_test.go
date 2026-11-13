@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1167,5 +1168,64 @@ func TestGuardrailSaysWhatItBlocked(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("the guardrail blocked an apply without saying so; logged: %v", logged)
+	}
+}
+
+// waypoint-overload-scale divides the per-replica rate by the capacity the target states as
+// waypoint_rps_per_pod. A target without that parameter, such as the examples' payments-v2 one,
+// does not evaluate the entry, and one with it fires once the share holds above 1 (review of #52).
+func TestWaypointOverloadNeedsTheTargetsCapacity(t *testing.T) {
+	all, err := catalog.LoadDir("../../catalog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry catalog.Scenario
+	for _, s := range all {
+		if s.ID == "waypoint-overload-scale" {
+			entry = s
+		}
+	}
+	if entry.ID == "" {
+		t.Fatal("waypoint-overload-scale is not in the catalog")
+	}
+	if entry.Signal.BaselineMultiplier != 0 {
+		t.Fatal("the entry learns a baseline, which an idle namespace or a scaled waypoint moves")
+	}
+	var queries []string
+	q := querierFunc(func(_ context.Context, query string) (float64, error) {
+		queries = append(queries, query)
+		if strings.Contains(query, "/ 20") {
+			return 1.5, nil // 30 requests per pod against a capacity of 20
+		}
+		return 30, nil
+	})
+	var fired []Incident
+	d := New(
+		[]catalog.Scenario{entry},
+		[]Target{
+			{CoverageProbe: testProbe, Params: map[string]string{"namespace": "demo", "workload": "waypoint", "waypoint_rps_per_pod": "20"}},
+			{CoverageProbe: testProbe, Params: map[string]string{"namespace": "demo", "workload": "payments-v2"}},
+		},
+		q,
+		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
+	)
+	var logged []string
+	d.Log = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+	base := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	for i := 0; i <= 5; i++ {
+		d.Tick(context.Background(), base.Add(time.Duration(i)*30*time.Second))
+	}
+	if len(fired) != 1 || fired[0].Params["workload"] != "waypoint" {
+		t.Fatalf("fired %+v, want one incident for the waypoint target", fired)
+	}
+	for _, query := range queries {
+		if strings.Contains(query, "payments-v2") {
+			t.Errorf("the target without waypoint_rps_per_pod was queried: %s", query)
+		}
+	}
+	if !slices.ContainsFunc(logged, func(l string) bool {
+		return strings.Contains(l, "workload=payments-v2") && strings.Contains(l, "not applicable to this target")
+	}) {
+		t.Errorf("the payments-v2 target is not reported as not applicable: %v", logged)
 	}
 }

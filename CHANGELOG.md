@@ -28,6 +28,17 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `go 1.21`, so `go install` keeps working on older toolchains, and a new CI
   job builds and tests on 1.21 to keep that true.
 
+- **`waypoint-overload-scale` fires against a capacity the target states.**
+  Its static threshold of 1000 requests per second per waypoint pod was about
+  sixty times the demo testbed's normal, and no single number fits every
+  cluster. The target now gives `waypoint_rps_per_pod`, and the signal is the
+  per-replica rate as a share of it, firing above 1. A target without that
+  parameter does not evaluate the entry, so a target whose workload is an
+  application no longer divides by that application's pods. A proof in
+  `proof/` replaces the declaration in `proof/UNPROVABLE.yaml`, and the run's
+  report is in `demo/proof-reports/`. Breaking for configs that relied on the
+  entry: add the parameter to the waypoint's target. (closes #24)
+
 - **Env values inside the `last-applied-configuration` annotation are now
   redacted.** A catalog path that reads `metadata` or `metadata.annotations` of
   a Deployment made with `kubectl apply` no longer copies the applied spec's
@@ -254,6 +265,21 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The detection proof no longer lets a baseline-relative threshold drift
+  while it waits for the fault.** `Run` kept the detector learning from
+  injection to verdict, so a clear reading taken while the fault filled its
+  rate window became part of the learned normal. A neighbour required to stay
+  quiet could pass for the wrong reason, and the subject could miss a level
+  that was over its threshold at injection. A baseline that is ready when the
+  fault goes in is now read-only from injection to verdict, the freeze
+  `meshmedic-prove remediate` already had; warm-up before the fault learns as
+  before. An entry whose baseline is not ready by then keeps learning during
+  the proof exactly as before, so the drift stays open for it. When the proof
+  has a warm-up, its log names such an entry. The recorded proofs of
+  `upstream-dependency-latency` and `latency-regression-vs-baseline` have not
+  been rerun on a cluster yet, so their reports may still reflect the drift.
+  (closes #48)
+
 - **`meshmedic-prove remediate` could report a wrong verdict, and is now held
   to the rule the detection proof follows.** It credited a patch on a single
   clear reading, on a signal that returned no series or NaN, across a
@@ -334,6 +360,27 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rate window plus the sustain plus a minute. The confirmation prints the
   patch, its apply command and its revert. None of this has had a live run
   yet.
+
+- **`meshmedic-prove remediate` now bounds the `kubectl apply` that puts the
+  patch on, and no longer blames the patch when kubectl fails before it sends
+  it.** The apply ran with the run's context and no deadline of its own, so a
+  dead API server held the run until Ctrl-C. It now runs under its own timeout
+  of three minutes (`Runner.ApplyTimeout`). The fault injection commands are
+  still unbounded, and a killed kubectl whose child process (a credential
+  plugin) keeps the output pipe open can still hold the run. A timed-out
+  apply, and one where kubectl failed before sending the patch (it could not
+  fetch the API discovery or the schema, the `failed to download openapi` and
+  `unable to recognize` lines `apply` prints, or it printed `Unable to connect
+  to the server` or `The connection to the server ... was refused`), ends in
+  `ERROR` instead of `FAIL` and says to check the testbed before the next run,
+  because whether any part of the patch landed is unknown. Lines are matched
+  from column 0, and any `Error from server` line means the server answered.
+  A connection that drops on the write itself (`error when creating ...: Post
+  "...": ...`) is not recognised, and neither are a patch the server rejected
+  (validation, admission, conflict), an expired token, a server-side timeout or
+  a missing CRD: those are still reported as the patch's failure. The revert
+  and reset run after a timed-out apply exactly as after any other failure.
+  (closes #45)
 
 - **The prover's preflight could call a testbed quiet on the strength of a dead
   Prometheus.** Its breach check treated any query error as "no series", which

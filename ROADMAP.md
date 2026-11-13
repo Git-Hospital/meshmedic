@@ -130,7 +130,8 @@ one.
   into the binary so a single file is the whole tool
 
 **M2.9 is done**: 16 entries proven end to end on a live cluster, 2 declared
-unprovable with the measurement behind each, 0 silently unverified. The gates
+unprovable with the measurement behind each, 0 silently unverified. Since
+then `waypoint-overload-scale` has its proof (#52): 17 proven, 1 declared. The gates
 found what the code review had not: an entry that fires on a healthy cluster, a
 missing suppression that made one fault look like two incidents, and an entry
 that had never fired anywhere, which was measured, explained, and retired.

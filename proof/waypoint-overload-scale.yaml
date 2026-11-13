@@ -1,0 +1,30 @@
+entry: waypoint-overload-scale
+summary: >
+  The background loadgen is scaled from one replica to eight, so the
+  waypoint's single pod carries several times the testbed's normal of about
+  15 requests per second. The target states this testbed's capacity as 40
+  requests per second per waypoint pod: healthy traffic sits near 0.4 of it,
+  the fault near 2. The number is a statement about this kind node, not a
+  recommendation; a real cluster states its own.
+
+  The target's workload is the waypoint deployment, because the signal
+  divides by its ready pods. A target without waypoint_rps_per_pod, such as
+  the demo's payments-v2 one, does not evaluate the entry.
+target:
+  service: payments
+  namespace: demo
+  workload: waypoint
+  waypoint_rps_per_pod: "40"
+inject:
+  - desc: eight times the background traffic through the waypoint
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, scale, deploy/loadgen, --replicas=8]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/loadgen, --timeout=180s]
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, scale, deploy/loadgen, --replicas=1]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/loadgen, --timeout=180s]
+settle: 60s
+firesWithin: 6m
+resolvesWithin: 6m
+expect:
+  names:
+    - waypoint

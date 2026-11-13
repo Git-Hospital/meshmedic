@@ -54,6 +54,7 @@ type checkResult struct {
 var checkParams = map[string]string{
 	"service": "payments", "namespace": "demo", "workload": "payments-v2",
 	"subset": "v2", "stable_subset": "v1", "ingress_workload": "ingress-istio",
+	"waypoint_rps_per_pod": "100",
 }
 
 // runAgainstPrometheus checks every catalog entry's metric and label
