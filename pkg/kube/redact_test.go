@@ -486,8 +486,9 @@ func TestRedactSecretInLastApplied(t *testing.T) {
 	checkRedacted(t, "last-applied in a Deployment", got, []string{"ZmFrZS11c2Vy"}, nil)
 }
 
-// In annotations and labels of a metadata object, at any depth, a value whose key is secret-like
-// is hidden. Other keys are readable, and so are annotation-like maps elsewhere.
+// In the annotations of a metadata object, at any depth, a value whose key is secret-like is
+// hidden. Other keys are readable; labels are not redacted (a label is also printed in selectors),
+// and neither are annotation-like maps elsewhere.
 func TestRedactMetadataAnnotationsAndLabels(t *testing.T) {
 	dep := map[string]any{"kind": "Deployment", "metadata": map[string]any{"name": "web",
 		"annotations": map[string]any{"checksum/secret": "fake-sum", "sidecar.istio.io/userVolume": "[{\"name\":\"v\"}]"},
@@ -496,8 +497,8 @@ func TestRedactMetadataAnnotationsAndLabels(t *testing.T) {
 			"annotations": map[string]any{"checksum/secret": "fake-sum-2", "n": 5.0, "cert-hash": 9.0}},
 			"spec": map[string]any{"containers": []any{}}}}}
 	got := marshalRedacted(t, dep)
-	checkRedacted(t, "deployment", got, []string{"fake-sum", "fake-sum-2", "fake-k", ":9"},
-		[]string{`"checksum/secret":"[redacted]"`, `"vendor-key":"[redacted]"`, `"cert-hash":"[redacted]"`, `"app":"web"`, `"n":5`, `sidecar.istio.io/userVolume":"[{\"name\":\"v\"}]"`})
+	checkRedacted(t, "deployment", got, []string{"fake-sum", "fake-sum-2", ":9"},
+		[]string{`"checksum/secret":"[redacted]"`, `"vendor-key":"fake-k"`, `"cert-hash":"[redacted]"`, `"app":"web"`, `"n":5`, `sidecar.istio.io/userVolume":"[{\"name\":\"v\"}]"`})
 	// Not under metadata: no rule.
 	got = marshalRedacted(t, map[string]any{"spec": map[string]any{"labels": map[string]any{"api_key": "fake-k"}, "annotations": map[string]any{"token": "fake-t"}}})
 	checkRedacted(t, "not metadata", got, nil, []string{"fake-k", "fake-t"})
@@ -529,34 +530,51 @@ func TestExtractFieldRedactsDataPaths(t *testing.T) {
 	}
 }
 
-// A hidden value that changed reads as changed; identical templates never do, even when two
-// sibling objects carry the same key.
+// A hidden value that changed reads as changed; identical pod templates never do.
 func TestDiffTemplatesHiddenValuesChanged(t *testing.T) {
-	obj := func(sumA, sumB, pw string) map[string]any {
-		item := func(name, sum string) map[string]any {
-			return map[string]any{"metadata": map[string]any{"annotations": map[string]any{"checksum/secret": sum}}}
-		}
-		return map[string]any{"items": []any{item("a", sumA), item("b", sumB)},
-			"spec": map[string]any{"template": map[string]any{"metadata": map[string]any{"annotations": map[string]any{"checksum/secret": sumA}}}},
-			"cm":   map[string]any{"kind": "ConfigMap", "metadata": map[string]any{"name": "c", "namespace": "n"}, "data": map[string]any{"DB_PASSWORD": pw}},
-			"sec":  map[string]any{"kind": "Secret", "metadata": map[string]any{"name": "s", "namespace": "n"}, "data": map[string]any{"u": pw}}}
+	obj := func(sum, pw string) map[string]any {
+		return map[string]any{
+			"metadata": map[string]any{"annotations": map[string]any{"checksum/secret": sum, "app": "web"}},
+			"spec":     map[string]any{"template": map[string]any{"metadata": map[string]any{"annotations": map[string]any{"checksum/secret": "t-" + sum}}}},
+			"cm":       map[string]any{"kind": "ConfigMap", "data": map[string]any{"token": pw}},
+			"sec":      map[string]any{"kind": "Secret", "data": map[string]any{"token": "s-" + pw}}}
 	}
-	if got := diffTemplates(obj("one", "two", "p"), obj("one", "two", "p")); strings.Contains(got, "changed") {
+	if got := diffTemplates(obj("one", "p"), obj("one", "p")); strings.Contains(got, "changed") {
 		t.Errorf("identical templates: %s", got)
 	}
-	got := diffTemplates(obj("one", "two", "p"), obj("one", "two", "q"))
-	if strings.Contains(got, "one") || strings.Contains(got, `"q"`) || strings.Count(got, "[redacted, changed]") != 2 {
+	got := diffTemplates(obj("one", "p"), obj("one", "q"))
+	if strings.Contains(got, `"q"`) || strings.Count(got, "[redacted, changed]") != 2 {
 		t.Errorf("changed Secret and ConfigMap values: %s", got)
 	}
-	got = diffTemplates(obj("one", "two", "p"), obj("ONE", "two", "p"))
+	got = diffTemplates(obj("one", "p"), obj("ONE", "p"))
 	if strings.Contains(got, "ONE") || !strings.Contains(got, "[redacted, changed]") {
 		t.Errorf("changed checksum/secret: %s", got)
 	}
-	// Only the second sibling changes: exactly one marker, so the siblings are not compared
-	// with each other.
-	got = diffTemplates(obj("one", "two", "p"), obj("one", "TWO", "p"))
-	if strings.Count(got, "[redacted, changed]") != 1 {
-		t.Errorf("one changed sibling: %s", got)
+}
+
+// The text and env rules under an annotation are keyed by the scope as before, not by list
+// position: a list item that moves must still show a changed value as changed.
+func TestDiffTemplatesAnnotationTextKeyedAsBefore(t *testing.T) {
+	item := func(cfg string) map[string]any {
+		return map[string]any{"metadata": map[string]any{"annotations": map[string]any{"cfg": cfg}}}
+	}
+	oldT := map[string]any{"x": []any{item("password=a")}, "z": 1.0}
+	newT := map[string]any{"x": []any{map[string]any{"q": 1.0}, item("password=b")}, "z": 2.0}
+	got := diffTemplates(oldT, newT)
+	for _, want := range []string{`- "cfg": "password=[redacted]"`, `+ "cfg": "password=[redacted, changed]"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q: %s", want, got)
+		}
+	}
+}
+
+// An item of a SecretList keeps a kind it came with, even an empty or odd one.
+func TestRedactListItemKeepsItsOwnKind(t *testing.T) {
+	for _, k := range []any{"", 7.0} {
+		got := marshalRedacted(t, map[string]any{"kind": "SecretList", "items": []any{map[string]any{"kind": k, "data": map[string]any{"u": "fake"}}}})
+		if strings.Count(got, `"kind"`) != 2 {
+			t.Errorf("item kind %v dropped: %s", k, got)
+		}
 	}
 }
 

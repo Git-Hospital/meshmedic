@@ -7,15 +7,16 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **ConfigMap and Secret data, and secret-like annotations and labels, are now
+- **ConfigMap and Secret data, and secret-like annotations, are now
   redacted.** Redaction used to look only at env entries and `NAME=value`
   text, so a catalog path that reads a ConfigMap or a Secret would have shown
   `data: {DB_PASSWORD: ...}` as it is. Now, in a ConfigMap, a value under
   `data` or `binaryData` whose key contains PASSWORD, PASSWD, SECRET, TOKEN,
   KEY, CREDENTIAL or CERT shows `[redacted]`; in a Secret every value under
-  `data` and `stringData` does, whatever its key; and in the annotations and
-  labels of any metadata a value with such a key does. Kubernetes reference
-  fields such as `secretKeyRef` and `secretName` are shown as before. A changed
+  `data` and `stringData` does, whatever its key; and in the annotations of any
+  metadata a value with such a key does, even when it is only a reference (for
+  example `nginx.ingress.kubernetes.io/auth-secret`). Fields of the Kubernetes
+  schema, such as `secretKeyRef` and `secretName`, are not touched. A changed
   value in a diff reads `[redacted, changed]`. No catalog entry that ships with
   meshmedic reads a ConfigMap or a Secret; SECURITY.md lists what stays shown,
   including header values in Istio objects. (closes #43)

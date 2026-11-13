@@ -65,10 +65,13 @@ matches the word list is hidden. In a Secret (any `kind: Secret`, likewise,
 and the items of a `SecretList`), every value under `data` and `stringData` is
 hidden whatever its key is called, since `data` is only base64; a Secret
 inside a `kind: List`, or inside the last-applied annotation, is found the
-same way. In the `annotations` and `labels` of any `metadata`, a value whose
-key matches the word list (`checksum/secret`) is hidden. A hidden value shows
-`[redacted]` whatever its type, the keys stay, and a path that ends on one
-value (`data.DB_PASSWORD`) shows the marker. Other fields are not judged by
+same way. In the `annotations` of any `metadata`, a value whose key matches
+the word list (`checksum/secret`) is hidden, even when the value is only a
+reference (`nginx.ingress.kubernetes.io/auth-secret`). A hidden value shows
+`[redacted]` whatever its type, except that `null` stays `null`; the keys
+stay, and a path that ends on one value (`data.DB_PASSWORD`) shows the
+marker. Labels are not redacted: a label is also printed in selectors, so
+hiding it in one place would protect nothing. Other fields are not judged by
 their names, so Kubernetes reference fields such as `secretKeyRef`,
 `secretName`, `topologyKey` and a toleration's `key` are shown as they are.
 
@@ -78,7 +81,8 @@ Route's `tls.key`); header and query values in Istio routing and policy
 objects (an AuthorizationPolicy `when` value, a VirtualService header match, a
 header `set` or `add`, `queryParams`), including an `authorization` or
 `cookie` header; a ConfigMap value whose key is not on the word list (`dsn`,
-`connection`); key names; free text with no `NAME=value` form; a credential
+`connection`); a SecretList or ConfigMapList item without a kind, in a shape
+the API does not produce; key names; free text with no `NAME=value` form; a credential
 after a flag in a separate argument (`--password`, `hunter2`), in a URL's user
 info or path, in a JSON log line, in JSON inside any other annotation or
 string, or in a metric label. Scope what the entries read accordingly.

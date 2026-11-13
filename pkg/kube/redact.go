@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -71,20 +70,17 @@ func redactAll(v any) any {
 // redactTree copies v and replaces, in every object shaped like a Kubernetes env entry (a string
 // name and a value) with a secret-like name, the value; in a ConfigMap the values under data and
 // binaryData whose key is secret-like; in a Secret every value under data and stringData; in the
-// annotations and labels of any metadata the values whose key is secret-like (#43); and in every
+// annotations of any metadata the values whose key is secret-like (#43); and in every
 // other string the values of secret-like name=value pairs. changed is asked, with a key for the value's place in the tree
 // and the plain value, whether to mark it changed. scope names the place: the object keys on the
 // way down and the names of named objects such as containers, never list indexes.
 func redactTree(v any, scope string, changed func(key, value string) bool) any {
-	return redactNode(v, scope, "", "", changed)
+	return redactNode(v, scope, "", changed)
 }
 
-// redactNode is redactTree with two more arguments. parent is the key this value sits under, which
-// tells annotations and labels of a metadata object from other maps. pos tells apart objects that
-// have no name of their own, in a list: the changed marker compares a hidden value with the one at
-// the same place, and without pos two sibling objects with the same key would be compared with each
-// other. pos is used only for hidden values, never for the env and text rules.
-func redactNode(v any, scope, parent, pos string, changed func(key, value string) bool) any {
+// redactNode is redactTree with one more argument: parent, the key this value sits under, which
+// tells the annotations of a metadata object from other maps.
+func redactNode(v any, scope, parent string, changed func(key, value string) bool) any {
 	switch t := v.(type) {
 	case map[string]any:
 		name, okName := t["name"].(string)
@@ -103,41 +99,33 @@ func redactNode(v any, scope, parent, pos string, changed func(key, value string
 			switch {
 			case kind == "secret" && (k == "data" || k == "stringData"):
 				// A Secret: every value, whatever its key; data is only base64, the value itself.
-				out[k] = redactEntries(e, inner+pos+"."+k, objectID(t), func(string) bool { return true }, changed)
+				out[k] = redactEntries(e, inner+"."+k, func(string) bool { return true }, changed)
 				continue
 			case kind == "configmap" && (k == "data" || k == "binaryData"):
 				// A ConfigMap: a person chose these keys, so a secret-like one names a credential.
-				out[k] = redactEntries(e, inner+pos+"."+k, objectID(t), secretLike, changed)
+				out[k] = redactEntries(e, inner+"."+k, secretLike, changed)
 				continue
-			case parent == "metadata" && (k == "annotations" || k == "labels"):
-				out[k] = redactEntries(e, inner+pos+"."+k, "", secretLike, changed)
+			case parent == "metadata" && k == "annotations":
+				out[k] = redactEntries(e, inner+"."+k, secretLike, changed)
 				continue
 			case k == "items" && (kind == "secretlist" || kind == "configmaplist"):
 				if list, ok := e.([]any); ok {
-					out[k] = redactListItems(list, strings.TrimSuffix(kind, "list"), inner+"."+k, pos, changed)
+					out[k] = redactListItems(list, strings.TrimSuffix(kind, "list"), inner+"."+k, changed)
 					continue
 				}
 			}
-			out[k] = redactNode(e, inner+"."+k, k, pos, changed)
+			out[k] = redactNode(e, inner+"."+k, k, changed)
 		}
 		if okName && rawValue != nil && secretLike(name) {
 			// Any non-nil value is hidden, whatever its type: the API server only accepts strings,
 			// but a hand-written annotation is never validated. A non-string is compared by its JSON.
-			value, isString := rawValue.(string)
-			if !isString {
-				b, _ := json.Marshal(rawValue)
-				value = string(b)
-			}
-			out["value"] = redacted
-			if changed(scope+"\x00env\x00"+name, value) {
-				out["value"] = redactedChanged
-			}
+			out["value"] = redactedOrChanged(scope+"\x00env\x00"+name, plainValue(rawValue), changed)
 		}
 		return out
 	case []any:
 		out := make([]any, len(t))
 		for i, e := range t {
-			out[i] = redactNode(e, scope, parent, itemPos(e, pos, i), changed)
+			out[i] = redactNode(e, scope, parent, changed)
 		}
 		return out
 	case string:
@@ -162,38 +150,37 @@ func objectKind(m map[string]any) string {
 	return strings.ToLower(k)
 }
 
-// objectID is namespace/name of an object, so the same key in two Secrets is never compared.
-func objectID(m map[string]any) string {
-	md, _ := m["metadata"].(map[string]any)
-	ns, _ := md["namespace"].(string)
-	name, _ := md["name"].(string)
-	return ns + "/" + name
+// plainValue is the text a value is compared by: the string itself, else its JSON.
+func plainValue(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
-// itemPos extends pos for a list item that has no name of its own: by namespace/name when it is an
-// object with metadata, else by list index. Items with a name are told apart by the scope already.
-func itemPos(e any, pos string, i int) string {
-	m, ok := e.(map[string]any)
-	if !ok {
-		return pos
+// redactedOrChanged is the marker for a hidden value: the changed marker when the value differs
+// from the older template's at the same key, else the plain one.
+func redactedOrChanged(key, value string, changed func(key, value string) bool) string {
+	if changed(key, value) {
+		return redactedChanged
 	}
-	if id := objectID(m); id != "/" {
-		return pos + "[" + id + "]"
-	}
-	if _, named := m["name"].(string); named {
-		return pos
-	}
-	return pos + "[" + strconv.Itoa(i) + "]"
+	return redacted
 }
 
 // redactListItems redacts the items of a SecretList or ConfigMapList as Secrets or ConfigMaps even
-// when an item carries no kind of its own.
-func redactListItems(list []any, kind, scope, pos string, changed func(key, value string) bool) []any {
+// when an item carries no kind of its own. The kind added for that is taken off again; a kind the
+// item came with is left alone.
+func redactListItems(list []any, kind, scope string, changed func(key, value string) bool) []any {
 	out := make([]any, len(list))
 	for i, e := range list {
 		m, ok := e.(map[string]any)
-		if !ok || objectKind(m) != "" {
-			out[i] = redactNode(e, scope, "items", itemPos(e, pos, i), changed)
+		if !ok {
+			out[i] = redactNode(e, scope, "items", changed)
+			continue
+		}
+		if _, has := m["kind"]; has {
+			out[i] = redactNode(e, scope, "items", changed)
 			continue
 		}
 		withKind := make(map[string]any, len(m)+1)
@@ -201,8 +188,8 @@ func redactListItems(list []any, kind, scope, pos string, changed func(key, valu
 			withKind[k] = x
 		}
 		withKind["kind"] = kind
-		r := redactNode(withKind, scope, "items", itemPos(e, pos, i), changed).(map[string]any)
-		delete(r, "kind") // the output shows the item as it came
+		r := redactNode(withKind, scope, "items", changed).(map[string]any)
+		delete(r, "kind")
 		out[i] = r
 	}
 	return out
@@ -212,35 +199,23 @@ func redactListItems(list []any, kind, scope, pos string, changed func(key, valu
 // value has; the map and its keys stay, so a path such as data.DB_PASSWORD still resolves and shows
 // the marker. The other entries are redacted by the usual rules. A v that is not a map (data as a
 // string) is replaced whole; nil stays nil. A hidden value that differs from the older template's
-// shows as changed: the comparison key is the place (scope, which has the names of named objects
-// and the position of unnamed ones), the object's namespace and name when given, and the entry key.
-// A non-string is compared by its JSON.
-func redactEntries(v any, scope, id string, hide func(key string) bool, changed func(key, value string) bool) any {
-	mark := func(entryKey string, value any) string {
-		var plain string
-		if s, ok := value.(string); ok {
-			plain = s
-		} else {
-			b, _ := json.Marshal(value)
-			plain = string(b)
-		}
-		if changed(scope+"\x00hidden\x00"+id+"\x00"+entryKey, plain) {
-			return redactedChanged
-		}
-		return redacted
-	}
+// shows as changed. scope is the map's place, built as for env entries (the keys on the way down and
+// the names of named objects, no list indexes), and the comparison key is that scope plus the entry
+// key. It is unique within a pod template, the only input the diff receives; two objects with the
+// same entry key in one list would share a key, which a pod template does not have.
+func redactEntries(v any, scope string, hide func(key string) bool, changed func(key, value string) bool) any {
 	m, ok := v.(map[string]any)
 	if !ok {
 		if v == nil {
 			return nil
 		}
-		return mark("", v)
+		return redactedOrChanged(scope+"\x00hidden\x00", plainValue(v), changed)
 	}
 	rest := make(map[string]any, len(m))
 	out := make(map[string]any, len(m))
 	for k, e := range m {
 		if e != nil && hide(k) {
-			out[k] = mark(k, e)
+			out[k] = redactedOrChanged(scope+"\x00hidden\x00"+k, plainValue(e), changed)
 		} else {
 			rest[k] = e
 		}
