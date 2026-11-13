@@ -4,6 +4,7 @@
 //	render    fill a scenario's patch template with incident parameters
 //	watch     evaluate catalog signals against a live Prometheus and print
 //	          an incident report with the proposed patch when one fires
+//	demo      replay a recorded Prometheus through the same detection path
 //
 // The PR opener lands behind these.
 package main
@@ -55,6 +56,8 @@ func main() {
 		runApprove(os.Args[2:])
 	case "calibrate":
 		runCalibrate(os.Args[2:])
+	case "demo":
+		os.Exit(runDemo(os.Args[2:], os.Stdout, os.Stderr))
 	case "version", "--version", "-v":
 		fmt.Println("meshmedic", version)
 	default:
@@ -71,6 +74,8 @@ func usage() {
   meshmedic watch --prometheus URL --target k=v,k=v [--target ...] [--interval 30s]
   meshmedic check --config watch.yaml            (exit 1 if any target is unobserved)
   meshmedic validate --against-prometheus URL    (do the catalog's metrics exist?)
+  meshmedic demo [--scenario NAME] [--list] [--verbose] [--out DIR]
+                                       (replay a recorded Prometheus: no mesh needed)
   meshmedic approve --scenario id --istio 1.24.1 --testbed <commit> [--all]
   meshmedic calibrate --config watch.yaml [--window 10m]  (does the catalog stay
                                        quiet on a HEALTHY cluster, and by how much?)

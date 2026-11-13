@@ -1,0 +1,83 @@
+meshmedic demo: canary-latency-rollback
+This is a REPLAY of data held inside this binary. Nothing is being watched and nothing is changed.
+The real detector ran 5 cycles against a Prometheus served from this process on loopback.
+
+cycle 1  12:48:49Z  canary-latency-rollback: in breach, waiting out the 90s hold (signal 2485 > 1000)
+cycle 2  12:49:34Z  canary-latency-rollback: in breach, waiting out the 90s hold (signal 2485 > 1000)
+cycle 3  12:50:19Z  canary-latency-rollback: FIRING, held for 90s: incident reported (signal 2485 > 1000)
+
+## Incident: Canary subset latency regression
+
+Scenario `canary-latency-rollback` (severity critical) fired for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2`.
+
+The signal has held at **2485** (threshold > 1000 for 90s) since 2026-08-19T12:48:49Z.
+
+### Diagnosis
+
+A newly shifted traffic subset (canary) shows p99 latency far above the stable subset. The fastest safe move during an incident is to send traffic back to the stable subset and investigate the canary offline. This entry assumes the DestinationRule defines the failing subset and a stable subset.
+
+### Evidence
+
+| query | value |
+| --- | --- |
+| p99-stable-for-comparison | 287.5 |
+| canary-request-share | 0.1925 |
+
+### Configuration evidence
+
+- canary-deployment-env (`Deployment demo/payments-v2`) `spec.template.spec.containers[*].env`: `NAME=payments-v2 MESSAGE=ok TIMING_50_PERCENTILE=1200ms UPSTREAM_URIS=http://ledger:9090 ERROR_RATE=0 TIMING_90_PERCENTILE=1500ms`
+- canary-deployment-env (`Deployment demo/payments-v2`) `spec.template.spec.containers[*].resources`: `{}`
+
+### Proposed patch (VirtualService)
+
+```yaml
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: payments
+  namespace: demo
+spec:
+  hosts:
+    - payments
+  http:
+    - route:
+        - destination:
+            host: payments
+            subset: v1
+          weight: 100
+        - destination:
+            host: payments
+            subset: v2
+          weight: 0
+```
+
+### Rollback
+
+Restore the previous VirtualService weights once the canary's p99 is back under the threshold in a staging replay, or roll forward with a fixed canary image. The PR that shifted traffic contains the prior weights in its diff.
+
+This scenario requires human approval; nothing was applied to the cluster.
+cycle 4  12:51:04Z  canary-latency-rollback: still in breach, already reported, no second report (signal 2485 > 1000)
+cycle 5  12:51:49Z  canary-latency-rollback: clear, a real answer: the signal is 312, back under 1000
+
+## Resolved: Canary subset latency regression
+
+Scenario `canary-latency-rollback` for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2` has recovered.
+
+The signal is back to **312** (threshold > 1000). Open from 2026-08-19T12:48:49Z to 2026-08-19T12:51:49Z, a duration of 3m0s.
+
+Data: CONSTRUCTED to match demo/proof-reports/canary-latency-rollback.md, not recorded.
+  (The proof reports keep the incident report, not the raw Prometheus responses.)
+  Taken from that file:
+    - the signal value at firing (2485) and the time the breach began (12:48:49Z)
+    - both evidence values (stable p99 287.5, canary share 0.1925)
+    - the canary Deployment's env and resources
+  Made up for this replay:
+    - every Prometheus response body and the coverage count; every cycle after the first and the recovery value
+    - the cycle timing (45s apart, so the 90s hold is easy to see)
+  The detection, thresholds, patch and report are the real code. No pull request was opened,
+  no token was read, nothing beyond loopback was contacted.
+  No file was written (add --out DIR to write the dossier).
+
+Next, on a real setup (a Prometheus that scrapes Istio metrics):
+  meshmedic check --prometheus http://localhost:9090 --target service=payments,namespace=demo   # exits 1 if it cannot see the target
+  meshmedic watch --prometheus http://localhost:9090 --target service=payments,namespace=demo

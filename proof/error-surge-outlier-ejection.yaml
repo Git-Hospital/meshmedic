@@ -25,8 +25,15 @@ resolvesWithin: 5m
 # the failing endpoints drops the service's 5xx ratio even though the endpoints
 # are still broken. Removing the fault first would prove only that the fault
 # caused it, which the resolution half above already shows.
+#
+# Timing. The patch goes on only after the breach has held for the entry's
+# 120s hold, inside firesWithin, exactly as the entry would report. After it,
+# outlier detection needs up to one 30s interval to eject the canary, the 2m
+# rate window then has to drain the errors it already holds before the ratio
+# falls under 0.15, and the clear must then hold for another 120s on every
+# tick. That is about 4m30s, so 6m leaves 1m30s for scrapes and ticks.
 remediation:
-  clearsWithin: 4m
+  clearsWithin: 6m
   revert:
     - desc: remove the outlier detection the patch added
       run: [kubectl, --context=kind-meshmedic-demo, -n, demo, delete, destinationrule, payments-outlier, --ignore-not-found]
