@@ -2,6 +2,7 @@ package kube
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -377,5 +378,241 @@ func TestDiffTemplatesRedactsLastAppliedAnnotation(t *testing.T) {
 	}
 	if !strings.Contains(string(b), "redacted, changed") {
 		t.Errorf("changed credential in the annotation not marked: %s", b)
+	}
+}
+
+func marshalRedacted(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(redactAll(v))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func checkRedacted(t *testing.T, name string, got string, leaks, wants []string) {
+	t.Helper()
+	for _, l := range leaks {
+		if strings.Contains(got, l) {
+			t.Errorf("%s: leaks %q: %s", name, l, got)
+		}
+	}
+	for _, w := range wants {
+		if !strings.Contains(got, w) {
+			t.Errorf("%s: missing %q: %s", name, w, got)
+		}
+	}
+}
+
+// In a ConfigMap, a value under data or binaryData whose key is secret-like is hidden, whatever
+// its type; other keys stay readable. kind is compared without case and whatever the apiVersion is
+// (#43).
+func TestRedactConfigMapData(t *testing.T) {
+	cm := func(kind, apiVersion string) map[string]any {
+		o := map[string]any{"kind": kind,
+			"data":       map[string]any{"DB_PASSWORD": "fake-pw-1", "api_token": "fake-t-1", "pin_key": 4711.0, "tls.cert": map[string]any{"x": "fake-n"}, "gone_secret": nil, "host": "db.local", "replicas": "3"},
+			"binaryData": map[string]any{"signing-key": "ZmFrZS1rZXk=", "logo": "ZmFrZS1sb2dv"}}
+		if apiVersion != "" {
+			o["apiVersion"] = apiVersion
+		}
+		return o
+	}
+	for _, o := range []map[string]any{cm("ConfigMap", "v1"), cm("configmap", "v1"), cm("CONFIGMAP", ""), cm("ConfigMap", "example.io/v9")} {
+		got := marshalRedacted(t, o)
+		checkRedacted(t, fmt.Sprint(o["kind"], o["apiVersion"]), got,
+			[]string{"fake-pw-1", "fake-t-1", "4711", "fake-n", "ZmFrZS1rZXk="},
+			[]string{`"DB_PASSWORD":"[redacted]"`, `"api_token":"[redacted]"`, `"pin_key":"[redacted]"`, `"tls.cert":"[redacted]"`, `"gone_secret":null`,
+				`"signing-key":"[redacted]"`, `"host":"db.local"`, `"replicas":"3"`, `"logo":"ZmFrZS1sb2dv"`})
+	}
+	// Another kind with the same shape is not a ConfigMap: no rule on its keys.
+	got := marshalRedacted(t, map[string]any{"kind": "Widget", "data": map[string]any{"DB_PASSWORD": "fake-pw-1"}})
+	checkRedacted(t, "other kind", got, nil, []string{"fake-pw-1"})
+}
+
+// In a Secret every value under data and stringData is hidden, whatever its key; kind is compared
+// without case and whatever the apiVersion is, at any depth.
+func TestRedactSecretData(t *testing.T) {
+	secret := func(kind, apiVersion string) map[string]any {
+		o := map[string]any{"kind": kind, "metadata": map[string]any{"name": "creds", "namespace": "app"}, "type": "Opaque",
+			"data":       map[string]any{"username": "ZmFrZS11c2Vy", "config": "ZmFrZS1jZmc=", "n": 7.0, "m": map[string]any{"x": "fake-nested"}, "gone": nil},
+			"stringData": map[string]any{"dsn": "postgres://fake-dsn", "plain": "fake-plain"}}
+		if apiVersion != "" {
+			o["apiVersion"] = apiVersion
+		}
+		return o
+	}
+	leaks := []string{"ZmFrZS11c2Vy", "ZmFrZS1jZmc=", "fake-nested", "postgres://fake-dsn", "fake-plain", ":7"}
+	wants := []string{`"username":"[redacted]"`, `"dsn":"[redacted]"`, `"m":"[redacted]"`, `"gone":null`, `"type":"Opaque"`, `"name":"creds"`}
+	for _, o := range []map[string]any{secret("Secret", "v1"), secret("secret", "v1"), secret("Secret", "example.io/v2"), secret("Secret", "")} {
+		checkRedacted(t, fmt.Sprint(o["kind"], o["apiVersion"]), marshalRedacted(t, o), leaks, wants)
+	}
+	// Inside a kubectl List, at any depth.
+	list := map[string]any{"kind": "List", "items": []any{secret("Secret", "v1")}}
+	checkRedacted(t, "List", marshalRedacted(t, list), leaks, wants)
+	// A SecretList or ConfigMapList item that carries no kind is read as the list's kind.
+	noKind := secret("", "")
+	delete(noKind, "kind")
+	checkRedacted(t, "SecretList", marshalRedacted(t, map[string]any{"kind": "SecretList", "items": []any{noKind}}), leaks, wants)
+	cmItem := map[string]any{"data": map[string]any{"DB_PASSWORD": "fake-pw-1", "host": "db.local"}}
+	got := marshalRedacted(t, map[string]any{"kind": "ConfigMapList", "items": []any{cmItem}})
+	checkRedacted(t, "ConfigMapList", got, []string{"fake-pw-1"}, []string{`"host":"db.local"`})
+	// The item is shown as it came: only the list's own kind appears.
+	if strings.Count(marshalRedacted(t, map[string]any{"kind": "SecretList", "items": []any{noKind}}), `"kind"`) != 1 {
+		t.Error("an item without a kind gained one")
+	}
+	// Another kind with the same shape is not a Secret.
+	checkRedacted(t, "other kind", marshalRedacted(t, secret("Widget", "v1")), nil, []string{"fake-plain"})
+	// data that is not an object is replaced whole.
+	odd := marshalRedacted(t, map[string]any{"kind": "Secret", "data": "ZmFrZQ=="})
+	checkRedacted(t, "string data", odd, []string{"ZmFrZQ=="}, []string{`"data":"[redacted]"`})
+}
+
+// A Secret whose last-applied annotation holds its data: the annotation is parsed, and its kind
+// is checked like any other object's.
+func TestRedactSecretInLastApplied(t *testing.T) {
+	inner := `{"kind":"Secret","apiVersion":"v1","data":{"username":"ZmFrZS11c2Vy"},"metadata":{"name":"s"}}`
+	obj := map[string]any{"kind": "Secret", "apiVersion": "v1", "metadata": map[string]any{"name": "s", "annotations": map[string]any{lastAppliedKey: inner}}}
+	got, err := ExtractField(obj, "metadata.annotations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkRedacted(t, "last-applied", got, []string{"ZmFrZS11c2Vy"}, []string{`\"username\":\"[redacted]\"`})
+	// and in a Deployment's annotation, not itself a Secret
+	dep := deploymentWithAnnotation(inner)
+	got, err = ExtractField(dep, "metadata.annotations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkRedacted(t, "last-applied in a Deployment", got, []string{"ZmFrZS11c2Vy"}, nil)
+}
+
+// In the annotations of a metadata object, at any depth, a value whose key is secret-like is
+// hidden. Other keys are readable; labels are not redacted (a label is also printed in selectors),
+// and neither are annotation-like maps elsewhere.
+func TestRedactMetadataAnnotationsAndLabels(t *testing.T) {
+	dep := map[string]any{"kind": "Deployment", "metadata": map[string]any{"name": "web",
+		"annotations": map[string]any{"checksum/secret": "fake-sum", "sidecar.istio.io/userVolume": "[{\"name\":\"v\"}]"},
+		"labels":      map[string]any{"vendor-key": "fake-k", "app": "web"}},
+		"spec": map[string]any{"template": map[string]any{"metadata": map[string]any{
+			"annotations": map[string]any{"checksum/secret": "fake-sum-2", "n": 5.0, "cert-hash": 9.0}},
+			"spec": map[string]any{"containers": []any{}}}}}
+	got := marshalRedacted(t, dep)
+	checkRedacted(t, "deployment", got, []string{"fake-sum", "fake-sum-2", ":9"},
+		[]string{`"checksum/secret":"[redacted]"`, `"vendor-key":"fake-k"`, `"cert-hash":"[redacted]"`, `"app":"web"`, `"n":5`, `sidecar.istio.io/userVolume":"[{\"name\":\"v\"}]"`})
+	// Not under metadata: no rule.
+	got = marshalRedacted(t, map[string]any{"spec": map[string]any{"labels": map[string]any{"api_key": "fake-k"}, "annotations": map[string]any{"token": "fake-t"}}})
+	checkRedacted(t, "not metadata", got, nil, []string{"fake-k", "fake-t"})
+}
+
+// A catalog path that points at one value, or at the data object, goes through the same rules.
+func TestExtractFieldRedactsDataPaths(t *testing.T) {
+	cm := map[string]any{"kind": "ConfigMap", "data": map[string]any{"DB_PASSWORD": "fake-pw", "host": "db"}}
+	secret := map[string]any{"kind": "Secret", "data": map[string]any{"username": "ZmFrZQ==", "host": "aG9zdA=="}}
+	for _, tc := range []struct {
+		obj  map[string]any
+		path string
+		want string
+	}{
+		{cm, "data.DB_PASSWORD", "[redacted]"},
+		{cm, "data.host", "db"},
+		{cm, "data", `{"DB_PASSWORD":"[redacted]","host":"db"}`},
+		{secret, "data.username", "[redacted]"},
+		{secret, "data.host", "[redacted]"},
+		{secret, "data", `{"host":"[redacted]","username":"[redacted]"}`},
+	} {
+		got, err := ExtractField(tc.obj, tc.path)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: got %q, %v; want %q", tc.path, got, err, tc.want)
+		}
+	}
+	if cm["data"].(map[string]any)["DB_PASSWORD"] != "fake-pw" {
+		t.Error("ExtractField changed the object it was given")
+	}
+}
+
+// A hidden value that changed reads as changed; identical pod templates never do.
+func TestDiffTemplatesHiddenValuesChanged(t *testing.T) {
+	obj := func(sum, pw string) map[string]any {
+		return map[string]any{
+			"metadata": map[string]any{"annotations": map[string]any{"checksum/secret": sum, "app": "web"}},
+			"spec":     map[string]any{"template": map[string]any{"metadata": map[string]any{"annotations": map[string]any{"checksum/secret": "t-" + sum}}}},
+			"cm":       map[string]any{"kind": "ConfigMap", "data": map[string]any{"token": pw}},
+			"sec":      map[string]any{"kind": "Secret", "data": map[string]any{"token": "s-" + pw}}}
+	}
+	if got := diffTemplates(obj("one", "p"), obj("one", "p")); strings.Contains(got, "changed") {
+		t.Errorf("identical templates: %s", got)
+	}
+	got := diffTemplates(obj("one", "p"), obj("one", "q"))
+	if strings.Contains(got, `"q"`) || strings.Count(got, "[redacted, changed]") != 2 {
+		t.Errorf("changed Secret and ConfigMap values: %s", got)
+	}
+	got = diffTemplates(obj("one", "p"), obj("ONE", "p"))
+	if strings.Contains(got, "ONE") || !strings.Contains(got, "[redacted, changed]") {
+		t.Errorf("changed checksum/secret: %s", got)
+	}
+}
+
+// The text and env rules under an annotation are keyed by the scope as before, not by list
+// position: a list item that moves must still show a changed value as changed.
+func TestDiffTemplatesAnnotationTextKeyedAsBefore(t *testing.T) {
+	item := func(cfg string) map[string]any {
+		return map[string]any{"metadata": map[string]any{"annotations": map[string]any{"cfg": cfg}}}
+	}
+	oldT := map[string]any{"x": []any{item("password=a")}, "z": 1.0}
+	newT := map[string]any{"x": []any{map[string]any{"q": 1.0}, item("password=b")}, "z": 2.0}
+	got := diffTemplates(oldT, newT)
+	for _, want := range []string{`- "cfg": "password=[redacted]"`, `+ "cfg": "password=[redacted, changed]"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q: %s", want, got)
+		}
+	}
+}
+
+// An item of a SecretList keeps a kind it came with, even an empty or odd one.
+func TestRedactListItemKeepsItsOwnKind(t *testing.T) {
+	for _, k := range []any{"", 7.0} {
+		got := marshalRedacted(t, map[string]any{"kind": "SecretList", "items": []any{map[string]any{"kind": k, "data": map[string]any{"u": "fake"}}}})
+		if strings.Count(got, `"kind"`) != 2 {
+			t.Errorf("item kind %v dropped: %s", k, got)
+		}
+		if strings.Contains(got, "fake") {
+			t.Errorf("an item whose kind is %v was not read as a Secret: %s", k, got)
+		}
+	}
+}
+
+func guardTemplate(token string) map[string]any {
+	return map[string]any{"kind": "Deployment", "apiVersion": "apps/v1", "spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+		"automountServiceAccountToken": false,
+		"tolerations":                  []any{map[string]any{"key": "node-role", "operator": "Equal", "value": "infra", "effect": "NoSchedule"}},
+		"topologySpreadConstraints":    []any{map[string]any{"topologyKey": "kubernetes.io/hostname", "maxSkew": 1.0}},
+		"volumes":                      []any{map[string]any{"name": "creds", "secret": map[string]any{"secretName": "db-creds"}}},
+		"containers": []any{map[string]any{"name": "app", "image": "app:1", "env": []any{
+			map[string]any{"name": "DB_USER", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "db", "key": "user"}}},
+			map[string]any{"name": "MODE", "valueFrom": map[string]any{"configMapKeyRef": map[string]any{"name": "cfg", "key": "mode"}}},
+			map[string]any{"name": "API_TOKEN", "value": token},
+		}}},
+	}}}}
+}
+
+// Kubernetes reference fields (secretKeyRef, configMapKeyRef, secretName, topologyKey, a
+// toleration's key, automountServiceAccountToken) render as they did before any map-key rule. The
+// expected strings were produced by running origin/main's code (e2ec1f3) on this same template.
+func TestRegressionGuardReferenceFieldsStayReadable(t *testing.T) {
+	for _, tc := range []struct{ path, want string }{
+		{"spec.template.spec", "{\"automountServiceAccountToken\":false,\"containers\":[{\"env\":[{\"name\":\"DB_USER\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"user\",\"name\":\"db\"}}},{\"name\":\"MODE\",\"valueFrom\":{\"configMapKeyRef\":{\"key\":\"mode\",\"name\":\"cfg\"}}},{\"name\":\"API_TOKEN\",\"value\":\"[redacted]\"}],\"image\":\"app:1\",\"name\":\"app\"}],\"tolerations\":[{\"effect\":\"NoSchedule\",\"key\":\"node-role\",\"operator\":\"Equal\",\"value\":\"infra\"}],\"topologySpreadConstraints\":[{\"maxSkew\":1,\"topologyKey\":\"kubernetes.io/hostname\"}],\"volumes\":[{\"name\":\"creds\",\"secret\":{\"secretName\":\"db-creds\"}}]}"},
+		{"spec.template.spec.containers[*].env", "{\"name\":\"DB_USER\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"user\",\"name\":\"db\"}}} {\"name\":\"MODE\",\"valueFrom\":{\"configMapKeyRef\":{\"key\":\"mode\",\"name\":\"cfg\"}}} API_TOKEN=[redacted]"},
+		{"spec.template.spec.volumes", "{\"name\":\"creds\",\"secret\":{\"secretName\":\"db-creds\"}}"},
+		{"spec.template.spec.tolerations", "[{\"effect\":\"NoSchedule\",\"key\":\"node-role\",\"operator\":\"Equal\",\"value\":\"infra\"}]"},
+		{"spec.template.spec.topologySpreadConstraints", "[{\"maxSkew\":1,\"topologyKey\":\"kubernetes.io/hostname\"}]"},
+		{"spec.template.spec.automountServiceAccountToken", "false"},
+	} {
+		got, err := ExtractField(guardTemplate("tok-1"), tc.path)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: got %q, %v; want %q", tc.path, got, err, tc.want)
+		}
+	}
+	if got, want := diffTemplates(guardTemplate("tok-1"), guardTemplate("tok-2")), "- \"value\": \"[redacted]\"\n+ \"value\": \"[redacted, changed]\""; got != want {
+		t.Errorf("diff: got %q; want %q", got, want)
 	}
 }

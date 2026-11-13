@@ -58,11 +58,34 @@ no value and are shown as they are. The annotation
 `kubectl.kubernetes.io/last-applied-configuration`, which holds the applied
 spec as a JSON string, is parsed and redacted by the same rules, then written
 out again as compact JSON; if its value is not valid JSON it is replaced whole
-with `[redacted]`. Nothing else is redacted: a credential under an ordinary
-name, after a flag in a separate argument (`--password`, `hunter2`), in a
-URL's user info or path, in a JSON log line, in JSON inside any other
-annotation or string, or in a metric label reaches the report unchanged, so
-scope what the entries read accordingly.
+with `[redacted]`. Three more places are redacted, by what the object is, not
+by its field names (#43). In a ConfigMap (any `kind: ConfigMap`, at any depth,
+any case, any apiVersion), a value under `data` or `binaryData` whose key
+matches the word list is hidden. In a Secret (any `kind: Secret`, likewise,
+and the items of a `SecretList`), every value under `data` and `stringData` is
+hidden whatever its key is called, since `data` is only base64; a Secret
+inside a `kind: List`, or inside the last-applied annotation, is found the
+same way. In the `annotations` of any `metadata`, a value whose key matches
+the word list (`checksum/secret`) is hidden, even when the value is only a
+reference (`nginx.ingress.kubernetes.io/auth-secret`). A hidden value shows
+`[redacted]` whatever its type, except that `null` stays `null`; the keys
+stay, and a path that ends on one value (`data.DB_PASSWORD`) shows the
+marker. Labels are not redacted: a label is also printed in selectors, so
+hiding it in one place would protect nothing. Other fields are not judged by
+their names, so Kubernetes reference fields such as `secretKeyRef`,
+`secretName`, `topologyKey` and a toleration's `key` are shown as they are.
+
+Nothing else is redacted, and it reaches the report unchanged: a credential in
+a field of a custom resource or in free-form values (Helm values, an OpenShift
+Route's `tls.key`); header and query values in Istio routing and policy
+objects (an AuthorizationPolicy `when` value, a VirtualService header match, a
+header `set` or `add`, `queryParams`), including an `authorization` or
+`cookie` header; a ConfigMap value whose key is not on the word list (`dsn`,
+`connection`); a SecretList or ConfigMapList item without a kind, in a shape
+the API does not produce; key names; free text with no `NAME=value` form; a credential
+after a flag in a separate argument (`--password`, `hunter2`), in a URL's user
+info or path, in a JSON log line, in JSON inside any other annotation or
+string, or in a metric label. Scope what the entries read accordingly.
 
 ## meshmedic-prove is different, on purpose
 
