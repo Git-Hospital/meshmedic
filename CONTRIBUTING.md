@@ -23,7 +23,9 @@ understand what the bar is.
 **1. Write the entry.** Plain YAML in [`catalog/`](catalog/). Copy the closest
 existing one; the fields are documented in
 [`pkg/catalog/types.go`](pkg/catalog/types.go). Every entry needs a signal, a
-rollback note, and guardrails. `report-only` is the right action whenever the
+rollback note, and guardrails. `validate` also rejects an entry with no
+`description` or `rollback`, or a `severity` other than `critical` or
+`warning`. `report-only` is the right action whenever the
 correct fix depends on intent rather than mechanics.
 
 **2. Check its metrics exist.**
