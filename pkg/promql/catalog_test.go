@@ -20,6 +20,7 @@ type catalogQuery struct {
 var representativeParams = map[string]string{
 	"service": "payments", "namespace": "demo", "workload": "payments-v2",
 	"subset": "v2", "stable_subset": "v1", "ingress_workload": "ingress-istio",
+	"waypoint_rps_per_pod": "100",
 }
 
 // catalogQueries renders every signal, evidence and anomaly query in the

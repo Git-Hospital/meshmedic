@@ -131,13 +131,13 @@ for the report, guardrails, and a rollback note. Entries that carry a
 mesh-native patch propose it; entries where the right fix depends on intent
 are `report-only` and deliver an evidence dossier instead of a guess.
 
-Sixteen of them have been demonstrated end to end on a live cluster: the fault
+Seventeen of them have been demonstrated end to end on a live cluster: the fault
 injected, a real detector watching, and the entry asserted to fire within its
 own hold duration, name the actual culprit, keep its declared neighbours quiet,
 and clear when the fault is removed. The runs are kept in
-[`demo/proof-reports/`](demo/proof-reports/). The remaining two are declared
+[`demo/proof-reports/`](demo/proof-reports/). The remaining one is declared
 unprovable on this testbed in [`proof/UNPROVABLE.yaml`](proof/UNPROVABLE.yaml),
-each with the measurement behind the claim, so nothing is silently unverified.
+with the measurement behind the claim, so nothing is silently unverified.
 Entries that were retired, and what was measured to justify retiring them, are
 in [`catalog/RETIRED.md`](catalog/RETIRED.md).
 
@@ -159,7 +159,7 @@ in [`catalog/RETIRED.md`](catalog/RETIRED.md).
 | `rate-limit-throttling` | traffic rejected with 429/RL by a rate limit | report-only, lists the EnvoyFilters |
 | `external-authz-denial` | traffic denied by an external authz service (403/UAEX) | report-only, lists the EnvoyFilters |
 | `fault-injection-left-in-production` | a fault-injection rule left enabled (FI) | report-only |
-| `waypoint-overload-scale` | ambient waypoint saturated | scale the waypoint deployment |
+| `waypoint-overload-scale` | ambient waypoint past the per-pod capacity its target states (`waypoint_rps_per_pod`) | scale the waypoint deployment |
 | `traffic-vanished-triage` | traffic to a service stopped (client-side) | report-only dossier |
 
 Signals are labeled, so the report names the offending workload rather than

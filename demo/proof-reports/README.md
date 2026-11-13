@@ -24,7 +24,7 @@ $ meshmedic-prove --entry <id> --yes-inject-faults --out demo/proof-reports
 
 ## Runs
 
-Sixteen entries, each injected on the live testbed (kind + Istio 1.24.1) with a
+Seventeen entries, each injected on the live testbed (kind + Istio 1.24.1) with a
 real detector watching. Every row is a full pass: fired inside its own hold
 duration, named the culprit, kept its declared neighbours quiet, and cleared
 when the fault was removed.
@@ -47,6 +47,7 @@ when the fault was removed.
 | `upstream-host-ejection-flood` | 1m7s | `payments` with no reachable endpoints | 2m12s |
 | `no-route-blackhole` | 1m4s | `loadgen`, the black-holed caller | 1m45s |
 | `connection-pool-overflow` | 1m4s | `payments` shedding load at the pool limit | 1m56s |
+| `waypoint-overload-scale` | 2m21s | the `waypoint` deployment at 55.58 requests per pod, against the 40 its target states | 1m34s |
 
 `latency-regression-vs-baseline` is the one worth reading in full. It fired at
 993.7ms against a threshold of 590.8, which is three times the 196.9ms it had

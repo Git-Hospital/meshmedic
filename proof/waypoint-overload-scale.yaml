@@ -1,22 +1,20 @@
 entry: waypoint-overload-scale
 summary: >
-  A baseline is warmed on the demo's normal traffic, then the background
-  loadgen is scaled from one replica to eight, so the waypoint's per-replica
-  request rate climbs to several times its learned normal. The static 1000
-  is eighty times the testbed's normal and out of reach on one kind node;
-  the relative threshold is the reason this entry can be proven at all.
+  The background loadgen is scaled from one replica to eight, so the
+  waypoint's single pod carries several times the testbed's normal of about
+  15 requests per second. The target states this testbed's capacity as 40
+  requests per second per waypoint pod: healthy traffic sits near 0.4 of it,
+  the fault near 2. The number is a statement about this kind node, not a
+  recommendation; a real cluster states its own.
 
   The target's workload is the waypoint deployment, because the signal
-  divides by its ready pods. The demo's shared target names payments-v2,
-  which divides by the canary's pods instead; on the testbed both have one
-  pod, so the numbers agree until either is scaled.
+  divides by its ready pods. A target without waypoint_rps_per_pod, such as
+  the demo's payments-v2 one, does not evaluate the entry.
 target:
   service: payments
   namespace: demo
   workload: waypoint
-# Long enough to pass the entry's baselineMinSamples at the default poll, so
-# the detector trusts the learned normal instead of falling back to 1000.
-warmup: 6m
+  waypoint_rps_per_pod: "40"
 inject:
   - desc: eight times the background traffic through the waypoint
     run: [kubectl, --context=kind-meshmedic-demo, -n, demo, scale, deploy/loadgen, --replicas=8]
@@ -25,8 +23,8 @@ reset:
   - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, scale, deploy/loadgen, --replicas=1]
   - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/loadgen, --timeout=180s]
 settle: 60s
-firesWithin: 7m
-resolvesWithin: 7m
+firesWithin: 6m
+resolvesWithin: 6m
 expect:
   names:
     - waypoint

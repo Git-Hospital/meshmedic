@@ -6,26 +6,34 @@ description: >
   waypoint proxies. When per-replica request rate climbs past what one Envoy
   instance comfortably handles, latency rises across every service behind it
   at once, which looks confusingly like an application problem. Scaling the
-  waypoint deployment restores headroom. The threshold is relative: once
-  the baseline has warmed up on healthy traffic, the signal fires at
-  baselineMultiplier times this cluster's own per-replica rate, because how
-  much one waypoint handles depends on its node and its traffic, and no one
-  number is right for every cluster. Until then the static threshold applies,
-  so a cold start never fires on noise. Experimental: Gateway-managed
-  waypoints are often scaled by HPA; this entry targets deployments where the
-  replica count lives in the config repo. The target's workload is the
-  waypoint deployment, not an application.
+  waypoint deployment restores headroom. How many requests one waypoint pod
+  handles depends on its node, its limits and its traffic, so no number in
+  the catalog is right for every cluster: the target states it as the
+  parameter waypoint_rps_per_pod, and the signal is the per-replica rate as a
+  share of it, firing above 1. A target without that parameter does not
+  evaluate this entry. A learned baseline does not work here: an idle
+  namespace learns 0, and scaling the waypoint moves the per-replica normal.
+  Experimental: Gateway-managed waypoints are often scaled by HPA; this entry
+  targets deployments where the replica count lives in the config repo. The
+  target's workload is the waypoint deployment, not an application.
 signal:
   promql: >
     sum(rate(istio_requests_total{reporter="waypoint", destination_service_namespace="{{.namespace}}"}[2m]))
     /
     count(kube_pod_status_ready{namespace="{{.namespace}}", pod=~"{{.workload}}-.*", condition="true"})
+    /
+    {{.waypoint_rps_per_pod}}
   comparison: ">"
-  threshold: 1000
+  threshold: 1
   for: 120s
-  baselineMultiplier: 3
-  baselineMinSamples: 20
 evidence:
+  # The per-replica rate itself, so the report shows the requests behind the
+  # share the signal fires on.
+  - name: requests-per-waypoint-pod
+    promql: >
+      sum(rate(istio_requests_total{reporter="waypoint", destination_service_namespace="{{.namespace}}"}[2m]))
+      /
+      count(kube_pod_status_ready{namespace="{{.namespace}}", pod=~"{{.workload}}-.*", condition="true"})
   - name: waypoint-cpu
     promql: >
       sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="{{.namespace}}", pod=~"{{.workload}}-.*"}[2m]))
