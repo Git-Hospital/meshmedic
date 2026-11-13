@@ -7,18 +7,18 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **Everything under a secret-like map key, and everything in a Secret's data,
-  is now redacted.** Redaction used to look only at env entries and `NAME=value`
-  text, so a catalog path that reads a ConfigMap, a Secret, an
-  AuthorizationPolicy or a VirtualService could show `data: {DB_PASSWORD: ...}`
-  or a header match on `x-api-key` as it is. Now every plain value beneath a
-  key containing PASSWORD, PASSWD, SECRET, TOKEN, KEY, CREDENTIAL or CERT shows
-  `[redacted]`, at any depth. A field called `key` is a name and stays readable;
-  when it is secret-like (`request.headers[x-api-token]`) the `value`, `values`
-  and `notValues` beside it are hidden. For a core Secret (`kind: Secret`,
-  `apiVersion: v1`) every value under `data` and `stringData` is hidden, whatever
-  its key. A changed value in a diff reads `[redacted, changed]`. SECURITY.md
-  lists what stays unredacted. (closes #43)
+- **ConfigMap and Secret data, and secret-like annotations and labels, are now
+  redacted.** Redaction used to look only at env entries and `NAME=value`
+  text, so a catalog path that reads a ConfigMap or a Secret would have shown
+  `data: {DB_PASSWORD: ...}` as it is. Now, in a ConfigMap, a value under
+  `data` or `binaryData` whose key contains PASSWORD, PASSWD, SECRET, TOKEN,
+  KEY, CREDENTIAL or CERT shows `[redacted]`; in a Secret every value under
+  `data` and `stringData` does, whatever its key; and in the annotations and
+  labels of any metadata a value with such a key does. Kubernetes reference
+  fields such as `secretKeyRef` and `secretName` are shown as before. A changed
+  value in a diff reads `[redacted, changed]`. No catalog entry that ships with
+  meshmedic reads a ConfigMap or a Secret; SECURITY.md lists what stays shown,
+  including header values in Istio objects. (closes #43)
 
 - **Released binaries are now built with Go 1.26.** The release and archive
   workflows took their toolchain from `go.mod`, so binaries were compiled with

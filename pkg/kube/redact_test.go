@@ -2,6 +2,7 @@ package kube
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -389,101 +390,123 @@ func marshalRedacted(t *testing.T, v any) string {
 	return string(b)
 }
 
-// A secret-like key hides its value, and everything beneath it, in any map, not only in an env entry (#43). Ordinary keys,
-// and the key names themselves, stay readable.
-func TestRedactSecretLikeMapKeys(t *testing.T) {
-	cm := func(data map[string]any) map[string]any {
-		return map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "data": data}
-	}
-	tests := []struct {
-		name  string
-		obj   map[string]any
-		leaks []string
-		wants []string
-	}{
-		{"plain key", cm(map[string]any{"DB_PASSWORD": "fake-pw-1", "host": "db.local"}),
-			[]string{"fake-pw-1"}, []string{`"DB_PASSWORD":"[redacted]"`, `"host":"db.local"`}},
-		{"lower and mixed case", cm(map[string]any{"api_token": "fake-t-1", "ApiKey": "fake-k-1", "tls.cert": "fake-c-1"}),
-			[]string{"fake-t-1", "fake-k-1", "fake-c-1"}, []string{`"api_token":"[redacted]"`, `"ApiKey":"[redacted]"`, `"tls.cert":"[redacted]"`}},
-		{"nested map", cm(map[string]any{"db": map[string]any{"user": "app", "password": "fake-pw-2"}}),
-			[]string{"fake-pw-2"}, []string{`"user":"app"`, `"password":"[redacted]"`}},
-		{"list of maps", map[string]any{"items": []any{
-			map[string]any{"name": "a", "secret": "fake-s-1"},
-			map[string]any{"name": "b", "replicas": 3.0},
-		}}, []string{"fake-s-1"}, []string{`"secret":"[redacted]"`, `"replicas":3`, `"name":"b"`}},
-		{"number and bool", cm(map[string]any{"pin_token": 4711.0, "key_enabled": true}),
-			[]string{"4711", "true"}, []string{`"pin_token":"[redacted]"`, `"key_enabled":"[redacted]"`}},
-		{"everything under a secret-like key is hidden, inner keys stay", cm(map[string]any{"credentials": map[string]any{"user": "fake-u", "deep": map[string]any{"password": "fake-pw-3"}}}),
-			[]string{"fake-u", "fake-pw-3"}, []string{`"user":"[redacted]"`, `"deep":{"password":"[redacted]"}`}},
-		{"list of plain values hides its length", cm(map[string]any{"tokens": []any{"fake-a", "fake-b"}}),
-			[]string{"fake-a", "fake-b"}, []string{`"tokens":"[redacted]"`}},
-		{"list of objects keeps its shape, leaves hidden", cm(map[string]any{"secrets": []any{map[string]any{"name": "regcred"}}}),
-			[]string{"regcred"}, []string{`"secrets":[{"name":"[redacted]"}]`}},
-		{"null stays null", cm(map[string]any{"password": nil}), nil, []string{`"password":null`}},
-		{"ordinary config is untouched", cm(map[string]any{"replicas": 3.0, "host": "h", "name": "n", "mode": "fast"}),
-			nil, []string{`"replicas":3`, `"host":"h"`, `"name":"n"`, `"mode":"fast"`}},
-	}
-	for _, tc := range tests {
-		got := marshalRedacted(t, tc.obj)
-		for _, l := range tc.leaks {
-			if strings.Contains(got, l) {
-				t.Errorf("%s: leaks %q: %s", tc.name, l, got)
-			}
+func checkRedacted(t *testing.T, name string, got string, leaks, wants []string) {
+	t.Helper()
+	for _, l := range leaks {
+		if strings.Contains(got, l) {
+			t.Errorf("%s: leaks %q: %s", name, l, got)
 		}
-		for _, w := range tc.wants {
-			if !strings.Contains(got, w) {
-				t.Errorf("%s: missing %q: %s", tc.name, w, got)
-			}
+	}
+	for _, w := range wants {
+		if !strings.Contains(got, w) {
+			t.Errorf("%s: missing %q: %s", name, w, got)
 		}
 	}
 }
 
-// Every value under a core Secret's data and stringData is hidden, whatever its key is called;
-// only a Secret with apiVersion v1 is recognised, and other kinds keep an innocent key readable.
+// In a ConfigMap, a value under data or binaryData whose key is secret-like is hidden, whatever
+// its type; other keys stay readable. kind is compared without case and whatever the apiVersion is
+// (#43).
+func TestRedactConfigMapData(t *testing.T) {
+	cm := func(kind, apiVersion string) map[string]any {
+		o := map[string]any{"kind": kind,
+			"data":       map[string]any{"DB_PASSWORD": "fake-pw-1", "api_token": "fake-t-1", "pin_key": 4711.0, "tls.cert": map[string]any{"x": "fake-n"}, "gone_secret": nil, "host": "db.local", "replicas": "3"},
+			"binaryData": map[string]any{"signing-key": "ZmFrZS1rZXk=", "logo": "ZmFrZS1sb2dv"}}
+		if apiVersion != "" {
+			o["apiVersion"] = apiVersion
+		}
+		return o
+	}
+	for _, o := range []map[string]any{cm("ConfigMap", "v1"), cm("configmap", "v1"), cm("CONFIGMAP", ""), cm("ConfigMap", "example.io/v9")} {
+		got := marshalRedacted(t, o)
+		checkRedacted(t, fmt.Sprint(o["kind"], o["apiVersion"]), got,
+			[]string{"fake-pw-1", "fake-t-1", "4711", "fake-n", "ZmFrZS1rZXk="},
+			[]string{`"DB_PASSWORD":"[redacted]"`, `"api_token":"[redacted]"`, `"pin_key":"[redacted]"`, `"tls.cert":"[redacted]"`, `"gone_secret":null`,
+				`"signing-key":"[redacted]"`, `"host":"db.local"`, `"replicas":"3"`, `"logo":"ZmFrZS1sb2dv"`})
+	}
+	// Another kind with the same shape is not a ConfigMap: no rule on its keys.
+	got := marshalRedacted(t, map[string]any{"kind": "Widget", "data": map[string]any{"DB_PASSWORD": "fake-pw-1"}})
+	checkRedacted(t, "other kind", got, nil, []string{"fake-pw-1"})
+}
+
+// In a Secret every value under data and stringData is hidden, whatever its key; kind is compared
+// without case and whatever the apiVersion is, at any depth.
 func TestRedactSecretData(t *testing.T) {
 	secret := func(kind, apiVersion string) map[string]any {
-		return map[string]any{
-			"apiVersion": apiVersion, "kind": kind,
-			"metadata":   map[string]any{"name": "creds", "namespace": "app"},
-			"type":       "Opaque",
+		o := map[string]any{"kind": kind, "metadata": map[string]any{"name": "creds", "namespace": "app"}, "type": "Opaque",
 			"data":       map[string]any{"username": "ZmFrZS11c2Vy", "config": "ZmFrZS1jZmc=", "n": 7.0, "m": map[string]any{"x": "fake-nested"}, "gone": nil},
-			"stringData": map[string]any{"dsn": "postgres://fake-dsn", "plain": "fake-plain"},
+			"stringData": map[string]any{"dsn": "postgres://fake-dsn", "plain": "fake-plain"}}
+		if apiVersion != "" {
+			o["apiVersion"] = apiVersion
 		}
+		return o
 	}
-	got := marshalRedacted(t, secret("Secret", "v1"))
-	for _, leak := range []string{"ZmFrZS11c2Vy", "ZmFrZS1jZmc=", "fake-nested", "postgres://fake-dsn", "fake-plain", ":7"} {
-		if strings.Contains(got, leak) {
-			t.Errorf("Secret leaks %q: %s", leak, got)
-		}
+	leaks := []string{"ZmFrZS11c2Vy", "ZmFrZS1jZmc=", "fake-nested", "postgres://fake-dsn", "fake-plain", ":7"}
+	wants := []string{`"username":"[redacted]"`, `"dsn":"[redacted]"`, `"m":"[redacted]"`, `"gone":null`, `"type":"Opaque"`, `"name":"creds"`}
+	for _, o := range []map[string]any{secret("Secret", "v1"), secret("secret", "v1"), secret("Secret", "example.io/v2"), secret("Secret", "")} {
+		checkRedacted(t, fmt.Sprint(o["kind"], o["apiVersion"]), marshalRedacted(t, o), leaks, wants)
 	}
-	for _, want := range []string{`"username":"[redacted]"`, `"dsn":"[redacted]"`, `"m":"[redacted]"`, `"gone":null`, `"type":"Opaque"`, `"name":"creds"`} {
-		if !strings.Contains(got, want) {
-			t.Errorf("Secret output missing %q: %s", want, got)
-		}
+	// Inside a kubectl List, at any depth.
+	list := map[string]any{"kind": "List", "items": []any{secret("Secret", "v1")}}
+	checkRedacted(t, "List", marshalRedacted(t, list), leaks, wants)
+	// A SecretList or ConfigMapList item that carries no kind is read as the list's kind.
+	noKind := secret("", "")
+	delete(noKind, "kind")
+	checkRedacted(t, "SecretList", marshalRedacted(t, map[string]any{"kind": "SecretList", "items": []any{noKind}}), leaks, wants)
+	cmItem := map[string]any{"data": map[string]any{"DB_PASSWORD": "fake-pw-1", "host": "db.local"}}
+	got := marshalRedacted(t, map[string]any{"kind": "ConfigMapList", "items": []any{cmItem}})
+	checkRedacted(t, "ConfigMapList", got, []string{"fake-pw-1"}, []string{`"host":"db.local"`})
+	// The item is shown as it came: only the list's own kind appears.
+	if strings.Count(marshalRedacted(t, map[string]any{"kind": "SecretList", "items": []any{noKind}}), `"kind"`) != 1 {
+		t.Error("an item without a kind gained one")
 	}
-	// A Secret inside a List is recognised by its own kind.
-	list := marshalRedacted(t, map[string]any{"kind": "List", "items": []any{secret("Secret", "v1")}})
-	if strings.Contains(list, "ZmFrZS11c2Vy") {
-		t.Errorf("Secret in a List leaks: %s", list)
-	}
-	// Not a core Secret: innocent keys are shown as they are.
-	for _, other := range []map[string]any{secret("ConfigMap", "v1"), secret("Secret", "example.io/v1"), secret("Secret", "")} {
-		out := marshalRedacted(t, other)
-		if !strings.Contains(out, "ZmFrZS11c2Vy") || !strings.Contains(out, "fake-plain") {
-			t.Errorf("%v/%v over-redacted: %s", other["kind"], other["apiVersion"], out)
-		}
-	}
+	// Another kind with the same shape is not a Secret.
+	checkRedacted(t, "other kind", marshalRedacted(t, secret("Widget", "v1")), nil, []string{"fake-plain"})
 	// data that is not an object is replaced whole.
-	odd := marshalRedacted(t, map[string]any{"apiVersion": "v1", "kind": "Secret", "data": "ZmFrZQ=="})
-	if strings.Contains(odd, "ZmFrZQ==") || !strings.Contains(odd, `"data":"[redacted]"`) {
-		t.Errorf("non-object data: %s", odd)
+	odd := marshalRedacted(t, map[string]any{"kind": "Secret", "data": "ZmFrZQ=="})
+	checkRedacted(t, "string data", odd, []string{"ZmFrZQ=="}, []string{`"data":"[redacted]"`})
+}
+
+// A Secret whose last-applied annotation holds its data: the annotation is parsed, and its kind
+// is checked like any other object's.
+func TestRedactSecretInLastApplied(t *testing.T) {
+	inner := `{"kind":"Secret","apiVersion":"v1","data":{"username":"ZmFrZS11c2Vy"},"metadata":{"name":"s"}}`
+	obj := map[string]any{"kind": "Secret", "apiVersion": "v1", "metadata": map[string]any{"name": "s", "annotations": map[string]any{lastAppliedKey: inner}}}
+	got, err := ExtractField(obj, "metadata.annotations")
+	if err != nil {
+		t.Fatal(err)
 	}
+	checkRedacted(t, "last-applied", got, []string{"ZmFrZS11c2Vy"}, []string{`\"username\":\"[redacted]\"`})
+	// and in a Deployment's annotation, not itself a Secret
+	dep := deploymentWithAnnotation(inner)
+	got, err = ExtractField(dep, "metadata.annotations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkRedacted(t, "last-applied in a Deployment", got, []string{"ZmFrZS11c2Vy"}, nil)
+}
+
+// In annotations and labels of a metadata object, at any depth, a value whose key is secret-like
+// is hidden. Other keys are readable, and so are annotation-like maps elsewhere.
+func TestRedactMetadataAnnotationsAndLabels(t *testing.T) {
+	dep := map[string]any{"kind": "Deployment", "metadata": map[string]any{"name": "web",
+		"annotations": map[string]any{"checksum/secret": "fake-sum", "sidecar.istio.io/userVolume": "[{\"name\":\"v\"}]"},
+		"labels":      map[string]any{"vendor-key": "fake-k", "app": "web"}},
+		"spec": map[string]any{"template": map[string]any{"metadata": map[string]any{
+			"annotations": map[string]any{"checksum/secret": "fake-sum-2", "n": 5.0, "cert-hash": 9.0}},
+			"spec": map[string]any{"containers": []any{}}}}}
+	got := marshalRedacted(t, dep)
+	checkRedacted(t, "deployment", got, []string{"fake-sum", "fake-sum-2", "fake-k", ":9"},
+		[]string{`"checksum/secret":"[redacted]"`, `"vendor-key":"[redacted]"`, `"cert-hash":"[redacted]"`, `"app":"web"`, `"n":5`, `sidecar.istio.io/userVolume":"[{\"name\":\"v\"}]"`})
+	// Not under metadata: no rule.
+	got = marshalRedacted(t, map[string]any{"spec": map[string]any{"labels": map[string]any{"api_key": "fake-k"}, "annotations": map[string]any{"token": "fake-t"}}})
+	checkRedacted(t, "not metadata", got, nil, []string{"fake-k", "fake-t"})
 }
 
 // A catalog path that points at one value, or at the data object, goes through the same rules.
-func TestExtractFieldRedactsMapKeysAndSecretData(t *testing.T) {
-	cm := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "data": map[string]any{"DB_PASSWORD": "fake-pw", "host": "db"}}
-	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "data": map[string]any{"username": "ZmFrZQ==", "host": "aG9zdA=="}}
+func TestExtractFieldRedactsDataPaths(t *testing.T) {
+	cm := map[string]any{"kind": "ConfigMap", "data": map[string]any{"DB_PASSWORD": "fake-pw", "host": "db"}}
+	secret := map[string]any{"kind": "Secret", "data": map[string]any{"username": "ZmFrZQ==", "host": "aG9zdA=="}}
 	for _, tc := range []struct {
 		obj  map[string]any
 		path string
@@ -506,131 +529,69 @@ func TestExtractFieldRedactsMapKeysAndSecretData(t *testing.T) {
 	}
 }
 
-// A redacted map value or Secret value that changed still reads as changed, and no template
-// that differs ever prints as no change.
-func TestDiffTemplatesMarksChangedMapKeysAndSecretData(t *testing.T) {
-	obj := func(pw, key, host string) map[string]any {
-		return map[string]any{"kind": "Secret", "apiVersion": "v1",
-			"metadata":   map[string]any{"name": "s", "namespace": "n"},
-			"data":       map[string]any{"user": key},
-			"stringData": map[string]any{"host": host},
-			"auth":       map[string]any{"password": pw}}
-	}
-	got := diffTemplates(obj("fake-pw-old", "fake-u-old", "same"), obj("fake-pw-new", "fake-u-new", "same"))
-	for _, leak := range []string{"fake-pw-old", "fake-pw-new", "fake-u-old", "fake-u-new", `"same"`} {
-		if strings.Contains(got, leak) {
-			t.Errorf("diff leaks %q: %s", leak, got)
+// A hidden value that changed reads as changed; identical templates never do, even when two
+// sibling objects carry the same key.
+func TestDiffTemplatesHiddenValuesChanged(t *testing.T) {
+	obj := func(sumA, sumB, pw string) map[string]any {
+		item := func(name, sum string) map[string]any {
+			return map[string]any{"metadata": map[string]any{"annotations": map[string]any{"checksum/secret": sum}}}
 		}
+		return map[string]any{"items": []any{item("a", sumA), item("b", sumB)},
+			"spec": map[string]any{"template": map[string]any{"metadata": map[string]any{"annotations": map[string]any{"checksum/secret": sumA}}}},
+			"cm":   map[string]any{"kind": "ConfigMap", "metadata": map[string]any{"name": "c", "namespace": "n"}, "data": map[string]any{"DB_PASSWORD": pw}},
+			"sec":  map[string]any{"kind": "Secret", "metadata": map[string]any{"name": "s", "namespace": "n"}, "data": map[string]any{"u": pw}}}
 	}
-	for _, want := range []string{`"password": "[redacted, changed]"`, `"user": "[redacted, changed]"`} {
-		if !strings.Contains(got, want) {
-			t.Errorf("diff missing %q: %s", want, got)
-		}
+	if got := diffTemplates(obj("one", "two", "p"), obj("one", "two", "p")); strings.Contains(got, "changed") {
+		t.Errorf("identical templates: %s", got)
 	}
-	if strings.Contains(got, `"host": "[redacted, changed]"`) {
-		t.Errorf("unchanged Secret value marked changed: %s", got)
+	got := diffTemplates(obj("one", "two", "p"), obj("one", "two", "q"))
+	if strings.Contains(got, "one") || strings.Contains(got, `"q"`) || strings.Count(got, "[redacted, changed]") != 2 {
+		t.Errorf("changed Secret and ConfigMap values: %s", got)
+	}
+	got = diffTemplates(obj("one", "two", "p"), obj("ONE", "two", "p"))
+	if strings.Contains(got, "ONE") || !strings.Contains(got, "[redacted, changed]") {
+		t.Errorf("changed checksum/secret: %s", got)
+	}
+	// Only the second sibling changes: exactly one marker, so the siblings are not compared
+	// with each other.
+	got = diffTemplates(obj("one", "two", "p"), obj("one", "TWO", "p"))
+	if strings.Count(got, "[redacted, changed]") != 1 {
+		t.Errorf("one changed sibling: %s", got)
 	}
 }
 
-func listOf(kind string, items ...map[string]any) map[string]any {
-	l := make([]any, len(items))
-	for i, it := range items {
-		l[i] = it
-	}
-	return map[string]any{"apiVersion": "v1", "kind": kind + "List", "items": l}
+func guardTemplate(token string) map[string]any {
+	return map[string]any{"kind": "Deployment", "apiVersion": "apps/v1", "spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+		"automountServiceAccountToken": false,
+		"tolerations":                  []any{map[string]any{"key": "node-role", "operator": "Equal", "value": "infra", "effect": "NoSchedule"}},
+		"topologySpreadConstraints":    []any{map[string]any{"topologyKey": "kubernetes.io/hostname", "maxSkew": 1.0}},
+		"volumes":                      []any{map[string]any{"name": "creds", "secret": map[string]any{"secretName": "db-creds"}}},
+		"containers": []any{map[string]any{"name": "app", "image": "app:1", "env": []any{
+			map[string]any{"name": "DB_USER", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "db", "key": "user"}}},
+			map[string]any{"name": "MODE", "valueFrom": map[string]any{"configMapKeyRef": map[string]any{"name": "cfg", "key": "mode"}}},
+			map[string]any{"name": "API_TOKEN", "value": token},
+		}}},
+	}}}}
 }
 
-// A field called key with a string value is a name: readable. When the name is secret-like, the
-// value, values and notValues beside it are hidden; otherwise nothing in the map changes (#43).
-func TestRedactKeyNames(t *testing.T) {
-	cmWith := func(entries map[string]any) map[string]any {
-		return map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "data": entries}
-	}
-	tests := []struct {
-		name  string
-		obj   any
-		leaks []string
-		wants []string
-	}{
-		{"condition with a secret-like name", map[string]any{"when": []any{map[string]any{"key": "request.headers[x-api-token]", "values": []any{"abc123"}, "notValues": []any{"def456"}}}},
-			[]string{"abc123", "def456"}, []string{`"key":"request.headers[x-api-token]"`, `"values":"[redacted]"`, `"notValues":"[redacted]"`}},
-		{"condition with an innocent name", map[string]any{"when": []any{map[string]any{"key": "request.headers[x-env]", "values": []any{"prod"}, "notValues": []any{"dev"}}}},
-			nil, []string{`"key":"request.headers[x-env]"`, `"values":["prod"]`, `"notValues":["dev"]`}},
-		{"single value beside a secret-like name", map[string]any{"key": "API_TOKEN", "value": "abc123"},
-			[]string{"abc123"}, []string{`"key":"API_TOKEN"`, `"value":"[redacted]"`}},
-		{"toleration", map[string]any{"tolerations": []any{map[string]any{"key": "node-role", "operator": "Equal", "value": "infra", "effect": "NoSchedule"}}},
-			nil, []string{`"key":"node-role"`, `"value":"infra"`, `"effect":"NoSchedule"`}},
-		{"matchExpressions", map[string]any{"matchExpressions": []any{map[string]any{"key": "app", "operator": "In", "values": []any{"web", "api"}}}},
-			nil, []string{`"key":"app"`, `"values":["web","api"]`}},
-		{"secretKeyRef leaves hidden, inner keys visible", map[string]any{"valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "db-creds", "key": "password"}}},
-			[]string{"db-creds", `"password"`}, []string{`"secretKeyRef":{"key":"[redacted]","name":"[redacted]"}`}},
-		{"VirtualService header with a secret-like name", map[string]any{"match": []any{map[string]any{"headers": map[string]any{"x-api-key": map[string]any{"exact": "abc123"}, "x-env": map[string]any{"exact": "prod"}}}}},
-			[]string{"abc123"}, []string{`"x-api-key":{"exact":"[redacted]"}`, `"x-env":{"exact":"prod"}`}},
-		{"ConfigMap data entry called key is hidden", cmWith(map[string]any{"key": "s3cret", "other": "fine"}),
-			[]string{"s3cret"}, []string{`"key":"[redacted]"`, `"other":"fine"`}},
-		{"ConfigMap data entry called key does not hide its siblings by R3", cmWith(map[string]any{"key": "node-role", "value": "infra"}),
-			[]string{"node-role"}, []string{`"value":"infra"`}},
-		{"Secret data entry called key is hidden", map[string]any{"apiVersion": "v1", "kind": "Secret", "data": map[string]any{"key": "s3cret"}},
-			[]string{"s3cret"}, []string{`"key":"[redacted]"`}},
-	}
-	for _, tc := range tests {
-		got := marshalRedacted(t, tc.obj)
-		for _, l := range tc.leaks {
-			if strings.Contains(got, l) {
-				t.Errorf("%s: leaks %q: %s", tc.name, l, got)
-			}
-		}
-		for _, w := range tc.wants {
-			if !strings.Contains(got, w) {
-				t.Errorf("%s: missing %q: %s", tc.name, w, got)
-			}
+// Kubernetes reference fields (secretKeyRef, configMapKeyRef, secretName, topologyKey, a
+// toleration's key, automountServiceAccountToken) render as they did before any map-key rule. The
+// expected strings were produced by running origin/main's code (e2ec1f3) on this same template.
+func TestRegressionGuardReferenceFieldsStayReadable(t *testing.T) {
+	for _, tc := range []struct{ path, want string }{
+		{"spec.template.spec", "{\"automountServiceAccountToken\":false,\"containers\":[{\"env\":[{\"name\":\"DB_USER\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"user\",\"name\":\"db\"}}},{\"name\":\"MODE\",\"valueFrom\":{\"configMapKeyRef\":{\"key\":\"mode\",\"name\":\"cfg\"}}},{\"name\":\"API_TOKEN\",\"value\":\"[redacted]\"}],\"image\":\"app:1\",\"name\":\"app\"}],\"tolerations\":[{\"effect\":\"NoSchedule\",\"key\":\"node-role\",\"operator\":\"Equal\",\"value\":\"infra\"}],\"topologySpreadConstraints\":[{\"maxSkew\":1,\"topologyKey\":\"kubernetes.io/hostname\"}],\"volumes\":[{\"name\":\"creds\",\"secret\":{\"secretName\":\"db-creds\"}}]}"},
+		{"spec.template.spec.containers[*].env", "{\"name\":\"DB_USER\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"user\",\"name\":\"db\"}}} {\"name\":\"MODE\",\"valueFrom\":{\"configMapKeyRef\":{\"key\":\"mode\",\"name\":\"cfg\"}}} API_TOKEN=[redacted]"},
+		{"spec.template.spec.volumes", "{\"name\":\"creds\",\"secret\":{\"secretName\":\"db-creds\"}}"},
+		{"spec.template.spec.tolerations", "[{\"effect\":\"NoSchedule\",\"key\":\"node-role\",\"operator\":\"Equal\",\"value\":\"infra\"}]"},
+		{"spec.template.spec.topologySpreadConstraints", "[{\"maxSkew\":1,\"topologyKey\":\"kubernetes.io/hostname\"}]"},
+		{"spec.template.spec.automountServiceAccountToken", "false"},
+	} {
+		got, err := ExtractField(guardTemplate("tok-1"), tc.path)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: got %q, %v; want %q", tc.path, got, err, tc.want)
 		}
 	}
-}
-
-// The two shapes the shipped catalog reads: authz-deny-flood (items[*].spec.rules of
-// AuthorizationPolicy) and no-route-blackhole (items[*].spec.http[*].match of VirtualService).
-func TestExtractFieldCatalogPaths(t *testing.T) {
-	authz := listOf("AuthorizationPolicy", map[string]any{"spec": map[string]any{"rules": []any{map[string]any{
-		"to": []any{map[string]any{"operation": map[string]any{"methods": []any{"GET"}}}},
-		"when": []any{
-			map[string]any{"key": "request.headers[x-api-token]", "values": []any{"abc123"}},
-			map[string]any{"key": "request.headers[x-env]", "values": []any{"prod"}},
-		}}}}})
-	vs := listOf("VirtualService", map[string]any{"spec": map[string]any{"http": []any{map[string]any{"match": []any{map[string]any{
-		"headers": map[string]any{"x-api-key": map[string]any{"exact": "abc123"}, "x-env": map[string]any{"exact": "prod"}}}}}}}})
-	got, err := ExtractField(authz, "items[*].spec.rules")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(got, "abc123") || !strings.Contains(got, `"key":"request.headers[x-api-token]"`) || !strings.Contains(got, `"values":"[redacted]"`) || !strings.Contains(got, `"values":["prod"]`) || !strings.Contains(got, `"methods":["GET"]`) {
-		t.Errorf("authz rules: %s", got)
-	}
-	got, err = ExtractField(vs, "items[*].spec.http[*].match")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(got, "abc123") || !strings.Contains(got, `"x-api-key":{"exact":"[redacted]"}`) || !strings.Contains(got, `"x-env":{"exact":"prod"}`) {
-		t.Errorf("virtualservice match: %s", got)
-	}
-}
-
-// A hidden value that changed reads as changed, for R2 (a nested value) and R3 (a sibling of a
-// secret-like key name) too.
-func TestDiffTemplatesMarksChangedHiddenValues(t *testing.T) {
-	obj := func(tok, exact string) map[string]any {
-		return map[string]any{"spec": map[string]any{
-			"when":    []any{map[string]any{"key": "request.headers[x-api-token]", "values": []any{tok}}},
-			"headers": map[string]any{"x-api-key": map[string]any{"exact": exact}},
-		}}
-	}
-	got := diffTemplates(obj("fake-t-old", "fake-e-old"), obj("fake-t-new", "fake-e-new"))
-	for _, leak := range []string{"fake-t-old", "fake-t-new", "fake-e-old", "fake-e-new"} {
-		if strings.Contains(got, leak) {
-			t.Errorf("diff leaks %q: %s", leak, got)
-		}
-	}
-	if strings.Count(got, "[redacted, changed]") < 2 {
-		t.Errorf("changed markers missing: %s", got)
+	if got, want := diffTemplates(guardTemplate("tok-1"), guardTemplate("tok-2")), "- \"value\": \"[redacted]\"\n+ \"value\": \"[redacted, changed]\""; got != want {
+		t.Errorf("diff: got %q; want %q", got, want)
 	}
 }

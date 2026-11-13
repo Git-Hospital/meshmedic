@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -68,19 +69,22 @@ func redactAll(v any) any {
 }
 
 // redactTree copies v and replaces, in every object shaped like a Kubernetes env entry (a string
-// name and a value) with a secret-like name, the value; in every map the value of a secret-like
-// key (everything beneath it) and the values beside a secret-like key name; in a core Secret (kind Secret, apiVersion v1) every value under data and stringData; and in
-// every other string the values of secret-like name=value pairs. changed is asked, with a key for the value's place in the tree
+// name and a value) with a secret-like name, the value; in a ConfigMap the values under data and
+// binaryData whose key is secret-like; in a Secret every value under data and stringData; in the
+// annotations and labels of any metadata the values whose key is secret-like (#43); and in every
+// other string the values of secret-like name=value pairs. changed is asked, with a key for the value's place in the tree
 // and the plain value, whether to mark it changed. scope names the place: the object keys on the
 // way down and the names of named objects such as containers, never list indexes.
 func redactTree(v any, scope string, changed func(key, value string) bool) any {
-	return redactNode(v, scope, changed, true)
+	return redactNode(v, scope, "", "", changed)
 }
 
-// redactNode is redactTree. nameKeys is false for the one map directly under a v1 ConfigMap's data
-// or binaryData: there every key is a name someone chose, so an entry called key is an ordinary
-// entry and the literal secret-like key rule hides it, not the key-name rule below.
-func redactNode(v any, scope string, changed func(key, value string) bool, nameKeys bool) any {
+// redactNode is redactTree with two more arguments. parent is the key this value sits under, which
+// tells annotations and labels of a metadata object from other maps. pos tells apart objects that
+// have no name of their own, in a list: the changed marker compares a hidden value with the one at
+// the same place, and without pos two sibling objects with the same key would be compared with each
+// other. pos is used only for hidden values, never for the env and text rules.
+func redactNode(v any, scope, parent, pos string, changed func(key, value string) bool) any {
 	switch t := v.(type) {
 	case map[string]any:
 		name, okName := t["name"].(string)
@@ -90,37 +94,31 @@ func redactNode(v any, scope string, changed func(key, value string) bool, nameK
 			inner = scope + "/" + name
 		}
 		out := make(map[string]any, len(t))
-		secret := isSecretObject(t)
-		configMap := t["kind"] == "ConfigMap" && t["apiVersion"] == "v1"
-		// A Kubernetes field called key with a string value is a NAME, like the name of an env entry
-		// (toleration key, matchExpressions key, secretKeyRef key, an AuthorizationPolicy condition's
-		// key such as request.headers[x-api-token]): it stays readable. When that name is
-		// secret-like, the value, values and notValues beside it are hidden entirely (#43).
-		keyName, keyIsName := t["key"].(string)
-		keyIsName = keyIsName && nameKeys
-		hideSiblings := keyIsName && secretLike(keyName)
+		kind := objectKind(t)
 		for k, e := range t {
 			if str, ok := e.(string); ok && k == lastAppliedKey {
 				out[k] = redactLastApplied(str, inner+"."+k, changed)
 				continue
 			}
-			if secret && (k == "data" || k == "stringData") {
-				out[k] = redactSecretData(e, secretID(t)+"\x00"+k, changed)
+			switch {
+			case kind == "secret" && (k == "data" || k == "stringData"):
+				// A Secret: every value, whatever its key; data is only base64, the value itself.
+				out[k] = redactEntries(e, inner+pos+"."+k, objectID(t), func(string) bool { return true }, changed)
 				continue
-			}
-			if configMap && (k == "data" || k == "binaryData") {
-				out[k] = redactNode(e, inner+"."+k, changed, false)
+			case kind == "configmap" && (k == "data" || k == "binaryData"):
+				// A ConfigMap: a person chose these keys, so a secret-like one names a credential.
+				out[k] = redactEntries(e, inner+pos+"."+k, objectID(t), secretLike, changed)
 				continue
-			}
-			if keyIsName && k == "key" {
-				out[k] = redactTree(e, inner+"."+k, changed) // text such as NAME=value is still redacted
+			case parent == "metadata" && (k == "annotations" || k == "labels"):
+				out[k] = redactEntries(e, inner+pos+"."+k, "", secretLike, changed)
 				continue
+			case k == "items" && (kind == "secretlist" || kind == "configmaplist"):
+				if list, ok := e.([]any); ok {
+					out[k] = redactListItems(list, strings.TrimSuffix(kind, "list"), inner+"."+k, pos, changed)
+					continue
+				}
 			}
-			if e != nil && (secretLike(k) || (hideSiblings && (k == "value" || k == "values" || k == "notValues"))) {
-				out[k] = redactHidden(e, scope+"\x00key\x00"+k, changed)
-				continue
-			}
-			out[k] = redactTree(e, inner+"."+k, changed)
+			out[k] = redactNode(e, inner+"."+k, k, pos, changed)
 		}
 		if okName && rawValue != nil && secretLike(name) {
 			// Any non-nil value is hidden, whatever its type: the API server only accepts strings,
@@ -139,7 +137,7 @@ func redactNode(v any, scope string, changed func(key, value string) bool, nameK
 	case []any:
 		out := make([]any, len(t))
 		for i, e := range t {
-			out[i] = redactTree(e, scope, changed)
+			out[i] = redactNode(e, scope, parent, itemPos(e, pos, i), changed)
 		}
 		return out
 	case string:
@@ -156,99 +154,101 @@ func redactNode(v any, scope string, changed func(key, value string) bool, nameK
 	}
 }
 
-// isSecretObject reports whether m is a core Secret: kind Secret with apiVersion v1, as
-// `kubectl get secret -o json` prints it, alone or as an item of a List (#43).
-func isSecretObject(m map[string]any) bool {
-	return m["kind"] == "Secret" && m["apiVersion"] == "v1"
+// objectKind is the lower-cased kind of an object, "" when it has none. Kind is compared without
+// case and whatever the apiVersion is, at any depth, so a Secret inside a kubectl List or inside the
+// last-applied annotation's JSON is found as well as a top-level one.
+func objectKind(m map[string]any) string {
+	k, _ := m["kind"].(string)
+	return strings.ToLower(k)
 }
 
-// secretID names a Secret by namespace and name when it has them, so that the same key in two
-// Secrets is not compared across them.
-func secretID(m map[string]any) string {
+// objectID is namespace/name of an object, so the same key in two Secrets is never compared.
+func objectID(m map[string]any) string {
 	md, _ := m["metadata"].(map[string]any)
 	ns, _ := md["namespace"].(string)
 	name, _ := md["name"].(string)
 	return ns + "/" + name
 }
 
-// plainValue is the text a value is compared by when deciding whether a redacted value changed.
-func plainValue(v any) string {
-	if s, ok := v.(string); ok {
-		return s
+// itemPos extends pos for a list item that has no name of its own: by namespace/name when it is an
+// object with metadata, else by list index. Items with a name are told apart by the scope already.
+func itemPos(e any, pos string, i int) string {
+	m, ok := e.(map[string]any)
+	if !ok {
+		return pos
 	}
-	b, _ := json.Marshal(v)
-	return string(b)
+	if id := objectID(m); id != "/" {
+		return pos + "[" + id + "]"
+	}
+	if _, named := m["name"].(string); named {
+		return pos
+	}
+	return pos + "[" + strconv.Itoa(i) + "]"
 }
 
-// redactSecretData hides every value under a Secret's data or stringData, whatever its key is
-// called: data is base64, which is the value itself, and a Secret holds nothing else. Values of
-// any type are replaced by the same marker (a string, number, bool, map or list alike), so the
-// output carries no length, prefix, hash or structure of a value. The key names stay, since they
-// say which entries exist; a key name is not itself redacted. A data field that is not an object
-// is replaced whole. A changed value shows as [redacted, changed], as for an env value.
-func redactSecretData(v any, scope string, changed func(key, value string) bool) any {
+// redactListItems redacts the items of a SecretList or ConfigMapList as Secrets or ConfigMaps even
+// when an item carries no kind of its own.
+func redactListItems(list []any, kind, scope, pos string, changed func(key, value string) bool) []any {
+	out := make([]any, len(list))
+	for i, e := range list {
+		m, ok := e.(map[string]any)
+		if !ok || objectKind(m) != "" {
+			out[i] = redactNode(e, scope, "items", itemPos(e, pos, i), changed)
+			continue
+		}
+		withKind := make(map[string]any, len(m)+1)
+		for k, x := range m {
+			withKind[k] = x
+		}
+		withKind["kind"] = kind
+		r := redactNode(withKind, scope, "items", itemPos(e, pos, i), changed).(map[string]any)
+		delete(r, "kind") // the output shows the item as it came
+		out[i] = r
+	}
+	return out
+}
+
+// redactEntries hides, in the map v, the non-nil values whose key hide accepts, whatever type the
+// value has; the map and its keys stay, so a path such as data.DB_PASSWORD still resolves and shows
+// the marker. The other entries are redacted by the usual rules. A v that is not a map (data as a
+// string) is replaced whole; nil stays nil. A hidden value that differs from the older template's
+// shows as changed: the comparison key is the place (scope, which has the names of named objects
+// and the position of unnamed ones), the object's namespace and name when given, and the entry key.
+// A non-string is compared by its JSON.
+func redactEntries(v any, scope, id string, hide func(key string) bool, changed func(key, value string) bool) any {
+	mark := func(entryKey string, value any) string {
+		var plain string
+		if s, ok := value.(string); ok {
+			plain = s
+		} else {
+			b, _ := json.Marshal(value)
+			plain = string(b)
+		}
+		if changed(scope+"\x00hidden\x00"+id+"\x00"+entryKey, plain) {
+			return redactedChanged
+		}
+		return redacted
+	}
 	m, ok := v.(map[string]any)
 	if !ok {
 		if v == nil {
 			return nil
 		}
-		return redactedOrChanged(scope, plainValue(v), changed)
+		return mark("", v)
 	}
+	rest := make(map[string]any, len(m))
 	out := make(map[string]any, len(m))
 	for k, e := range m {
-		if e == nil {
-			out[k] = nil // null holds no value
-			continue
+		if e != nil && hide(k) {
+			out[k] = mark(k, e)
+		} else {
+			rest[k] = e
 		}
-		out[k] = redactedOrChanged(scope+"\x00"+k, plainValue(e), changed)
+	}
+	for k, e := range redactTree(rest, scope, changed).(map[string]any) {
+		out[k] = e
 	}
 	return out
-}
-
-func redactedOrChanged(key, value string, changed func(key, value string) bool) string {
-	if changed(key, value) {
-		return redactedChanged
-	}
-	return redacted
-}
-
-// redactHidden hides everything beneath a secret-like key, or beside a secret-like key name (#43):
-// every plain value (string, number, bool) at any depth becomes the marker, whatever the keys
-// inside it are called, so a nested header match such as x-api-key: {exact: abc} or a credential
-// under a name such as secretKeyRef is not shown. The inner key names and the shape stay visible,
-// except that a list of plain values collapses to one marker, so not even its length shows. null
-// stays null. This costs some harmless evidence (the name inside a secretKeyRef is hidden too); it
-// is the price of having no exception by key name. ckey identifies the place for the changed
-// marker, which works as for an env value.
-func redactHidden(v any, ckey string, changed func(key, value string) bool) any {
-	switch t := v.(type) {
-	case nil:
-		return nil
-	case map[string]any:
-		out := make(map[string]any, len(t))
-		for k, e := range t {
-			out[k] = redactHidden(e, ckey+"."+k, changed)
-		}
-		return out
-	case []any:
-		structured := false
-		for _, e := range t {
-			switch e.(type) {
-			case map[string]any, []any:
-				structured = true
-			}
-		}
-		if !structured {
-			return redactedOrChanged(ckey, plainValue(t), changed)
-		}
-		out := make([]any, len(t))
-		for i, e := range t {
-			out[i] = redactHidden(e, ckey, func(string, string) bool { return false })
-		}
-		return out
-	default:
-		return redactedOrChanged(ckey, plainValue(v), changed)
-	}
 }
 
 // lastAppliedKey is the annotation kubectl apply uses to keep the whole applied spec, env entries
