@@ -166,8 +166,9 @@ func execCommandInput(ctx context.Context, argv []string, stdin string) error {
 	}
 	// Open: if a killed command's own child, such as a credential plugin,
 	// keeps the output pipe open, this still waits until that child closes it.
-	// a wait delay on the command would bound that, but it also starts when the command
-	// exits on its own, so it would turn a successful command into an error.
+	// A wait delay on the command would bound that, but it also starts when
+	// the command exits on its own, so it would turn a successful command
+	// into an error.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return &commandError{argv: argv, err: err, output: strings.TrimSpace(string(out)), ctxErr: endedByContext(ctx.Err(), cmd.ProcessState)}
