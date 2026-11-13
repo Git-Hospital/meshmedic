@@ -298,18 +298,22 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   patch, its apply command and its revert. None of this has had a live run
   yet.
 
-- **`meshmedic-prove remediate` no longer hangs on an API server that stops
-  answering, and no longer blames the patch for one it cannot reach.** The
-  `kubectl apply` that puts the patch on ran with the run's context and no
-  deadline of its own, so a dead API server held the run until Ctrl-C. It now
-  runs under its own timeout of three minutes, like the cleanup commands
-  (`Runner.ApplyTimeout`). A timed-out apply, and one where kubectl says
-  `Unable to connect to the server` or that the connection to the server was
-  refused, ends in `ERROR` instead of `FAIL`: the environment failed, and the
-  run says nothing about the patch. A patch the API server answered and
-  rejected (validation, admission, conflict) is still a `FAIL`, and so is a
-  failed admission webhook call, which also reports `connection refused`.
-  The revert and reset run after a timed-out apply exactly as after any other
+- **`meshmedic-prove remediate` now bounds the `kubectl apply` that puts the
+  patch on, and no longer blames the patch when kubectl cannot reach the API
+  server.** The apply ran with the run's context and no deadline of its own,
+  so a dead API server held the run until Ctrl-C. It now runs under its own
+  timeout of three minutes (`Runner.ApplyTimeout`), and a killed kubectl no
+  longer keeps the run waiting on a child process that holds its output. The
+  fault injection commands are still unbounded. A timed-out apply, and one
+  where kubectl's own client got no answer (the `failed to download openapi`
+  and `unable to recognize` lines `apply` prints, `Unable to connect to the
+  server`, `The connection to the server ... was refused`), ends in `ERROR`
+  instead of `FAIL`, and says to check the testbed before the next run,
+  because whether any part of the patch landed is unknown. Only failures of
+  kubectl's own connection count: a patch the API server answered and
+  rejected (validation, admission, conflict), an expired token, a server-side
+  timeout and a missing CRD are still reported as the patch's failure. The
+  revert and reset run after a timed-out apply exactly as after any other
   failure. (closes #45)
 
 - **The prover's preflight could call a testbed quiet on the strength of a dead

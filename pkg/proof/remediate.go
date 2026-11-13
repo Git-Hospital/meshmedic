@@ -2,6 +2,7 @@ package proof
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -54,31 +55,48 @@ const cleanupTimeout = 3 * time.Minute
 // run until someone presses Ctrl-C.
 const applyTimeout = 3 * time.Minute
 
-// unreachableMarkers are the kubectl messages that mean the apply never got an
-// answer from the API server, which is the environment and not the patch.
-// kubectl writes both itself when it cannot connect: "Unable to connect to the
-// server" for a transport failure (refused, no route, TLS or certificate
-// trouble, i/o timeout) and "The connection to the server ... was refused".
+// unreachableLines are the kubectl output lines that mean kubectl's own client
+// could not get an answer from the API server, which is the environment and not
+// the patch. Each is a line prefix and a phrase the line must also contain.
+// They are read from kubectl 1.35.0 run against servers that could not be
+// reached:
 //
-// The list is short on purpose, and it matches kubectl's own wording rather
-// than a bare "connection refused" or "dial tcp": a reachable API server whose
-// admission webhook cannot be called also reports "dial tcp ... connection
-// refused", and that is a patch the cluster rejected. Anything not listed
-// stays a patch failure.
-var unreachableMarkers = []string{
-	"Unable to connect to the server",
-	"The connection to the server",
+//	apply, validating: error: error validating "STDIN": ... failed to download openapi: Get "https://...
+//	apply, no validation: error: unable to recognize "STDIN": Get "https://...
+//	other transport failures: Unable to connect to the server: ...
+//	delete, get: The connection to the server HOST was refused - did you ...
+//
+// Matching is per line and anchored at the line start, never a substring of
+// the whole output, because a server's rejection can echo any phrase, and a
+// reachable server whose admission webhook cannot be called reports
+// "dial tcp ... connection refused" mid-line. A line that starts "Error from
+// server" or names an invalid object is the server's answer and is not in the
+// table. An expired token, a server-side timeout and a missing CRD are the
+// server's answer too, and stay a patch failure.
+var unreachableLines = []struct{ prefix, contains string }{
+	{`error: error validating `, `failed to download openapi: Get "`},
+	{`error: unable to recognize `, `: Get "`},
+	{`Unable to connect to the server`, ``},
+	{`The connection to the server `, ` was refused`},
 }
 
-// apiServerUnreachable reports whether err is kubectl saying it could not
-// reach the API server. "The connection to the server" alone is not enough,
-// so it also has to say it was refused.
+// apiServerUnreachable reports whether err is a command whose output has a
+// line from unreachableLines. An error that carries no command output is never
+// unreachable: with nothing to read, it stays a patch failure.
 func apiServerUnreachable(err error) bool {
-	msg := err.Error()
-	if strings.Contains(msg, unreachableMarkers[0]) {
-		return true
+	var ce *commandError
+	if !errors.As(err, &ce) {
+		return false
 	}
-	return strings.Contains(msg, unreachableMarkers[1]) && strings.Contains(msg, "was refused")
+	for _, line := range strings.Split(ce.output, "\n") {
+		line = strings.TrimSpace(line)
+		for _, u := range unreachableLines {
+			if strings.HasPrefix(line, u.prefix) && strings.Contains(line, u.contains) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // RemediationResult is what applying an entry's own patch proved.
@@ -834,17 +852,19 @@ func (r *Runner) Remediate(ctx context.Context, s Spec) (res RemediationResult) 
 	}
 	applyCtx, cancelApply := context.WithTimeout(ctx, limit)
 	err := apply(applyCtx, plan.Apply, plan.Patch)
-	timedOut := applyCtx.Err() == context.DeadlineExceeded
 	cancelApply()
 	if err != nil {
+		// The timeout is read from the error the command returned, not from
+		// the context afterwards: a rejection that arrived just before the
+		// deadline is still a rejection.
 		switch {
 		case ctx.Err() != nil:
 			res.void("the run was interrupted while the patch was being applied",
 				"Whether the patch landed is unknown, and the revert ran anyway")
-		case timedOut:
-			res.setupError("the apply did not finish within %s, so the API server is not answering. Whether the patch landed is unknown, the revert ran anyway, and this says nothing about the patch: %v", limit, err)
+		case errors.Is(err, context.DeadlineExceeded):
+			res.setupError("the apply command did not finish within %s. Whether any part of the patch landed is unknown, so check the testbed before the next run, and this says nothing about the patch: %v", limit, err)
 		case apiServerUnreachable(err):
-			res.setupError("the API server could not be reached, so the patch was never applied. This says nothing about the patch: %v", err)
+			res.setupError("kubectl could not get an answer from the API server. Whether any part of the patch landed is unknown, so check the testbed before the next run, and this says nothing about the patch: %v", err)
 		default:
 			res.Failures = append(res.Failures, fmt.Sprintf(
 				"the cluster refused the proposed patch: %v. The patch as the entry renders it could not be applied", err))

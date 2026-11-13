@@ -163,11 +163,43 @@ func execCommandInput(ctx context.Context, argv []string, stdin string) error {
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
+	// Killing kubectl does not close the output pipe while a grandchild, such
+	// as a credential plugin, still holds it, and CombinedOutput would wait
+	// for that child. This only matters once the context is done; until then
+	// the delay is not started.
+	cmd.WaitDelay = execWaitDelay
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s: %w: %s", strings.Join(argv, " "), err, strings.TrimSpace(string(out)))
+		return &commandError{argv: argv, err: err, output: strings.TrimSpace(string(out)), ctxErr: ctx.Err()}
 	}
 	return nil
+}
+
+// execWaitDelay is how long a killed command may keep the run waiting for
+// its output pipe to close. A variable so a test can shorten it.
+var execWaitDelay = 5 * time.Second
+
+// commandError is a failed command with what it printed kept apart from the
+// reason it failed, so a caller can read kubectl's own lines instead of
+// searching one flattened string. Error() keeps the old shape. When the
+// context ended the command, the context's error is wrapped too, so a caller
+// can tell a command that timed out from one that failed first.
+type commandError struct {
+	argv   []string
+	err    error
+	output string
+	ctxErr error
+}
+
+func (e *commandError) Error() string {
+	return fmt.Sprintf("%s: %v: %s", strings.Join(e.argv, " "), e.err, e.output)
+}
+
+func (e *commandError) Unwrap() []error {
+	if e.ctxErr != nil {
+		return []error{e.err, e.ctxErr}
+	}
+	return []error{e.err}
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) {
