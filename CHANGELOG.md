@@ -298,6 +298,20 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   patch, its apply command and its revert. None of this has had a live run
   yet.
 
+- **`meshmedic-prove remediate` no longer hangs on an API server that stops
+  answering, and no longer blames the patch for one it cannot reach.** The
+  `kubectl apply` that puts the patch on ran with the run's context and no
+  deadline of its own, so a dead API server held the run until Ctrl-C. It now
+  runs under its own timeout of three minutes, like the cleanup commands
+  (`Runner.ApplyTimeout`). A timed-out apply, and one where kubectl says
+  `Unable to connect to the server` or that the connection to the server was
+  refused, ends in `ERROR` instead of `FAIL`: the environment failed, and the
+  run says nothing about the patch. A patch the API server answered and
+  rejected (validation, admission, conflict) is still a `FAIL`, and so is a
+  failed admission webhook call, which also reports `connection refused`.
+  The revert and reset run after a timed-out apply exactly as after any other
+  failure. (closes #45)
+
 - **The prover's preflight could call a testbed quiet on the strength of a dead
   Prometheus.** Its breach check treated any query error as "no series", which
   is the healthy reading for a failure counter but is not what a refused

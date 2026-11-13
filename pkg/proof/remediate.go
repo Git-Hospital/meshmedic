@@ -49,6 +49,38 @@ import (
 // forever, and the signal handler swallows every further Ctrl-C.
 const cleanupTimeout = 3 * time.Minute
 
+// applyTimeout bounds the command that applies the patch, for the same reason
+// the cleanup is bounded: an API server that stops answering must not hold the
+// run until someone presses Ctrl-C.
+const applyTimeout = 3 * time.Minute
+
+// unreachableMarkers are the kubectl messages that mean the apply never got an
+// answer from the API server, which is the environment and not the patch.
+// kubectl writes both itself when it cannot connect: "Unable to connect to the
+// server" for a transport failure (refused, no route, TLS or certificate
+// trouble, i/o timeout) and "The connection to the server ... was refused".
+//
+// The list is short on purpose, and it matches kubectl's own wording rather
+// than a bare "connection refused" or "dial tcp": a reachable API server whose
+// admission webhook cannot be called also reports "dial tcp ... connection
+// refused", and that is a patch the cluster rejected. Anything not listed
+// stays a patch failure.
+var unreachableMarkers = []string{
+	"Unable to connect to the server",
+	"The connection to the server",
+}
+
+// apiServerUnreachable reports whether err is kubectl saying it could not
+// reach the API server. "The connection to the server" alone is not enough,
+// so it also has to say it was refused.
+func apiServerUnreachable(err error) bool {
+	msg := err.Error()
+	if strings.Contains(msg, unreachableMarkers[0]) {
+		return true
+	}
+	return strings.Contains(msg, unreachableMarkers[1]) && strings.Contains(msg, "was refused")
+}
+
 // RemediationResult is what applying an entry's own patch proved.
 //
 // It carries three separate facts, because folding them together is how the
@@ -796,14 +828,27 @@ func (r *Runner) Remediate(ctx context.Context, s Spec) (res RemediationResult) 
 	if apply == nil {
 		apply = execCommandInput
 	}
-	if err := apply(ctx, plan.Apply, plan.Patch); err != nil {
-		if ctx.Err() != nil {
+	limit := r.ApplyTimeout
+	if limit <= 0 {
+		limit = applyTimeout
+	}
+	applyCtx, cancelApply := context.WithTimeout(ctx, limit)
+	err := apply(applyCtx, plan.Apply, plan.Patch)
+	timedOut := applyCtx.Err() == context.DeadlineExceeded
+	cancelApply()
+	if err != nil {
+		switch {
+		case ctx.Err() != nil:
 			res.void("the run was interrupted while the patch was being applied",
 				"Whether the patch landed is unknown, and the revert ran anyway")
-			return res
+		case timedOut:
+			res.setupError("the apply did not finish within %s, so the API server is not answering. Whether the patch landed is unknown, the revert ran anyway, and this says nothing about the patch: %v", limit, err)
+		case apiServerUnreachable(err):
+			res.setupError("the API server could not be reached, so the patch was never applied. This says nothing about the patch: %v", err)
+		default:
+			res.Failures = append(res.Failures, fmt.Sprintf(
+				"the cluster refused the proposed patch: %v. The patch as the entry renders it could not be applied", err))
 		}
-		res.Failures = append(res.Failures, fmt.Sprintf(
-			"the cluster refused the proposed patch: %v. The patch as the entry renders it could not be applied", err))
 		return res
 	}
 	res.Applied = true

@@ -72,6 +72,9 @@ type Runner struct {
 	Poll time.Duration
 	// Sleep waits, injected so tests do not.
 	Sleep func(context.Context, time.Duration)
+	// ApplyTimeout bounds the command that applies a remediation patch. Zero
+	// uses applyTimeout.
+	ApplyTimeout time.Duration
 
 	// Baseline lets a relative-threshold entry be proven. Without one the
 	// detector falls back to the static threshold, and for
