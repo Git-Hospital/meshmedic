@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -163,21 +164,28 @@ func execCommandInput(ctx context.Context, argv []string, stdin string) error {
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
-	// Killing kubectl does not close the output pipe while a grandchild, such
-	// as a credential plugin, still holds it, and CombinedOutput would wait
-	// for that child. This only matters once the context is done; until then
-	// the delay is not started.
-	cmd.WaitDelay = execWaitDelay
+	// Open: if a killed command's own child, such as a credential plugin,
+	// keeps the output pipe open, this still waits until that child closes it.
+	// a wait delay on the command would bound that, but it also starts when the command
+	// exits on its own, so it would turn a successful command into an error.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return &commandError{argv: argv, err: err, output: strings.TrimSpace(string(out)), ctxErr: ctx.Err()}
+		return &commandError{argv: argv, err: err, output: strings.TrimSpace(string(out)), ctxErr: endedByContext(ctx.Err(), cmd.ProcessState)}
 	}
 	return nil
 }
 
-// execWaitDelay is how long a killed command may keep the run waiting for
-// its output pipe to close. A variable so a test can shorten it.
-var execWaitDelay = 5 * time.Second
+// endedByContext returns the context's error when the context, and not the
+// command, ended the process: the context is done and the process did not exit
+// on its own (it was killed, or never started). A command that exited by
+// itself a moment before the deadline failed on its own terms, and ctx.Err()
+// read afterwards would only say the context is done now.
+func endedByContext(ctxErr error, ps *os.ProcessState) error {
+	if ctxErr == nil || (ps != nil && ps.Exited()) {
+		return nil
+	}
+	return ctxErr
+}
 
 // commandError is a failed command with what it printed kept apart from the
 // reason it failed, so a caller can read kubectl's own lines instead of

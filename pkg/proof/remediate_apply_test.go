@@ -128,7 +128,7 @@ func TestRemediationApplyToAnUnreachableServerIsAnEnvironmentError(t *testing.T)
 // "error:" line below it says the apply had no answer.
 func TestRemediationKlogLineAloneIsNotUnreachable(t *testing.T) {
 	klog := strings.SplitN(kubectlNoValidate, "\n", 2)[0]
-	if apiServerUnreachable(kubectlFailure(klog)) {
+	if _, ok := apiServerUnreachable(kubectlFailure(klog)); ok {
 		t.Error("a klog line alone was taken for an unreachable API server")
 	}
 }
@@ -138,14 +138,16 @@ func TestRemediationKlogLineAloneIsNotUnreachable(t *testing.T) {
 // under "Error from server", where they are the server's text.
 func TestRemediationRejectedPatchStaysAPatchFailure(t *testing.T) {
 	for name, out := range map[string]string{
-		"invalid":         `The Deployment "web" is invalid: spec.template.spec.containers[0].image: Required value`,
-		"denied":          `Error from server (Forbidden): admission webhook "policy.example.com" denied the request: privileged containers are not allowed`,
-		"conflict":        `Error from server (Conflict): Operation cannot be fulfilled on deployments.apps "web": the object has been modified; please apply your changes to the latest version and try again`,
-		"webhook down":    `Error from server (InternalError): error when creating "STDIN": Internal error occurred: failed calling webhook "x.example.com": failed to call webhook: Post "https://svc.ns.svc:443/validate?timeout=10s": dial tcp 10.0.0.9:443: connect: connection refused`,
-		"echoes unable":   `Error from server (Forbidden): admission webhook "p.example.com" denied the request: Unable to connect to the server is not a valid reason`,
-		"echoes refused":  `Error from server (Invalid): the note says The connection to the server 1.2.3.4 was refused`,
-		"echoes mid-line": `Error from server (Forbidden): denied: error: error validating x: failed to download openapi: Get "https://a"`,
-		"unauthorized":    `error: You must be logged in to the server (Unauthorized)`,
+		"invalid":                          `The Deployment "web" is invalid: spec.template.spec.containers[0].image: Required value`,
+		"denied":                           `Error from server (Forbidden): admission webhook "policy.example.com" denied the request: privileged containers are not allowed`,
+		"conflict":                         `Error from server (Conflict): Operation cannot be fulfilled on deployments.apps "web": the object has been modified; please apply your changes to the latest version and try again`,
+		"webhook down":                     `Error from server (InternalError): error when creating "STDIN": Internal error occurred: failed calling webhook "x.example.com": failed to call webhook: Post "https://svc.ns.svc:443/validate?timeout=10s": dial tcp 10.0.0.9:443: connect: connection refused`,
+		"echoes unable":                    `Error from server (Forbidden): admission webhook "p.example.com" denied the request: Unable to connect to the server is not a valid reason`,
+		"echoes refused":                   `Error from server (Invalid): the note says The connection to the server 1.2.3.4 was refused`,
+		"echoes mid-line":                  `Error from server (Forbidden): denied: error: error validating x: failed to download openapi: Get "https://a"`,
+		"indented continuation":            "admission webhook \"p\" denied the request:\n  Unable to connect to the server policy-backend, so the policy cannot be checked",
+		"error from server beside a match": "Error from server (Forbidden): denied\nUnable to connect to the server: x",
+		"unauthorized":                     `error: You must be logged in to the server (Unauthorized)`,
 	} {
 		r, rec := applyRig(t, func(context.Context) error { return kubectlFailure(out) })
 
@@ -197,26 +199,43 @@ func TestCommandErrorWrapsTheContextOnlyWhenItEndedTheCommand(t *testing.T) {
 	}
 }
 
-// A killed command must not keep the run waiting on a grandchild that still
-// holds the output pipe, which is what a credential plugin does.
-func TestExecReturnsWhenAGrandchildHoldsThePipe(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("no sh")
+// The decision of whether the context ended a command is made from how the
+// process ended. Both states here are real.
+func TestEndedByContextReadsTheProcessState(t *testing.T) {
+	own := exec.Command("sh", "-c", "exit 1")
+	if err := own.Run(); err == nil {
+		t.Fatal("sh -c 'exit 1' succeeded")
 	}
-	old := execWaitDelay
-	execWaitDelay = 100 * time.Millisecond
-	defer func() { execWaitDelay = old }()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- execCommandInput(ctx, []string{"sh", "-c", "sleep 4 & wait"}, "") }()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Error("a killed command reported success")
+	killed := exec.CommandContext(ctx, "sh", "-c", "sleep 5")
+	_ = killed.Run()
+	<-ctx.Done()
+
+	if err := endedByContext(ctx.Err(), own.ProcessState); err != nil {
+		t.Errorf("a process that exited on its own was blamed on the context: %v", err)
+	}
+	if err := endedByContext(ctx.Err(), killed.ProcessState); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("a process killed by the deadline should wrap it, got %v", err)
+	}
+	if err := endedByContext(nil, killed.ProcessState); err != nil {
+		t.Errorf("a live context cannot have ended a command, got %v", err)
+	}
+	if err := endedByContext(ctx.Err(), nil); err == nil {
+		t.Error("a command that never started under a done context should wrap its error")
+	}
+}
+
+// Recognition reads kubectl's own lines from column 0, and a server's answer
+// is never an unreachable server, whatever else the output says.
+func TestRemediationServerAnswersStayPatchFailures(t *testing.T) {
+	for name, out := range map[string]string{
+		"indented unable":              "Error from server (Forbidden): admission webhook \"p\" denied the request:\n  Unable to connect to the server policy-backend, so the policy cannot be checked",
+		"indented refused":             "admission webhook \"p\" denied the request:\n  The connection to the server x was refused",
+		"unindented text, server line": "Error from server (Forbidden): denied\nUnable to connect to the server: x",
+	} {
+		if line, ok := apiServerUnreachable(kubectlFailure(out)); ok {
+			t.Errorf("%s: taken for an unreachable server via %q", name, line)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("the command kept the run waiting on a child holding the pipe")
 	}
 }
