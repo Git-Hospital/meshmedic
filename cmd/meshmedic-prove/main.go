@@ -45,7 +45,6 @@ import (
 	"github.com/Git-Hospital/meshmedic/pkg/kube"
 	"github.com/Git-Hospital/meshmedic/pkg/prom"
 	"github.com/Git-Hospital/meshmedic/pkg/proof"
-	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -105,7 +104,12 @@ func main() {
 	}
 
 	if *list {
-		listCoverage(scenarios, specs)
+		declared, err := proof.LoadUnprovable(*proofDir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "declarations invalid:", err)
+			os.Exit(1)
+		}
+		listCoverage(scenarios, specs, declared)
 		return
 	}
 
@@ -669,12 +673,11 @@ func writeReport(dir, entry, doc string, logger *log.Logger) {
 // listCoverage is the honest inventory: which entries have an end-to-end
 // proof and which are still only asserted. An entry with no proof is not
 // necessarily broken, but nothing has shown that it works.
-func listCoverage(scenarios []catalog.Scenario, specs []proof.Spec) {
+func listCoverage(scenarios []catalog.Scenario, specs []proof.Spec, declared map[string]string) {
 	have := map[string]string{}
 	for _, sp := range specs {
 		have[sp.Entry] = sp.Summary
 	}
-	declared := loadUnprovable()
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "ENTRY\tPROOF\tFAULT")
 	proven := 0
@@ -699,30 +702,6 @@ func listCoverage(scenarios []catalog.Scenario, specs []proof.Spec) {
 		fmt.Println("A silently missing entry is the ambiguous kind: nobody can tell whether it has not been")
 		fmt.Println("got to yet or cannot be done. Write a proof, or declare it in proof/UNPROVABLE.yaml.")
 	}
-}
-
-// loadUnprovable reads the declarations of entries that cannot be proven here.
-// A missing file means none are declared, which is a legitimate state and not
-// an error: it simply means every gap is of the ambiguous kind.
-func loadUnprovable() map[string]string {
-	data, err := os.ReadFile("proof/UNPROVABLE.yaml")
-	if err != nil {
-		return map[string]string{}
-	}
-	var doc struct {
-		Unprovable []struct {
-			Entry  string `yaml:"entry"`
-			Reason string `yaml:"reason"`
-		} `yaml:"unprovable"`
-	}
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return map[string]string{}
-	}
-	out := map[string]string{}
-	for _, u := range doc.Unprovable {
-		out[u.Entry] = strings.TrimSpace(u.Reason)
-	}
-	return out
 }
 
 func firstSentence(s string) string {
