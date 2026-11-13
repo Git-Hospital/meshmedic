@@ -12,12 +12,11 @@ and zero cluster mutation. Two commands run with no mesh and no cluster:
 ## Install
 
 ```console
-$ go install github.com/Git-Hospital/meshmedic/cmd/meshmedic@main   # Go 1.21+, lands in $(go env GOPATH)/bin
+$ go install github.com/Git-Hospital/meshmedic/cmd/meshmedic@latest   # Go 1.21+, lands in $(go env GOPATH)/bin
 $ git clone https://github.com/Git-Hospital/meshmedic.git && cd meshmedic && go build -o meshmedic ./cmd/meshmedic
 ```
 
-`demo` and `chart check` are newer than the latest release (v0.4.0), so use
-`@main` or a clone for now. From a clone the binary is `./meshmedic`; the
+From a clone the binary is `./meshmedic`; the
 examples below write `meshmedic`. Release archives (linux and macOS, amd64 and
 arm64) are on the [releases page](https://github.com/Git-Hospital/meshmedic/releases).
 
