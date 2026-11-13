@@ -251,6 +251,21 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The detection proof no longer lets a baseline-relative threshold drift
+  while it waits for the fault.** `Run` kept the detector learning from
+  injection to verdict, so a clear reading taken while the fault filled its
+  rate window became part of the learned normal. A neighbour required to stay
+  quiet could pass for the wrong reason, and the subject could miss a level
+  that was over its threshold at injection. A baseline that is ready when the
+  fault goes in is now read-only from injection to verdict, the freeze
+  `meshmedic-prove remediate` already had; warm-up before the fault learns as
+  before. An entry whose baseline is not ready by then keeps learning during
+  the proof exactly as before, so the drift stays open for it. When the proof
+  has a warm-up, its log names such an entry. The recorded proofs of
+  `upstream-dependency-latency` and `latency-regression-vs-baseline` have not
+  been rerun on a cluster yet, so their reports may still reflect the drift.
+  (closes #48)
+
 - **`meshmedic-prove remediate` could report a wrong verdict, and is now held
   to the rule the detection proof follows.** It credited a patch on a single
   clear reading, on a signal that returned no series or NaN, across a

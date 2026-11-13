@@ -122,6 +122,29 @@ func TestRemediationRelativeThresholdDoesNotDriftBeforeTheBreach(t *testing.T) {
 	}
 }
 
+// The remediation proof freezes the whole baseline, including a key that was
+// not ready when the fault went in. The detection proof leaves such a key
+// learning, so this pins the difference: warmed for 2 readings against a need
+// of 3, nothing the fault reads may bring the key to readiness here.
+func TestRemediationFreezesAKeyThatWasNotReadyAtInjection(t *testing.T) {
+	r, _, _, _ := remediationRig(t, relativeEntry(), func(tick int, injected, patched bool) reading {
+		if injected && !patched {
+			return value(31)
+		}
+		return value(10)
+	})
+	r.Baseline = baseline.New("", 0.05)
+	s := remediationSpec("latency")
+	s.Warmup = Duration(20 * time.Second)
+	s.FiresWithin = Duration(2 * time.Minute)
+
+	r.Remediate(context.Background(), s)
+
+	if _, ready := r.Baseline.Baseline(targetKeyFor("latency", s.Target), 3); ready {
+		t.Error("the baseline became ready from readings taken after the fault was injected")
+	}
+}
+
 // Finding 2. One scrape error right after the patch, then the signal in breach
 // on every later tick. The observer watched the patch fail for far longer
 // than a sustained clear needs, so the gap could not have hidden a pass.
