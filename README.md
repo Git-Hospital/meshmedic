@@ -6,32 +6,77 @@
 
 Deterministic first responder for Istio service-mesh incidents: it detects in
 seconds, opens an evidence-dossier pull request, and does it with zero LLM
-and zero cluster mutation.
+and zero cluster mutation. Two commands run with no mesh and no cluster:
+`demo` replays an incident, `chart check` reads a Helm chart.
 
-![MeshMedic demo: chaos to merged PR to healed mesh](demo/video/meshmedic-demo.gif)
+## Install
 
-*Every frame above is real: a live kind + Istio ambient mesh, a real latency
-fault, the pull request MeshMedic opened with evidence from Prometheus, a
-human merge, and Argo CD syncing the fix. Recording script in `demo/video/`.*
+```console
+$ go install github.com/Git-Hospital/meshmedic/cmd/meshmedic@main   # Go 1.21+, lands in $(go env GOPATH)/bin
+$ git clone https://github.com/Git-Hospital/meshmedic.git && cd meshmedic && go build -o meshmedic ./cmd/meshmedic
+```
+
+`demo` and `chart check` are newer than the latest release (v0.4.0), so use
+`@main` or a clone for now. From a clone the binary is `./meshmedic`; the
+examples below write `meshmedic`. Release archives (linux and macOS, amd64 and
+arm64) are on the [releases page](https://github.com/Git-Hospital/meshmedic/releases).
 
 ## See it without a mesh
 
-No mesh or Prometheus yet? Run the detector against a replay built into the binary:
-
 ```console
 $ meshmedic demo
+meshmedic demo: canary-latency-rollback
+This is a REPLAY of data held inside this binary. Nothing is being watched and nothing is changed.
+The real detector ran 5 cycles against a Prometheus served from this process on loopback.
+
+cycle 1  12:48:49Z  canary-latency-rollback: in breach, waiting out the 90s hold (signal 2485 > 1000)
+...
+cycle 3  12:50:19Z  canary-latency-rollback: FIRING, held for 90s: incident reported (signal 2485 > 1000)
+...
+cycle 5  12:51:49Z  canary-latency-rollback: clear, a real answer: the signal is 312, back under 1000
 ```
 
-It prints the cycles of a canary latency incident: the signal in breach, the
-hold duration, the full dossier (diagnosis, evidence, configuration reads,
-patch, rollback note), and the resolution report when it clears.
-`--scenario blind-no-telemetry` shows the tool refusing to call a target it
-cannot see healthy. The detection and report code is the code `watch` runs.
-The Prometheus data is replayed and constructed from the proof reports, not
-recorded, and every screen says so. Nothing is watched or changed. `--list`
-lists scenarios; see [docs/demo.md](docs/demo.md).
+When it fires, `demo` prints the full dossier: diagnosis, evidence,
+configuration reads, patch and rollback note. The Prometheus data is replayed
+and constructed from the proof reports, not recorded, and every screen says
+so. Nothing is watched or changed. `--list` lists scenarios; see
+[docs/demo.md](docs/demo.md).
 
-## Run it
+## Check a Helm chart
+
+```console
+$ meshmedic chart check --manifests pkg/chartcheck/testdata/np-redis-default.yaml
+meshmedic chart check, rules written against Istio 1.31
+1 candidate and 0 notes: MM-CHART-001 ambient x1
+...
+MM-CHART-001  ambient  A NetworkPolicy does not admit ambient HBONE traffic (TCP 15008) (candidate)
+...
+  fix:      Add an ingress rule to the NetworkPolicy that admits TCP 15008 (ports: [{port: 15008,
+            protocol: TCP}]). If the chart has a value for extra ingress rules, put the rule there
+            instead of patching the template.
+...
+$ echo $?
+1
+```
+
+That file is in the repo, so this works from a clone. For a chart (needs
+`helm`) or rendered YAML:
+
+```console
+$ meshmedic chart check ./my-chart -f values.yaml
+$ helm template my-release ./my-chart | meshmedic chart check --manifests -
+```
+
+Before you install anything, this lists what in the chart is likely to break
+under Istio (sidecar, ambient or both with `--mesh`). Each finding names the
+field, what will happen, the Istio documentation it rests on, a fix hint and
+how to confirm it in a cluster. Exit 0 means no candidates, 1 at least one, 2
+a usage or render error, or an input not read in full and with no candidate in the rest. These are candidates found by reading manifests, not
+failures observed in a cluster, and a clean result is not a guarantee.
+Details, the limits and the validation against the compat pilot are in
+[docs/chart-check.md](docs/chart-check.md).
+
+## Watch a Prometheus you already run
 
 Against a Prometheus you already run. No config file, no demo cluster, nothing
 to install but a container runtime:
@@ -48,28 +93,31 @@ report the moment one fires: diagnosis, labeled evidence, the rendered patch,
 and the rollback note. Nothing is written to your cluster; MeshMedic holds no
 write credentials at all.
 
-Prefer a binary? Either of these:
+The demo runs the detection and report code that `watch` runs, so its output
+shows what to expect. `--scenario blind-no-telemetry` shows the tool refusing
+to call a target it cannot see healthy.
+
+With a binary from the Install section, the same run is `meshmedic watch
+--prometheus http://localhost:9090 --target service=payments,namespace=demo`.
+Check the binary and its catalog first:
 
 ```console
-$ go install github.com/Git-Hospital/meshmedic/cmd/meshmedic@latest   # Go 1.21+
-```
-
-or a [release archive](https://github.com/Git-Hospital/meshmedic/releases) for linux
-and macOS on amd64 and arm64.
-
-Building from a clone works too and needs nothing but Go:
-
-```console
-$ git clone https://github.com/Git-Hospital/meshmedic.git && cd meshmedic
-$ go build -o meshmedic ./cmd/meshmedic
 $ ./meshmedic validate
 catalog OK: 18 scenarios
+...
+16 of 18 entries are locked and will run
 ```
 
 However you get it, the reviewed catalog and its lock are compiled into the
 binary, so a single file is the whole tool: no directory to place, nothing to
 point at, and it runs from anywhere. `--catalog` still overrides both when you
 want to run entries of your own.
+
+![MeshMedic demo: chaos to merged PR to healed mesh](demo/video/meshmedic-demo.gif)
+
+*Every frame above is real: a live kind + Istio ambient mesh, a real latency
+fault, the pull request MeshMedic opened with evidence from Prometheus, a
+human merge, and Argo CD syncing the fix. Recording script in `demo/video/`.*
 
 MeshMedic watches Istio's Prometheus telemetry, matches a human-reviewed
 catalog of failure scenarios, and answers with a GitOps pull request that
@@ -83,22 +131,6 @@ resolution report and the time the incident was open.
 How it compares to `istioctl analyze`, Istio's own configuration analyzer, and
 the reproducible scenarios behind that comparison, are in
 [boards](https://github.com/Git-Hospital/boards).
-
-## Check a Helm chart
-
-```console
-$ meshmedic chart check ./my-chart -f values.yaml
-$ helm template my-release ./my-chart | meshmedic chart check --manifests -
-```
-
-Before you install anything, this lists what in the chart is likely to break
-under Istio (sidecar, ambient or both with `--mesh`). Each finding names the
-field, what will happen, the Istio documentation it rests on, a fix hint and
-how to confirm it in a cluster. Exit 0 means no candidates, 1 at least one, 2
-a usage or render error, or an input not read in full and with no candidate in the rest. These are candidates found by reading manifests, not
-failures observed in a cluster, and a clean result is not a guarantee.
-Details, the limits and the validation against the compat pilot are in
-[docs/chart-check.md](docs/chart-check.md).
 
 ## The gap it fills
 
