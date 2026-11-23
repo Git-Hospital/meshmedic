@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-24
+
 ### Changed
 
 - **ConfigMap and Secret data, and secret-like annotations, are now
@@ -61,6 +63,18 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   name the target and unknown IDs before querying Prometheus. An empty scenario
   list still selects the whole catalog. (#27, closes #14)
 
+- **`watch.yaml` with an unknown key now fails to load.** A mistyped key
+  such as `statefile` or `scenario` used to be ignored, and the feature it
+  names stayed off. The error now names the key and its line. Breaking for a
+  config that carries a key the tool never read: remove or correct it. (#26)
+
+- **Secret-like env values are redacted in reports.** A value whose name
+  contains PASSWORD, PASSWD, SECRET, TOKEN, KEY, CREDENTIAL or CERT, such as
+  `DB_PASSWORD=...`, no longer reaches the incident report or the pull request
+  body. This covers rendered env lists, rollout template diffs (a changed
+  value reads `[redacted, changed]`) and `NAME=value` pairs in matched log
+  lines. SECURITY.md says what is and is not redacted. (#29, closes #20)
+
 ### Added
 
 - **`meshmedic demo` shows what the tool does without a mesh.** It runs the
@@ -84,6 +98,19 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   field, the Istio documentation quote, a fix hint and how to confirm it; text
   or JSON; exit 0, 1 or 2. Findings are candidates read from manifests, not
   observed failures. See docs/chart-check.md.
+
+- **`watch`, `check`, `calibrate` and `validate --against-prometheus` can
+  reach a Prometheus behind a token, basic auth or a private CA.** A
+  `prometheusAuth` section in the watch config names the environment variables
+  that hold a bearer token, or a basic-auth user and password, and can add a CA
+  file. The flags `--prometheus-token-env` and `--prometheus-ca-file` do the
+  same on the command line. A named variable that is unset stops the run before
+  any request, and errors never print the variable's value. (#31)
+
+- **`docs/watch-config.md` lists every `watch.yaml` field** with its type,
+  default and whether it is required, and says what the `--prometheus
+  --target` form cannot set. Two tests keep it in step with the config
+  structs. (#38, closes #17)
 
 ### Fixed
 
@@ -203,6 +230,24 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a missing CRD: those are still reported as the patch's failure. The revert
   and reset run after a timed-out apply exactly as after any other failure.
   (closes #45)
+
+- **GitHub rate limits no longer fail a pull request.** A 429, and a 403 with
+  `Retry-After` or `X-RateLimit-Remaining: 0`, are retried after the wait
+  GitHub asks for, up to two minutes. The branch name now comes from the
+  scenario, the target's params and the time the breach began, so a retry of
+  one episode reuses its branch and returns a pull request an earlier attempt
+  opened, instead of leaving a branch with no pull request. (#30)
+
+- **Cluster text stays inside its block in the incident report.** Log lines,
+  rollout diffs, label and field values and error strings go into a pull
+  request body; code fences are now longer than any backtick run inside them,
+  table cells escape `|` and line breaks, and the headline leaves out "for X"
+  when the scenario has no `signal.for`. (#28, closes #19)
+
+- **`validate --against-prometheus` no longer looks for a metric named by
+  `__name__!=`, `=~`, `!~` or an empty `__name__`.** Only `__name__=` with a
+  value counts as a metric. The PromQL name extractor also has a fuzz test
+  now. (#32)
 
 ## [0.4.0] - 2026-10-30
 
@@ -530,7 +575,8 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The traffic-vanished baseline uses `max_over_time` rather than a fixed
   offset, which went blind inside back-to-back outages.
 
-[Unreleased]: https://github.com/Git-Hospital/meshmedic/commits/main
+[Unreleased]: https://github.com/Git-Hospital/meshmedic/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Git-Hospital/meshmedic/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Git-Hospital/meshmedic/releases/tag/v0.4.0
 [1.0.0]: https://github.com/Git-Hospital/meshmedic/tree/fdcb7dc850a0cc1ef5ba27f33ef08dd46a9b8c4a
 [0.3.1]: https://github.com/Git-Hospital/meshmedic/tree/f1617a53203b5172d35142b7b3527342501a4a83
