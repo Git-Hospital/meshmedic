@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-24
+
 ### Changed
 
 - **ConfigMap and Secret data, and secret-like annotations, are now
@@ -61,50 +63,17 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   name the target and unknown IDs before querying Prometheus. An empty scenario
   list still selects the whole catalog. (#27, closes #14)
 
-- **The module path is now `github.com/Git-Hospital/meshmedic`, and versions
-  restart in 0.x.** The repository moved to the Git-Hospital organization while
-  `go.mod` still declared `github.com/kassvl/meshmedic`, so the documented
-  `go install` line installed from the old path. The image name in the docs
-  was stale for the same reason: the release workflow already pushes to
-  `ghcr.io/git-hospital/meshmedic`. The 1.0.0 tag promised a stable interface
-  that the project, still changing direction, cannot keep, so numbering
-  restarts in 0.x under the new path, at 0.4.0, above the old 0.3.x. The
-  earlier tags (0.3.0 to 1.0.0) declared the old module path and broke
-  `go install ...@latest` on the new one, so they and their GitHub releases
-  were removed; the sections below link to the commits they pointed at. The
-  module proxy still lists them under the new path, so `go.mod` retracts
-  0.3.0 to 0.3.1 and 1.0.0-rc1 to 1.0.1, two ranges that leave 0.4.0 and later
-  outside, and a single 1.0.1 tag publishes that retraction.
-  `github.com/kassvl/meshmedic@v1.0.0` stays
-  installable from the Go module proxy, which never forgets a version, and is
-  not updated further.
+- **`watch.yaml` with an unknown key now fails to load.** A mistyped key
+  such as `statefile` or `scenario` used to be ignored, and the feature it
+  names stayed off. The error now names the key and its line. Breaking for a
+  config that carries a key the tool never read: remove or correct it. (#26)
 
-- **The cycle summary no longer says `firing` for three different things.**
-  In Prometheus's vocabulary an alert fires once it has held for its `for`
-  duration; this counter turned true the moment the comparison did, which is
-  earlier and sometimes much earlier. Two runs were misread because of it: one
-  showed `2 firing` with a single report, because the second entry was
-  suppressed as a cascade symptom, and one showed `1 firing` with no report at
-  all, because the entry had not yet held. The tool was right both times and
-  the summary described it wrongly. The line now reads `N in breach` and, when
-  N is not zero, breaks it down: reported, suppressed, awaiting hold,
-  rate-limited, handler retrying. Every breach lands in exactly one bucket and
-  a test asserts the arithmetic, because a number that does not add up is a
-  liability rather than a fact. The two silent exits from delivery, a guardrail
-  that stopped a further proposal and a handler that errored, are counted
-  apart: a guardrail that hides what it blocked is its own fail-open.
-
-- **`connection-pool-overflow` now reports the pool limit that is doing the
-  shedding.** The entry read the destination Deployment, which is the right
-  evidence for the raise-versus-scale call, and never opened the
-  DestinationRule that held the fault, so a dossier that correctly diagnosed
-  pool exhaustion still ended with the operator looking up the number to
-  change. Measured on 2026-08-19 with `maxConnections: 1` as the injected
-  fault and no mention of it in the report. Every DestinationRule in the
-  namespace is listed rather than one guessed by name, because a rule that
-  binds a host is not obliged to be named after it. An audit of the other
-  eleven entries carrying object evidence found no second case: each already
-  reads the object that holds its fault.
+- **Secret-like env values are redacted in reports.** A value whose name
+  contains PASSWORD, PASSWD, SECRET, TOKEN, KEY, CREDENTIAL or CERT, such as
+  `DB_PASSWORD=...`, no longer reaches the incident report or the pull request
+  body. This covers rendered env lists, rollout template diffs (a changed
+  value reads `[redacted, changed]`) and `NAME=value` pairs in matched log
+  lines. SECURITY.md says what is and is not redacted. (#29, closes #20)
 
 ### Added
 
@@ -123,145 +92,25 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `meshmedic-prove --list` reads the declarations from `--proofs` and stops on
   a file that does not parse. (closes #16)
 
-- **`meshmedic-prove remediate`**, which asks the question the rest of the
-  suite cannot: if I merge what this entry proposed, does the incident stop?
-
-  Every spec in `proof/` shows the right entry fired and named the culprit.
-  None show that the patch would have helped, and "opens the fix as a pull
-  request" is the sentence this project leads with. It is the largest
-  unverified claim in the product.
-
-  The patch is applied with the fault still in place, which is what makes it a
-  test. Removing the fault and watching the signal fall proves the fault caused
-  it, which the resolution half of the ordinary proof already covers. Leaving
-  the fault and applying the fix asks an operator's actual question. It is a
-  separate command because the two would collide: a working patch clears the
-  signal, so the ordinary proof would time the remediation and call it the
-  reset.
-
-  Eleven of eighteen entries are report-only and are skipped with a reason,
-  which is a design choice rather than a coverage gap and is reported as one.
-  The revert is declared rather than derived, because a patch that creates an
-  object and one that edits it are undone differently, and guessing from the
-  rendered YAML is how a harness deletes something it did not create. It runs
-  on success, on failure and on interrupt: a leftover fault is loud, and a
-  leftover fix is silent.
-
-  The unit tests found a Go defect while being written. The deferred cleanup
-  wrote its results into a variable nobody read, because `return res` with an
-  unnamed return copies the struct before any defer runs, so whether the revert
-  succeeded, how long the run took, and any failure during cleanup were all
-  discarded. Three losses, no compiler complaint. Fixed with a named return.
-- **A mutation suite over the guards themselves.** Every guard here claims to
-  catch something and nothing checked the claim, which stopped being an
-  abstract worry on 2026-08-20: four separate checks turned out to be checking
-  nothing. A preflight called a testbed quiet on the strength of a dead
-  Prometheus. A summary printed FAIL for a run nobody observed. A coverage
-  count measured a command-line filter. An archive assertion in CI failed on
-  its own pipe before it read an archive. All four were green.
-
-  So the shipped catalog and specs are now broken on purpose, one property at
-  a time, and the guard that owns that property has to reject the result. A
-  mutation that survives is a guard that is decorative. These are the ones
-  catchable without a cluster: validation, the deadline-versus-hold rule, the
-  cross-directory entry check, and the lock.
-
-  Two of them pin down exactly where the lock's line sits, which had never
-  been written down as a test. Comments and blank lines are free, verified by
-  reformatting every catalog file on disk and reloading it, because a lock
-  that forces re-approval for reindentation teaches people to re-approve
-  without reading. Rewriting the Diagnosis paragraph is not free, because that
-  paragraph is not prose about the entry, it is what the incident report tells
-  an operator mid-incident.
-
-  Writing this suite produced two false alarms of its own, both left in the
-  record. The first reached for `Stale`, which answers a different question,
-  and reported sixteen surviving mutations that were artefacts of the wrong
-  call. The second expected the Diagnosis text to be free and was simply
-  wrong about what that field is. A red check is no more proof that its
-  subject is broken than a green one is proof that it works, which is the
-  entire thesis of the suite.
-- **A proof whose deadline sits inside its entry's hold duration is now
-  refused before anything is injected.** `Spec`'s documentation has always
-  said `firesWithin` must exceed the hold or the proof is unwinnable, and
-  nothing enforced it: `Validate` checks the deadline is positive and stops,
-  because a spec on its own cannot see the catalog. So the rule lived in a
-  comment and holding to it was a matter of remembering.
-
-  It nearly cost a run the same day. An entry's hold went from 90 seconds to
-  five minutes and its proof's five-minute deadline had to be raised by hand
-  in the same edit. Forgetting would have produced "never fired within 5m",
-  which reads as a broken entry and is in fact a deadline expiring at the
-  exact moment the entry became eligible to report: a measurement about
-  arithmetic wearing the costume of a measurement about the mesh.
-
-  Nothing in the repository violates this today, and a test over the shipped
-  catalog and proof directories is what keeps that true. A proof that can be
-  won but leaves under a minute of slack is said rather than refused, since
-  the signal still has to climb into breach and the detector still needs a
-  tick to deliver, both inside that.
-- **`meshmedic-prove silence`**, the axis the proof suite could not reach.
-  Every spec in `proof/` asserts that an entry fires when its fault is present.
-  None of them assert that it stays quiet when it is not, and a detector that
-  fires on everything passes all of them. This injects nothing and watches a
-  healthy cluster with the real detector, so hold durations, suppression, the
-  coverage probe and the guardrails are all in force.
-
-  It is a different question from `meshmedic calibrate`, which samples the
-  signal and reports how far the healthy extreme sits from the threshold.
-  Calibrate asks how close the number is; this asks whether anyone would have
-  been paged. The gap between those was measured on 2026-08-19: an entry
-  entered breach on a cluster with nothing injected into its path and stayed
-  there for 180 unbroken seconds, twice its hold duration, and the only reason
-  it published nothing is that the observation window closed 25 seconds in.
-  Nothing in the suite was looking for it.
-
-  Five verdicts, and the distinctions are the point. `silent` never crossed;
-  `brushed` crossed but not for long enough, and reports the margin between the
-  longest healthy breach and the hold duration, which is what an ordinary busy
-  hour eats into; `FIRED` is a false positive, measured; `unwatched` produced
-  no readings, so its silence proves nothing; `n/a` was never a question for
-  that target. A thin margin warns without failing the run, because it is a
-  warning about tomorrow rather than a fault today. `--warmup` learns the
-  baseline first, so relative thresholds are measured as production uses them
-  rather than against a static fallback production never sees.
-- **`--entry` is repeatable.** Proving two entries used to mean invoking the
-  command twice, which skips the quiesce between them, because the quiesce
-  lives between specs inside one run. That is not hypothetical: the second of
-  two such runs was refused by its own preflight, correctly, because the entry
-  it was about to test was still breaching from the first run's reset. One
-  invocation with two `--entry` flags settles between them. Every id that
-  matched nothing is named, not just the first, because a typo in one of five
-  entries should not read as a run of four.
-- **`meshmedic-prove doctor`.** The seven preflight checks as their own
-  command, injecting nothing, with an exit code a script can branch on. They
-  existed already but only as the opening act of a run that then mutates the
-  cluster, so the question "is this testbed fit to measure anything" could not
-  be asked without answering it destructively.
-- **`--wait-observer` on the prover.** Before each proof, wait for Prometheus
-  to answer rather than injecting into a cluster nobody is watching. A suite
-  outlives the port-forward that was up when it started, and the previous
-  behaviour turned one transient gap into a row of verdicts about entries that
-  were never observed. Nothing is injected while the wait is on, so the
-  alternative to waiting was never a stricter measurement.
-- **`--retry-blind` on the prover**, and `proof.Retryable` behind it. Only a
-  blind run is retried. A run where the observer was healthy and the entry did
-  not fire is a finding, and a harness that retries findings until they
-  disappear is a machine for producing green. This is the same line the
-  detector draws between `blind` and `clear`.
-- **`--results` on the prover**, writing the run as JSON, so a suite's verdicts
-  no longer have to be copied out of its log by hand.
-- **`hack/port-forward.sh`**, a forward that survives a long suite. It waits for
-  the listening socket to drain before rebinding, because restarting
-  immediately loses the race against its own predecessor and turns a
-  one-second gap into thirty, which is long enough for a detector to report
-  blind and a harness to blame an entry.
 - **`meshmedic chart check`** reads a Helm chart (or rendered manifests) and
   lists what is likely to break under Istio 1.31, in sidecar and ambient mode,
   before any cluster exists. Eight rules (MM-CHART-001 to 008), each with the
   field, the Istio documentation quote, a fix hint and how to confirm it; text
   or JSON; exit 0, 1 or 2. Findings are candidates read from manifests, not
   observed failures. See docs/chart-check.md.
+
+- **`watch`, `check`, `calibrate` and `validate --against-prometheus` can
+  reach a Prometheus behind a token, basic auth or a private CA.** A
+  `prometheusAuth` section in the watch config names the environment variables
+  that hold a bearer token, or a basic-auth user and password, and can add a CA
+  file. The flags `--prometheus-token-env` and `--prometheus-ca-file` do the
+  same on the command line. A named variable that is unset stops the run before
+  any request, and errors never print the variable's value. (#31)
+
+- **`docs/watch-config.md` lists every `watch.yaml` field** with its type,
+  default and whether it is required, and says what the `--prometheus
+  --target` form cannot set. Two tests keep it in step with the config
+  structs. (#38, closes #17)
 
 ### Fixed
 
@@ -381,6 +230,220 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a missing CRD: those are still reported as the patch's failure. The revert
   and reset run after a timed-out apply exactly as after any other failure.
   (closes #45)
+
+- **GitHub rate limits no longer fail a pull request.** A 429, and a 403 with
+  `Retry-After` or `X-RateLimit-Remaining: 0`, are retried after the wait
+  GitHub asks for, up to two minutes. The branch name now comes from the
+  scenario, the target's params and the time the breach began, so a retry of
+  one episode reuses its branch and returns a pull request an earlier attempt
+  opened, instead of leaving a branch with no pull request. (#30)
+
+- **Cluster text stays inside its block in the incident report.** Log lines,
+  rollout diffs, label and field values and error strings go into a pull
+  request body; code fences are now longer than any backtick run inside them,
+  table cells escape `|` and line breaks, and the headline leaves out "for X"
+  when the scenario has no `signal.for`. (#28, closes #19)
+
+- **`validate --against-prometheus` no longer looks for a metric named by
+  `__name__!=`, `=~`, `!~` or an empty `__name__`.** Only `__name__=` with a
+  value counts as a metric. The PromQL name extractor also has a fuzz test
+  now. (#32)
+
+## [0.4.0] - 2026-10-30
+
+### Changed
+
+- **The module path is now `github.com/Git-Hospital/meshmedic`, and versions
+  restart in 0.x.** The repository moved to the Git-Hospital organization while
+  `go.mod` still declared `github.com/kassvl/meshmedic`, so the documented
+  `go install` line installed from the old path. The image name in the docs
+  was stale for the same reason: the release workflow already pushes to
+  `ghcr.io/git-hospital/meshmedic`. The 1.0.0 tag promised a stable interface
+  that the project, still changing direction, cannot keep, so numbering
+  restarts in 0.x under the new path, at 0.4.0, above the old 0.3.x. The
+  earlier tags (0.3.0 to 1.0.0) declared the old module path and broke
+  `go install ...@latest` on the new one, so they and their GitHub releases
+  were removed; the sections below link to the commits they pointed at. The
+  module proxy still lists them under the new path, so `go.mod` retracts
+  0.3.0 to 0.3.1 and 1.0.0-rc1 to 1.0.1, two ranges that leave 0.4.0 and later
+  outside, and a single 1.0.1 tag publishes that retraction.
+  `github.com/kassvl/meshmedic@v1.0.0` stays
+  installable from the Go module proxy, which never forgets a version, and is
+  not updated further.
+
+- **The cycle summary no longer says `firing` for three different things.**
+  In Prometheus's vocabulary an alert fires once it has held for its `for`
+  duration; this counter turned true the moment the comparison did, which is
+  earlier and sometimes much earlier. Two runs were misread because of it: one
+  showed `2 firing` with a single report, because the second entry was
+  suppressed as a cascade symptom, and one showed `1 firing` with no report at
+  all, because the entry had not yet held. The tool was right both times and
+  the summary described it wrongly. The line now reads `N in breach` and, when
+  N is not zero, breaks it down: reported, suppressed, awaiting hold,
+  rate-limited, handler retrying. Every breach lands in exactly one bucket and
+  a test asserts the arithmetic, because a number that does not add up is a
+  liability rather than a fact. The two silent exits from delivery, a guardrail
+  that stopped a further proposal and a handler that errored, are counted
+  apart: a guardrail that hides what it blocked is its own fail-open.
+
+- **`connection-pool-overflow` now reports the pool limit that is doing the
+  shedding.** The entry read the destination Deployment, which is the right
+  evidence for the raise-versus-scale call, and never opened the
+  DestinationRule that held the fault, so a dossier that correctly diagnosed
+  pool exhaustion still ended with the operator looking up the number to
+  change. Measured on 2026-08-19 with `maxConnections: 1` as the injected
+  fault and no mention of it in the report. Every DestinationRule in the
+  namespace is listed rather than one guessed by name, because a rule that
+  binds a host is not obliged to be named after it. An audit of the other
+  eleven entries carrying object evidence found no second case: each already
+  reads the object that holds its fault.
+
+### Added
+
+- **`meshmedic-prove remediate`**, which asks the question the rest of the
+  suite cannot: if I merge what this entry proposed, does the incident stop?
+
+  Every spec in `proof/` shows the right entry fired and named the culprit.
+  None show that the patch would have helped, and "opens the fix as a pull
+  request" is the sentence this project leads with. It is the largest
+  unverified claim in the product.
+
+  The patch is applied with the fault still in place, which is what makes it a
+  test. Removing the fault and watching the signal fall proves the fault caused
+  it, which the resolution half of the ordinary proof already covers. Leaving
+  the fault and applying the fix asks an operator's actual question. It is a
+  separate command because the two would collide: a working patch clears the
+  signal, so the ordinary proof would time the remediation and call it the
+  reset.
+
+  Eleven of eighteen entries are report-only and are skipped with a reason,
+  which is a design choice rather than a coverage gap and is reported as one.
+  The revert is declared rather than derived, because a patch that creates an
+  object and one that edits it are undone differently, and guessing from the
+  rendered YAML is how a harness deletes something it did not create. It runs
+  on success, on failure and on interrupt: a leftover fault is loud, and a
+  leftover fix is silent.
+
+  The unit tests found a Go defect while being written. The deferred cleanup
+  wrote its results into a variable nobody read, because `return res` with an
+  unnamed return copies the struct before any defer runs, so whether the revert
+  succeeded, how long the run took, and any failure during cleanup were all
+  discarded. Three losses, no compiler complaint. Fixed with a named return.
+
+- **A mutation suite over the guards themselves.** Every guard here claims to
+  catch something and nothing checked the claim, which stopped being an
+  abstract worry on 2026-08-20: four separate checks turned out to be checking
+  nothing. A preflight called a testbed quiet on the strength of a dead
+  Prometheus. A summary printed FAIL for a run nobody observed. A coverage
+  count measured a command-line filter. An archive assertion in CI failed on
+  its own pipe before it read an archive. All four were green.
+
+  So the shipped catalog and specs are now broken on purpose, one property at
+  a time, and the guard that owns that property has to reject the result. A
+  mutation that survives is a guard that is decorative. These are the ones
+  catchable without a cluster: validation, the deadline-versus-hold rule, the
+  cross-directory entry check, and the lock.
+
+  Two of them pin down exactly where the lock's line sits, which had never
+  been written down as a test. Comments and blank lines are free, verified by
+  reformatting every catalog file on disk and reloading it, because a lock
+  that forces re-approval for reindentation teaches people to re-approve
+  without reading. Rewriting the Diagnosis paragraph is not free, because that
+  paragraph is not prose about the entry, it is what the incident report tells
+  an operator mid-incident.
+
+  Writing this suite produced two false alarms of its own, both left in the
+  record. The first reached for `Stale`, which answers a different question,
+  and reported sixteen surviving mutations that were artefacts of the wrong
+  call. The second expected the Diagnosis text to be free and was simply
+  wrong about what that field is. A red check is no more proof that its
+  subject is broken than a green one is proof that it works, which is the
+  entire thesis of the suite.
+
+- **A proof whose deadline sits inside its entry's hold duration is now
+  refused before anything is injected.** `Spec`'s documentation has always
+  said `firesWithin` must exceed the hold or the proof is unwinnable, and
+  nothing enforced it: `Validate` checks the deadline is positive and stops,
+  because a spec on its own cannot see the catalog. So the rule lived in a
+  comment and holding to it was a matter of remembering.
+
+  It nearly cost a run the same day. An entry's hold went from 90 seconds to
+  five minutes and its proof's five-minute deadline had to be raised by hand
+  in the same edit. Forgetting would have produced "never fired within 5m",
+  which reads as a broken entry and is in fact a deadline expiring at the
+  exact moment the entry became eligible to report: a measurement about
+  arithmetic wearing the costume of a measurement about the mesh.
+
+  Nothing in the repository violates this today, and a test over the shipped
+  catalog and proof directories is what keeps that true. A proof that can be
+  won but leaves under a minute of slack is said rather than refused, since
+  the signal still has to climb into breach and the detector still needs a
+  tick to deliver, both inside that.
+
+- **`meshmedic-prove silence`**, the axis the proof suite could not reach.
+  Every spec in `proof/` asserts that an entry fires when its fault is present.
+  None of them assert that it stays quiet when it is not, and a detector that
+  fires on everything passes all of them. This injects nothing and watches a
+  healthy cluster with the real detector, so hold durations, suppression, the
+  coverage probe and the guardrails are all in force.
+
+  It is a different question from `meshmedic calibrate`, which samples the
+  signal and reports how far the healthy extreme sits from the threshold.
+  Calibrate asks how close the number is; this asks whether anyone would have
+  been paged. The gap between those was measured on 2026-08-19: an entry
+  entered breach on a cluster with nothing injected into its path and stayed
+  there for 180 unbroken seconds, twice its hold duration, and the only reason
+  it published nothing is that the observation window closed 25 seconds in.
+  Nothing in the suite was looking for it.
+
+  Five verdicts, and the distinctions are the point. `silent` never crossed;
+  `brushed` crossed but not for long enough, and reports the margin between the
+  longest healthy breach and the hold duration, which is what an ordinary busy
+  hour eats into; `FIRED` is a false positive, measured; `unwatched` produced
+  no readings, so its silence proves nothing; `n/a` was never a question for
+  that target. A thin margin warns without failing the run, because it is a
+  warning about tomorrow rather than a fault today. `--warmup` learns the
+  baseline first, so relative thresholds are measured as production uses them
+  rather than against a static fallback production never sees.
+
+- **`--entry` is repeatable.** Proving two entries used to mean invoking the
+  command twice, which skips the quiesce between them, because the quiesce
+  lives between specs inside one run. That is not hypothetical: the second of
+  two such runs was refused by its own preflight, correctly, because the entry
+  it was about to test was still breaching from the first run's reset. One
+  invocation with two `--entry` flags settles between them. Every id that
+  matched nothing is named, not just the first, because a typo in one of five
+  entries should not read as a run of four.
+
+- **`meshmedic-prove doctor`.** The seven preflight checks as their own
+  command, injecting nothing, with an exit code a script can branch on. They
+  existed already but only as the opening act of a run that then mutates the
+  cluster, so the question "is this testbed fit to measure anything" could not
+  be asked without answering it destructively.
+
+- **`--wait-observer` on the prover.** Before each proof, wait for Prometheus
+  to answer rather than injecting into a cluster nobody is watching. A suite
+  outlives the port-forward that was up when it started, and the previous
+  behaviour turned one transient gap into a row of verdicts about entries that
+  were never observed. Nothing is injected while the wait is on, so the
+  alternative to waiting was never a stricter measurement.
+
+- **`--retry-blind` on the prover**, and `proof.Retryable` behind it. Only a
+  blind run is retried. A run where the observer was healthy and the entry did
+  not fire is a finding, and a harness that retries findings until they
+  disappear is a machine for producing green. This is the same line the
+  detector draws between `blind` and `clear`.
+
+- **`--results` on the prover**, writing the run as JSON, so a suite's verdicts
+  no longer have to be copied out of its log by hand.
+
+- **`hack/port-forward.sh`**, a forward that survives a long suite. It waits for
+  the listening socket to drain before rebinding, because restarting
+  immediately loses the race against its own predecessor and turns a
+  one-second gap into thirty, which is long enough for a detector to report
+  blind and a harness to blame an entry.
+
+### Fixed
 
 - **The prover's preflight could call a testbed quiet on the strength of a dead
   Prometheus.** Its breach check treated any query error as "no series", which
@@ -512,7 +575,9 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The traffic-vanished baseline uses `max_over_time` rather than a fixed
   offset, which went blind inside back-to-back outages.
 
-[Unreleased]: https://github.com/Git-Hospital/meshmedic/commits/main
+[Unreleased]: https://github.com/Git-Hospital/meshmedic/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Git-Hospital/meshmedic/releases/tag/v0.5.0
+[0.4.0]: https://github.com/Git-Hospital/meshmedic/releases/tag/v0.4.0
 [1.0.0]: https://github.com/Git-Hospital/meshmedic/tree/fdcb7dc850a0cc1ef5ba27f33ef08dd46a9b8c4a
 [0.3.1]: https://github.com/Git-Hospital/meshmedic/tree/f1617a53203b5172d35142b7b3527342501a4a83
 [0.3.0]: https://github.com/Git-Hospital/meshmedic/tree/667d9f497d963210d221a9d483fb8db4683b8b6b
